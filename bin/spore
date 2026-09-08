@@ -1,0 +1,264 @@
+#!/bin/sh
+# spore — declarative, installation-less configuration for Alpine Linux.
+#
+# A spore is a small readable bundle; a machine is what a blank Alpine becomes
+# when it germinates one. There is no install verb, only `apply`: converging to a
+# declared state does not care where it started.
+
+set -eu
+
+SPORE_SELF=$0
+SPORE_PREFIX=$(CDPATH='' cd -- "$(dirname -- "$SPORE_SELF")/.." && pwd)
+SPORE_LIB=$SPORE_PREFIX/lib
+SPORE_MODULES=$SPORE_PREFIX/modules
+
+for _f in core conf facts plan render blob module exec_live exec_print persist; do
+    . "$SPORE_LIB/$_f.sh"
+done
+
+trap spore_cleanup EXIT INT TERM
+
+usage() {
+    cat <<'USAGE'
+spore — declarative configuration for Alpine Linux
+
+usage: spore [options] <command>
+
+commands:
+  init [DIR]     scaffold a new spore
+  plan           show the action list this spore produces (no changes)
+  apply          converge this host to the spore
+  status         per-module: declared vs actual
+  diff           show drift under paths the spore owns
+  persist        make the current state survive a reboot
+  doctor         host facts and sanity checks
+  modules        list available modules
+
+options:
+  -s, --spore DIR   the spore to use (default: $SPORE_DIR, ./spore,
+                    or /var/lib/spore/spore)
+  -r, --root DIR    apply under DIR instead of / (synthetic root)
+  -n, --dry-run     announce actions, change nothing
+      --persist     with `apply`: commit afterwards
+  -h, --help        this
+  -V, --version     version
+USAGE
+}
+
+SPORE_DO_PERSIST=0
+SPORE_CMD=''
+
+while [ $# -gt 0 ]; do
+    case $1 in
+        -s|--spore)   [ $# -ge 2 ] || die "--spore needs a directory"; SPORE_DIR=$2; shift 2 ;;
+        -r|--root)    [ $# -ge 2 ] || die "--root needs a directory";  SPORE_ROOT=$2; shift 2 ;;
+        -n|--dry-run) SPORE_DRYRUN=1; shift ;;
+        --persist)    SPORE_DO_PERSIST=1; shift ;;
+        -h|--help)    usage; exit 0 ;;
+        -V|--version) printf 'spore %s\n' "$SPORE_VERSION"; exit 0 ;;
+        --)           shift; break ;;
+        -*)           die "unknown option: $1" ;;
+        *)            SPORE_CMD=$1; shift; break ;;
+    esac
+done
+
+[ -n "$SPORE_CMD" ] || { usage; exit 2; }
+
+spore_locate() {
+    if [ -n "${SPORE_DIR:-}" ]; then :
+    elif [ -d ./spore ] && [ -f ./spore/spore.conf ]; then SPORE_DIR=./spore
+    elif [ -f /var/lib/spore/spore/spore.conf ]; then SPORE_DIR=/var/lib/spore/spore
+    else die "no spore found (use --spore DIR or set SPORE_DIR)"
+    fi
+}
+
+spore_load() {
+    spore_locate
+    [ -d "$SPORE_DIR" ] || die "spore not found: $SPORE_DIR"
+    [ -f "$SPORE_DIR/spore.conf" ] || die "not a spore (no spore.conf): $SPORE_DIR"
+    SPORE_DIR=$(CDPATH='' cd -- "$SPORE_DIR" && pwd)
+
+    sl_fmt=$(conf_get "$SPORE_DIR/spore.conf" FORMAT 1)
+    [ "$sl_fmt" = 1 ] || die "spore FORMAT=$sl_fmt is not supported by spore $SPORE_VERSION"
+
+    SPORE_HOST=$(conf_get "$SPORE_DIR/spore.conf" HOST "$(hostname 2>/dev/null || echo unknown)")
+    SPORE_MODULE_LIST=$(conf_get "$SPORE_DIR/spore.conf" MODULES '')
+    [ -n "$SPORE_MODULE_LIST" ] || die "spore.conf declares no MODULES"
+}
+
+prepare() { spore_load; spore_workspace; plan_build; }
+
+report_skipped() {
+    [ -s "$SPORE_WORK/skipped" ] || return 0
+    while IFS="$SPORE_TAB" read -r rs_m rs_r; do
+        skipped "$rs_m: n/a here ($(requirement_reason "$rs_r"))"
+    done < "$SPORE_WORK/skipped"
+}
+
+# --- commands ----------------------------------------------------------------
+
+cmd_plan() {
+    prepare
+    printf '%s — %s actions\n\n' "$SPORE_HOST" "$(plan_count)"
+    exec_print
+    report_skipped
+    plan_notes_show
+}
+
+cmd_apply() {
+    prepare
+    if [ "$SPORE_DRYRUN" = 1 ]; then
+        printf 'dry run — %s would be converged to %s\n\n' "$SPORE_HOST" "$SPORE_DIR"
+    else
+        printf 'applying %s\n\n' "$SPORE_DIR"
+    fi
+
+    exec_plan
+    report_skipped
+    plan_notes_show
+
+    printf '\n  %s changed, %s already correct\n' "$SPORE_N_CHANGED" "$SPORE_N_UNCHANGED" >&2
+
+    if [ "$SPORE_DO_PERSIST" = 1 ]; then
+        printf '\n'; persist_commit
+    elif [ "$(persist_backend)" = lbu ] && [ "$SPORE_DRYRUN" != 1 ]; then
+        warn "this host is diskless: nothing here survives a reboot until you run
+         \`spore persist\` (or apply with --persist)."
+    fi
+    persist_warnings
+}
+
+cmd_status() {
+    prepare
+    printf '%s  (%s)\n\n' "$SPORE_HOST" "$SPORE_DIR"
+    for cs_m in $SPORE_MODULE_LIST; do
+        if module_is_skipped "$cs_m"; then
+            printf '  %-10s %sn/a (%s)%s\n' "$cs_m" "$_c_yellow" \
+                "$(requirement_reason "$(module_skip_reason "$cs_m")")" "$_c_reset"
+            continue
+        fi
+        cs_drift=0 cs_total=0
+        plan_lines_of_module "$cs_m" > "$SPORE_WORK/mod.tsv"
+        while IFS="$SPORE_TAB" read -r cs_mod cs_act g1 g2 g3 g4 g5 g6; do
+            case $cs_act in
+                file)
+                    cs_total=$((cs_total + 1))
+                    cs_dst=$(rootpath "$g1")
+                    if [ ! -f "$cs_dst" ] || [ "$(sha256_file "$cs_dst")" != "$g4" ]; then
+                        cs_drift=$((cs_drift + 1))
+                    fi ;;
+                svc)
+                    cs_total=$((cs_total + 1))
+                    cs_link=$(rootpath "/etc/runlevels/$g2/$g1")
+                    if [ "$g3" = on ]; then
+                        [ -e "$cs_link" ] || [ -L "$cs_link" ] || cs_drift=$((cs_drift + 1))
+                    else
+                        if [ -e "$cs_link" ] || [ -L "$cs_link" ]; then cs_drift=$((cs_drift + 1)); fi
+                    fi ;;
+            esac
+        done < "$SPORE_WORK/mod.tsv"
+
+        if [ "$cs_drift" = 0 ]; then
+            printf '  %-10s %sok%s  (%s checks)\n' "$cs_m" "$_c_green" "$_c_reset" "$cs_total"
+        else
+            printf '  %-10s %s%s of %s differ%s\n' "$cs_m" "$_c_red" "$cs_drift" "$cs_total" "$_c_reset"
+        fi
+    done
+    plan_notes_show
+}
+
+cmd_diff() {
+    prepare
+    cd_any=0
+    plan_lines_of_type file > "$SPORE_WORK/files.tsv"
+    while IFS="$SPORE_TAB" read -r cd_mod cd_act h1 h2 h3 h4; do
+        cd_dst=$(rootpath "$h1")
+        if [ ! -f "$cd_dst" ]; then
+            printf '\n%s+++ %s (absent, would be created by %s)%s\n' "$_c_green" "$h1" "$cd_mod" "$_c_reset"
+            cd_any=1
+            continue
+        fi
+        if [ "$(sha256_file "$cd_dst")" != "$h4" ]; then
+            printf '\n%s--- %s (on host)\n+++ %s (from spore, %s)%s\n' \
+                "$_c_yellow" "$h1" "$h1" "$cd_mod" "$_c_reset"
+            diff -u "$cd_dst" "$(content_path "$h4")" || true
+            cd_any=1
+        fi
+    done < "$SPORE_WORK/files.tsv"
+    [ "$cd_any" = 0 ] && printf 'no drift under paths this spore owns\n'
+    return 0
+}
+
+cmd_persist() {
+    prepare
+    persist_commit
+    persist_warnings
+}
+
+cmd_doctor() {
+    printf 'host facts\n\n'
+    facts_show | sed 's/^/  /'
+    printf '\n'
+    if [ -n "${SPORE_DIR:-}" ] || [ -f ./spore/spore.conf ] || [ -f /var/lib/spore/spore/spore.conf ]; then
+        prepare
+        printf 'spore\n\n'
+        printf '  host      %s\n  modules   %s\n  actions   %s\n' \
+            "$SPORE_HOST" "$(printf '%s' "$SPORE_MODULE_LIST" | tr '\n' ' ')" "$(plan_count)"
+        printf '\n'
+        report_skipped
+        plan_notes_show
+    else
+        say 'no spore located — showing host facts only'
+    fi
+    persist_warnings
+}
+
+cmd_modules() {
+    for cm_m in $(module_available); do
+        SPORE_DIR=${SPORE_DIR:-/nonexistent}
+        module_load "$cm_m"
+        SPORE_MOD=$cm_m
+        MOD_DESC='' MOD_REQUIRES=''
+        "${cm_m}_meta" 2>/dev/null || true
+        printf '  %-10s %s%s\n' "$cm_m" "$MOD_DESC" \
+            "$([ -n "$MOD_REQUIRES" ] && printf '  [needs: %s]' "$MOD_REQUIRES")"
+    done
+}
+
+cmd_init() {
+    ci_dir=${1:-./spore}
+    [ ! -e "$ci_dir" ] || die "$ci_dir already exists"
+    mkdir -p "$ci_dir/modules" "$ci_dir/files"
+    cat > "$ci_dir/spore.conf" <<'INIT'
+FORMAT=1
+HOST=changeme
+MODULES="ssh net"
+INIT
+    cat > "$ci_dir/modules/ssh.conf" <<'INIT'
+SSH_ENABLED=yes
+SSH_PORT=22
+SSH_PERMIT_ROOT_LOGIN=prohibit-password
+SSH_PASSWORD_AUTH=no
+INIT
+    cat > "$ci_dir/modules/net.conf" <<'INIT'
+NET_HOSTNAME=changeme
+NET_IFACE=eth0
+NET_MODE=dhcp
+INIT
+    : > "$ci_dir/packages"
+    : > "$ci_dir/blobs.conf"
+    printf 'created %s\n' "$ci_dir"
+}
+
+case $SPORE_CMD in
+    init)    cmd_init "$@" ;;
+    plan)    cmd_plan ;;
+    apply)   cmd_apply ;;
+    status)  cmd_status ;;
+    diff)    cmd_diff ;;
+    persist) cmd_persist ;;
+    doctor)  cmd_doctor ;;
+    modules|module) cmd_modules ;;
+    help)    usage ;;
+    *)       die "unknown command: $SPORE_CMD (try: spore --help)" ;;
+esac
