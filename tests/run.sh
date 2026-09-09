@@ -399,6 +399,9 @@ alpine "$SPORE" --spore "$EX" --root "$R" persist >/dev/null 2>&1
 unset SPORE_RUN_LOG
 has 'includes paths outside /etc' "$(cat "$PLOG")" 'lbu include /home'
 has 'runs lbu commit'             "$(cat "$PLOG")" 'lbu commit'
+# lbu remounts the medium rw itself and restores ro on exit. Doing it first would
+# defeat that and leave a USB stick mounted writable.
+hasnt 'does not remount the medium itself' "$(cat "$PLOG")" 'mount -o remount,rw'
 hasnt 'does not include /etc (already in overlay)' "$(cat "$PLOG")" 'lbu include /etc'
 
 PR2=$(env SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=no SPORE_FACT_PERSIST=rootfs \

@@ -26,7 +26,11 @@ render_marked_block() {
     printf '%s\n%s\n%s\n' "$rmb_begin" "$rmb_content" "$rmb_end"
 }
 
-# Does the stock sshd_config pull in a drop-in directory?
+# Alpine patches `Include /etc/ssh/sshd_config.d/*.conf` in near the TOP of
+# sshd_config (include-config-dir.patch), and OpenSSH takes the first value it
+# sees for a directive — so a drop-in overrides the main file rather than being
+# overridden by it. That makes the drop-in branch the correct one on Alpine; the
+# marked-block fallback is for anything that ships without the patch.
 sshd_include_supported() {
     ssi_f=$(rootpath /etc/ssh/sshd_config)
     [ -f "$ssi_f" ] &&

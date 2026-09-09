@@ -8,12 +8,14 @@ persist_backend() { fact_persist; }
 persist_commit() {
     case $(persist_backend) in
         lbu)
-            # The boot media is often mounted read-only; lbu commit fails against
-            # it without this. LBU_MEDIA names the mount under /media.
-            pc_media=$(conf_get /etc/lbu/lbu.conf LBU_MEDIA '')
-            if [ -n "$pc_media" ] && [ -d "/media/$pc_media" ]; then
-                run mount -o remount,rw "/media/$pc_media"
-            fi
+            # Deliberately NOT remounting the media read-write here. lbu does it
+            # itself (mount_once_rw), records what it remounted, and restores
+            # read-only on exit. Remounting first would make lbu's is_ro check
+            # see it as already writable, so it would not be added to
+            # REMOUNT_RO_LIST and the boot medium would be left mounted rw — a
+            # corruption risk on a USB stick at power loss. The original wizard's
+            # make_usb_writable was for writing certs and the apk cache to the
+            # medium directly, which is a different operation.
 
             # /etc is already in the overlay by default; everything else has to
             # be declared. Owned paths come from the plan, so this can't drift.
