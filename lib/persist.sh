@@ -8,6 +8,7 @@ persist_backend() { fact_persist; }
 persist_commit() {
     case $(persist_backend) in
         lbu)
+            lbu_warnings
             # Deliberately NOT remounting the media read-write here. lbu does it
             # itself (mount_once_rw), records what it remounted, and restores
             # read-only on exit. Remounting first would make lbu's is_ro check
@@ -59,6 +60,20 @@ ca_warnings() {
          (do not run update-ca-certificates after — that is what empties it)
          Or point a tool at the directory: git config http.sslCAPath /etc/ssl/certs" ;;
     esac
+}
+
+# `lbu commit` with nowhere to write fails in a way that reads like a bug in
+# spore rather than a missing line in lbu.conf.
+lbu_warnings() {
+    [ "$(persist_backend)" = lbu ] || return 0
+    if [ "$(fact_lbu_dest)" = unset ]; then
+        warn "this host is diskless but /etc/lbu/lbu.conf names no destination.
+         \`spore persist\` has nowhere to write the apkovl, so nothing will
+         survive a reboot. Set LBU_MEDIA to a mounted, writable device (a data
+         partition is fine — the boot medium can stay read-only, since the
+         initramfs finds the apkovl by scanning devices), or run setup-alpine
+         and answer its 'store configs' question."
+    fi
 }
 
 # The classic diskless trap.

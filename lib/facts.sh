@@ -60,6 +60,21 @@ fact_ca_store() {
     fi
 }
 
+# Where `lbu commit` will actually write. LBU_BACKUPDIR wins outright and skips
+# mounting; otherwise the destination is /media/$LBU_MEDIA. Worth reporting
+# because a read-only boot medium with the apkovl on a separate data partition is
+# a good design — the initramfs finds it by scanning devices, so nothing has to
+# be written to the medium the system booted from.
+fact_lbu_dest() {
+    if [ -n "${SPORE_FACT_LBU_DEST:-}" ]; then printf '%s' "$SPORE_FACT_LBU_DEST"; return 0; fi
+    fld_c=/etc/lbu/lbu.conf
+    fld_dir=$(conf_get "$fld_c" LBU_BACKUPDIR '')
+    if [ -n "$fld_dir" ]; then printf '%s' "$fld_dir"; return 0; fi
+    fld_media=$(conf_get "$fld_c" LBU_MEDIA '')
+    if [ -n "$fld_media" ]; then printf '/media/%s' "$fld_media"; return 0; fi
+    printf 'unset'
+}
+
 fact_alpine() {
     if [ -n "${SPORE_FACT_ALPINE:-}" ]; then printf '%s' "$SPORE_FACT_ALPINE"; return 0; fi
     if [ -f /etc/alpine-release ]; then cat /etc/alpine-release; else printf none; fi
@@ -72,6 +87,9 @@ facts_show() {
     printf 'persist   %s\n' "$(fact_persist)"
     printf 'netadmin  %s\n' "$(fact_netadmin)"
     printf 'ca store  %s\n' "$(fact_ca_store)"
+    if [ "$(fact_persist)" = lbu ]; then
+        printf 'apkovl to %s\n' "$(fact_lbu_dest)"
+    fi
     printf 'alpine    %s\n' "$(fact_alpine)"
 }
 

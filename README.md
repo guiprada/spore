@@ -163,8 +163,23 @@ suite drives host shapes that do not exist on the machine running it.
 | diskless (`/` on tmpfs + `lbu`) | `lbu include` owned paths outside `/etc`, then `lbu commit` |
 | disk / VM / container | nothing to commit; the spore is exported to `/var/lib/spore/spore` |
 
+**The boot medium does not have to be writable.** Alpine's initramfs locates the
+apkovl with `nlplug-findfs`, which scans attached block devices for
+`*.apkovl.tar.gz` rather than only inspecting the medium it booted from. So a
+read-only ISO partition plus a writable data partition holding the apkovl, the
+apk cache and the served data is a better arrangement than a writable boot
+medium: the system is identical on every boot, cannot drift, and cannot be
+corrupted by losing power mid-write. Point `LBU_MEDIA` (or `LBU_BACKUPDIR`) at
+the data partition and `doctor` will confirm with `apkovl to /media/<name>`.
+
+One caveat: the initramfs takes the *first* apkovl it finds, so with two such
+devices plugged in the choice is arbitrary. `apkovl=<device>:<path>` on the
+kernel command line pins it.
+
 On a diskless host `apply` warns loudly that nothing survives a reboot until you
-`persist`. `doctor` also warns about the classic trap: `/etc/apk/world` persists
+`persist`, and `doctor` warns if `lbu.conf` names no destination at all — which
+would otherwise fail at `persist` time looking like a bug in spore rather than a
+missing line of configuration. `doctor` also warns about the classic trap: `/etc/apk/world` persists
 the *intent* to have a package, but without an apk cache on persistent media the
 package files are re-downloaded every boot.
 

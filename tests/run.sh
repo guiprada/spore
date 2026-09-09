@@ -216,23 +216,6 @@ else
     has 'planner refuses conflicting claims' "$CONF" 'written by both'
 fi
 
-# ------------------------------------------------------------- ca store -----
-section 'a broken CA trust store is reported, not left silent'
-export SPORE_FACT_CA_STORE=ok
-CAOK=$(alpine "$SPORE" --spore "$EX" doctor 2>&1)
-has   'doctor reports the store'      "$CAOK" 'ca store  ok'
-hasnt 'and says nothing when it is fine' "$CAOK" 'CA trust store'
-SPORE_FACT_CA_STORE=missing
-CAMISS=$(alpine "$SPORE" --spore "$EX" doctor 2>&1)
-has 'missing store is explained'      "$CAMISS" 'unable to get local issuer certificate'
-has 'and names the fix'               "$CAMISS" 'apk add ca-certificates-bundle'
-SPORE_FACT_CA_STORE=empty
-CAEMPTY=$(alpine "$SPORE" --spore "$EX" doctor 2>&1)
-has 'empty store is distinguished'    "$CAEMPTY" 'holds no certificates'
-has 'and warns update-ca-certificates can cause it' "$CAEMPTY" 'can leave it empty'
-has 'and warns that s_client will mislead'          "$CAEMPTY" 'does not mean this is fine'
-unset SPORE_FACT_CA_STORE
-
 # ----------------------------------------------------------------- blob -----
 section 'blob verification (hermetic, file:// — no network)'
 BD=$(mktemp -d /tmp/spore-blob.XXXXXX)
@@ -372,6 +355,22 @@ else
     t_fail 'same dir at the same mode from two modules plans fine' "$CDP"
 fi
 rm -rf "$CD"
+
+# ------------------------------------------------------------- lbu dest -----
+section 'where the apkovl actually goes is reported, and its absence warned'
+export SPORE_FACT_LBU_DEST=/media/data
+LD=$(alpine "$SPORE" --spore "$EX" doctor 2>&1)
+has   'doctor names the apkovl destination' "$LD" 'apkovl to /media/data'
+hasnt 'and does not warn when it is set'    "$LD" 'names no destination'
+SPORE_FACT_LBU_DEST='unset'
+LDU=$(alpine "$SPORE" --spore "$EX" doctor 2>&1)
+has 'unset destination is warned'                  "$LDU" 'names no destination'
+has 'and explains a read-only boot medium is fine' "$LDU" 'boot medium can stay read-only'
+unset SPORE_FACT_LBU_DEST
+# Not mentioned at all on a host with no lbu.
+LDR=$(env SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=no SPORE_FACT_PERSIST=rootfs \
+          SPORE_FACT_ROOT=yes "$SPORE" --spore "$EX" doctor 2>&1)
+hasnt 'not mentioned on a non-diskless host' "$LDR" 'apkovl to'
 
 # ------------------------------------------------------------- ca store -----
 section 'a broken CA trust store is reported, not left silent'
