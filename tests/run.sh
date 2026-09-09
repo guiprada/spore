@@ -242,6 +242,38 @@ BAD=$(blob_probe 000000000000000000000000000000000000000000000000000000000000000
 has   'wrong checksum is rejected'  "$BAD" 'checksum mismatch'
 check 'nothing installed on mismatch' "$([ -e "$BD/out/tool" ] && echo yes || echo no)" no
 
+# ---------------------------------------------------------------- repos -----
+section 'enabling community survives every shape of /etc/apk/repositories'
+RW=$(mktemp -d /tmp/spore-repos.XXXXXX)
+SPORE_WORK=$RW alpine "$SPORE" --spore "$EX" plan >/dev/null 2>&1
+RSHA=$(awk -F'\t' '$2 == "bootstrap" && $3 == "repos-community" { print $4 }' "$RW/plan.tsv")
+RSCRIPT=$RW/content/$RSHA
+
+repos_case() {
+    rc_d=$(mktemp -d); mkdir -p "$rc_d/etc/apk"
+    printf '%s\n' "$2" > "$rc_d/etc/apk/repositories"
+    sed "s|/etc/apk/repositories|$rc_d/etc/apk/repositories|g; s|^apk update|true|" "$RSCRIPT" > "$rc_d/run.sh"
+    sh "$rc_d/run.sh" >/dev/null 2>&1 || true
+    rc_n=$(grep -cE '^[^#]*/community' "$rc_d/etc/apk/repositories" 2>/dev/null || echo 0)
+    rc_keep=$(grep -c . "$rc_d/etc/apk/repositories")
+    printf '%s %s' "$rc_n" "$rc_keep"
+    rm -rf "$rc_d"
+}
+
+# A configured box: community present but commented out.
+check 'uncomments a commented community' \
+    "$(repos_case x "$(printf 'https://x/alpine/v3.20/main\n#https://x/alpine/v3.20/community')")" '1 2'
+# A freshly booted box: no community line exists at all to uncomment.
+check 'derives community when absent' \
+    "$(repos_case x 'https://x/alpine/v3.20/main')" '1 2'
+# Already correct: must not add a duplicate.
+check 'leaves an enabled community alone' \
+    "$(repos_case x "$(printf 'https://x/alpine/v3.20/main\nhttps://x/alpine/v3.20/community')")" '1 2'
+# A booted ISO: a local apks repo alongside the network mirror, which must survive.
+check 'keeps a local ISO repo and still adds community' \
+    "$(repos_case x "$(printf '/media/usb/apks\nhttps://x/alpine/v3.20/main')")" '1 3'
+rm -rf "$RW"
+
 # -------------------------------------------------------------- storage -----
 section 'storage: declared volumes, fstab as an owned block'
 ST=$(mktemp -d /tmp/spore-stor.XXXXXX)

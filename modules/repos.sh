@@ -10,9 +10,34 @@ repos_meta() {
 }
 
 repos_plan() {
+    # Three states have to be handled, not one. A configured box has the
+    # community line present but commented; a freshly booted one often has no
+    # community line at all, so there is nothing to uncomment and a naive sed
+    # silently succeeds while changing nothing — and the next apk add fails for
+    # a reason that looks unrelated.
     if mconf_bool REPOS_COMMUNITY yes; then
-        plan_bootstrap repos-community \
-            "sed -i 's|^#\\(.*/community\\)\$|\\1|' /etc/apk/repositories && apk update"
+        # Single-quoted on purpose: $f and $main are for the target's shell to
+        # expand when this runs there, not for us to expand now.
+        # shellcheck disable=SC2016
+        plan_bootstrap repos-community 'set -e
+f=/etc/apk/repositories
+if [ ! -f "$f" ]; then
+    echo "spore: $f does not exist — run setup-apkrepos first" >&2
+    exit 1
+fi
+if grep -qE "^[[:space:]]*[^#[:space:]].*/community" "$f"; then
+    :                                   # already enabled
+elif grep -qE "^[[:space:]]*#.*/community" "$f"; then
+    sed -i "s|^[[:space:]]*#[[:space:]]*\(.*/community\)|\1|" "$f"
+else
+    main=$(grep -m1 -E "^[[:space:]]*[^#[:space:]].*/main[[:space:]]*$" "$f" || true)
+    if [ -z "$main" ]; then
+        echo "spore: no active /main repository in $f to derive /community from" >&2
+        exit 1
+    fi
+    printf "%s\n" "$main" | sed "s|/main[[:space:]]*$|/community|" >> "$f"
+fi
+apk update'
     fi
 
     # On a diskless box /etc/apk/world persists the *intent* to have a package,
