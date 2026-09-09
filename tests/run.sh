@@ -279,7 +279,7 @@ repos_err() {
     re_d=$(mktemp -d); mkdir -p "$re_d/etc/apk"
     printf '%s\n' "$1" > "$re_d/etc/apk/repositories"
     sed "s|/etc/apk/repositories|$re_d/etc/apk/repositories|g; s|^apk update|true|" "$RSCRIPT" > "$re_d/run.sh"
-    sh "$re_d/run.sh" 2>&1 >/dev/null || true
+    { sh "$re_d/run.sh" >/dev/null; } 2>&1 || true
     rm -rf "$re_d"
 }
 RERR=$(repos_err '/media/sr0/apks')
