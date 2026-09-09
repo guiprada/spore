@@ -40,6 +40,20 @@ persist_commit() {
     esac
 }
 
+# A broken trust store is silent until something fetches over HTTPS.
+ca_warnings() {
+    case $(fact_ca_store) in
+        missing) warn "no CA trust store at /etc/ssl/certs/ca-certificates.crt.
+         apk carries its own, so packages install while git, curl and every blob
+         fetch fail with 'unable to get local issuer certificate'.
+         Fix: apk add ca-certificates-bundle" ;;
+        empty)   warn "the CA trust store at /etc/ssl/certs/ca-certificates.crt
+         exists but holds no certificates. update-ca-certificates regenerates
+         that file and can leave it empty.
+         Fix: apk add --force-overwrite ca-certificates-bundle" ;;
+    esac
+}
+
 # The classic diskless trap.
 persist_warnings() {
     [ "$(persist_backend)" = lbu ] || return 0

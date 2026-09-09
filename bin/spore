@@ -249,6 +249,7 @@ cmd_doctor() {
     else
         say 'no spore located — showing host facts only'
     fi
+    ca_warnings
     persist_warnings
 }
 

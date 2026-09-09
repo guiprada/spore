@@ -23,6 +23,34 @@ it is opaque, it covers only `/etc`, and it only works diskless.
 A spore is an apkovl without those limits: text instead of a tarball, any path
 instead of `/etc`, and every host instead of only diskless ones.
 
+## From a stock Alpine
+
+The whole point is that a blank box becomes a specific machine, so getting spore
+onto a blank box is part of the product rather than a preamble to it. On a
+freshly booted Alpine:
+
+```sh
+setup-interfaces && rc-service networking start
+setup-apkrepos -c -f          # a mirror, and community, in one step
+apk add git ca-certificates   # ca-certificates is not optional — see below
+git clone https://github.com/guiprada/spore /root/spore
+cd /root/spore && ./tests/run.sh
+```
+
+**`ca-certificates` is the step that catches people.** apk carries its own trust
+store, so packages install happily while git, curl and every blob fetch die with
+`unable to get local issuer certificate` — which reads like a network fault and
+sends you looking in the wrong place. `spore doctor` reports the store's state
+explicitly for that reason.
+
+If the store is present but *empty*, that is usually `update-ca-certificates`,
+which regenerates the bundle and can leave it with nothing in it. Reinstall the
+bundle rather than regenerating it again:
+
+```sh
+apk add --force-overwrite ca-certificates-bundle
+```
+
 ## The model
 
 ```

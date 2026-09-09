@@ -43,6 +43,23 @@ fact_netadmin() {
     esac
 }
 
+# The CA trust store. apk carries its own, so this can be broken while package
+# installs still work — and then git, curl and every blob fetch fail with
+# "unable to get local issuer certificate", which reads like a network fault.
+# Note that `update-ca-certificates` regenerates the bundle from
+# /usr/share/ca-certificates, so it can leave it EMPTY rather than absent.
+fact_ca_store() {
+    if [ -n "${SPORE_FACT_CA_STORE:-}" ]; then printf '%s' "$SPORE_FACT_CA_STORE"; return 0; fi
+    fcs_b=/etc/ssl/certs/ca-certificates.crt
+    if [ ! -f "$fcs_b" ]; then
+        printf missing
+    elif [ ! -s "$fcs_b" ] || ! grep -q 'BEGIN CERTIFICATE' "$fcs_b" 2>/dev/null; then
+        printf empty
+    else
+        printf ok
+    fi
+}
+
 fact_alpine() {
     if [ -n "${SPORE_FACT_ALPINE:-}" ]; then printf '%s' "$SPORE_FACT_ALPINE"; return 0; fi
     if [ -f /etc/alpine-release ]; then cat /etc/alpine-release; else printf none; fi
@@ -54,6 +71,7 @@ facts_show() {
     printf 'init      %s\n' "$(fact_init)"
     printf 'persist   %s\n' "$(fact_persist)"
     printf 'netadmin  %s\n' "$(fact_netadmin)"
+    printf 'ca store  %s\n' "$(fact_ca_store)"
     printf 'alpine    %s\n' "$(fact_alpine)"
 }
 

@@ -216,6 +216,18 @@ else
     has 'planner refuses conflicting claims' "$CONF" 'written by both'
 fi
 
+# ------------------------------------------------------------- ca store -----
+section 'a broken CA trust store is reported, not left silent'
+CAOK=$(env SPORE_FACT_CA_STORE=ok alpine "$SPORE" --spore "$EX" doctor 2>&1)
+has   'doctor reports the store'      "$CAOK" 'ca store  ok'
+hasnt 'and says nothing when it is fine' "$CAOK" 'CA trust store'
+CAMISS=$(env SPORE_FACT_CA_STORE=missing alpine "$SPORE" --spore "$EX" doctor 2>&1)
+has 'missing store is explained'      "$CAMISS" 'unable to get local issuer certificate'
+has 'and names the fix'               "$CAMISS" 'apk add ca-certificates-bundle'
+CAEMPTY=$(env SPORE_FACT_CA_STORE=empty alpine "$SPORE" --spore "$EX" doctor 2>&1)
+has 'empty store is distinguished'    "$CAEMPTY" 'holds no certificates'
+has 'and warns update-ca-certificates can cause it' "$CAEMPTY" 'can leave it empty'
+
 # ----------------------------------------------------------------- blob -----
 section 'blob verification (hermetic, file:// — no network)'
 BD=$(mktemp -d /tmp/spore-blob.XXXXXX)
@@ -355,6 +367,18 @@ else
     t_fail 'same dir at the same mode from two modules plans fine' "$CDP"
 fi
 rm -rf "$CD"
+
+# ------------------------------------------------------------- ca store -----
+section 'a broken CA trust store is reported, not left silent'
+CAOK=$(env SPORE_FACT_CA_STORE=ok alpine "$SPORE" --spore "$EX" doctor 2>&1)
+has   'doctor reports the store'      "$CAOK" 'ca store  ok'
+hasnt 'and says nothing when it is fine' "$CAOK" 'CA trust store'
+CAMISS=$(env SPORE_FACT_CA_STORE=missing alpine "$SPORE" --spore "$EX" doctor 2>&1)
+has 'missing store is explained'      "$CAMISS" 'unable to get local issuer certificate'
+has 'and names the fix'               "$CAMISS" 'apk add ca-certificates-bundle'
+CAEMPTY=$(env SPORE_FACT_CA_STORE=empty alpine "$SPORE" --spore "$EX" doctor 2>&1)
+has 'empty store is distinguished'    "$CAEMPTY" 'holds no certificates'
+has 'and warns update-ca-certificates can cause it' "$CAEMPTY" 'can leave it empty'
 
 # ----------------------------------------------------------------- blob -----
 section 'a planned blob brings its own CA trust store'
