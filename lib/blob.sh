@@ -25,7 +25,14 @@ blob_install() {
     bi_tmp=$SPORE_WORK/blob.$bi_name
     bi_dst=$(rootpath "$bi_dest")
 
-    fetch_url "$bi_url" "$bi_tmp" || die "failed to download $bi_name from $bi_url"
+    if ! fetch_url "$bi_url" "$bi_tmp"; then
+        if [ ! -f /etc/ssl/certs/ca-certificates.crt ]; then
+            warn "no CA trust store at /etc/ssl/certs/ca-certificates.crt — HTTPS
+         verification cannot succeed. apk carries its own store, so package
+         installs work while this does not. Fix: apk add ca-certificates"
+        fi
+        die "failed to download $bi_name from $bi_url"
+    fi
 
     bi_got=$(sha256_file "$bi_tmp")
     if [ "$bi_got" != "$bi_sha" ]; then

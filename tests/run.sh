@@ -356,6 +356,34 @@ else
 fi
 rm -rf "$CD"
 
+# ----------------------------------------------------------------- blob -----
+section 'a planned blob brings its own CA trust store'
+# A freshly booted Alpine often has no CA store. apk carries its own, so package
+# installs succeed and the first HTTPS blob fetch fails with "unable to get local
+# issuer certificate" — which reads like a network fault, not a missing package.
+BT=$(mktemp -d /tmp/spore-blobplan.XXXXXX)/s
+cp -r "$EX" "$BT"
+cat > "$BT/blobs.conf" <<'BLOBC'
+tool  x86_64   https://example.invalid/t.tgz  aaaa  /usr/local/bin/tool  0755  tool
+tool  aarch64  https://example.invalid/t.tgz  bbbb  /usr/local/bin/tool  0755  tool
+BLOBC
+cat > "$ROOT/modules/zz-blobprobe.sh" <<'PROBE'
+zz-blobprobe_meta() { MOD_DESC='test-only'; MOD_REQUIRES=''; }
+PROBE
+# module names are shell function prefixes, so use a valid identifier
+rm -f "$ROOT/modules/zz-blobprobe.sh"
+cat > "$ROOT/modules/blobprobe.sh" <<'PROBE'
+blobprobe_meta() { MOD_DESC='test-only blob probe'; MOD_REQUIRES=''; }
+blobprobe_plan() { plan_blob tool; }
+PROBE
+sed -i 's/^MODULES=.*/MODULES="blobprobe"/' "$BT/spore.conf"
+BTP=$(alpine "$SPORE" --spore "$BT" plan 2>&1)
+has 'blob is planned'                  "$BTP" 'blob       tool -> /usr/local/bin/tool'
+has 'ca-certificates comes with it'    "$BTP" 'pkg        ca-certificates'
+# and is not dragged in when nothing fetches over HTTPS
+hasnt 'not added when no blob is planned' "$(alpine "$SPORE" --spore "$EX" plan 2>&1)" 'pkg        ca-certificates'
+rm -f "$ROOT/modules/blobprobe.sh"; rm -rf "$BT"
+
 # -------------------------------------------------------------- secrets -----
 section 'secrets travel sealed, never in cleartext'
 if ! command -v age >/dev/null 2>&1; then

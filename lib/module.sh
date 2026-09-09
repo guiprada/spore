@@ -68,6 +68,15 @@ plan_build() {
         plan_pkg age
     fi
 
+    # Blobs are fetched over HTTPS by curl/wget, which need a CA trust store. A
+    # freshly booted Alpine often has none — apk carries its own, so package
+    # installs succeed and the first blob fetch then fails with "unable to get
+    # local issuer certificate", which reads like a network fault rather than a
+    # missing package.
+    if [ -s "$SPORE_PLAN" ] && awk -F'\t' '$2 == "blob" { found = 1 } END { exit !found }' "$SPORE_PLAN"; then
+        plan_pkg ca-certificates
+    fi
+
     plan_validate
 }
 
