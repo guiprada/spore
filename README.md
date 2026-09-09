@@ -44,6 +44,7 @@ Alpine box — and it is the shape the staging executor will need.
 
 | action | live | staging (`build`, planned) |
 |---|---|---|
+| `bootstrap` | run before any package (enable a repo, point the apk cache) | run in the staging chroot |
 | `pkg` | `apk add` | append to `etc/apk/world` |
 | `blob` | fetch, verify sha256, install | fetch into boot-media cache |
 | `dir` / `file` | write under `/` | write under the staging tree |
@@ -51,8 +52,11 @@ Alpine box — and it is the shape the staging executor will need.
 | `firstboot` | run now | emit to `/etc/local.d/` |
 | `persist` | (declaration) | already in the overlay |
 
-`firstboot` is the phase distinction that matters: work that genuinely cannot be
-planned statically — generating an ssh host key — is deferred rather than faked.
+Two phase distinctions matter. `bootstrap` runs *before* packages, because enabling
+the community repository has to precede the `apk add` that depends on it.
+`firstboot` runs *after* everything, and holds work that genuinely cannot be
+planned statically — generating an ssh host key, or a TLS certificate — which is
+deferred rather than faked.
 
 ## A spore
 
@@ -105,10 +109,24 @@ package files are re-downloaded every boot.
 
 | module | does | needs |
 |---|---|---|
+| `repos` | enable community; point the apk cache at persistent media | root |
 | `ssh` | OpenSSH, keys, root/password policy | OpenRC |
-| `dufs` | dufs file server, pinned musl binary, generated OpenRC service | OpenRC |
+| `dufs` | `apk add dufs`, render `/etc/dufs/config.yaml`, TLS, setcap | OpenRC |
+| `users` | accounts, doas rules, persist `/home` | root |
 | `net` | hostname (anywhere), interfaces and DNS | NET_ADMIN for the latter |
 | `firewall` | awall policy generated from every module's declared ports | NET_ADMIN, OpenRC |
+
+**Prefer a package over a blob, always.** dufs is in Alpine community (`arch=all`),
+and its package ships an OpenRC service that already uses `supervise-daemon` and a
+dedicated `dufs:dufs` user. So the module installs the package and writes
+`/etc/dufs/config.yaml` — it does not generate a service. The blob mechanism stays
+for things that genuinely are not packaged; using it where a package exists means
+inheriting none of the distro's init script, user, or upgrades.
+
+Two quirks worth knowing, both learned the hard way rather than guessed:
+binding a port below 1024 as a non-root user needs
+`setcap cap_net_bind_service=+ep`, and `lbu commit` fails unless the boot media is
+remounted read-write first.
 
 Enabling a service opens its port: `firewall` builds its policy from what the
 other modules declared, so there is no second place to remember.
@@ -148,10 +166,11 @@ emit order.
 ./tests/run.sh
 ```
 
-87 checks, no Alpine and no container required: plan assertions, a synthetic-root
+103 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
-`file://`, and both persist backends. `dash -n` covers syntax; `shellcheck -s sh`
+`file://`, per-arch blob resolution, the bootstrap-before-packages ordering
+invariant, and both persist backends. `dash -n` covers syntax; `shellcheck -s sh`
 runs when installed.
 
 ### What the tests cannot cover

@@ -8,6 +8,13 @@ persist_backend() { fact_persist; }
 persist_commit() {
     case $(persist_backend) in
         lbu)
+            # The boot media is often mounted read-only; lbu commit fails against
+            # it without this. LBU_MEDIA names the mount under /media.
+            pc_media=$(conf_get /etc/lbu/lbu.conf LBU_MEDIA '')
+            if [ -n "$pc_media" ] && [ -d "/media/$pc_media" ]; then
+                run mount -o remount,rw "/media/$pc_media"
+            fi
+
             # /etc is already in the overlay by default; everything else has to
             # be declared. Owned paths come from the plan, so this can't drift.
             { plan_persist_paths; plan_all_owned_paths; } | sort -u > "$SPORE_WORK/persist.final"

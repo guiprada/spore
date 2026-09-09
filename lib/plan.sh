@@ -11,6 +11,8 @@
 #   dir       <path> <mode>
 #   file      <path> <mode> <owner> <sha256>
 #   svc       <name> <runlevel> <on|off>
+#   bootstrap <id> <sha256>            runs BEFORE packages (enabling a repo,
+#                                      pointing the apk cache at real media)
 #   firstboot <id> <sha256>            deferred: run now (apply) / emit to
 #                                      /etc/local.d (build)
 #   persist   <path>
@@ -18,7 +20,7 @@
 # Execution order, applied as separate passes so ordering never depends on the
 # order modules happened to emit in. `persist` is absent on purpose: it is a
 # declaration consumed by the `persist` verb, not work done at apply time.
-SPORE_ACTION_ORDER='pkg blob dir file svc firstboot'
+SPORE_ACTION_ORDER='bootstrap pkg blob dir file svc firstboot'
 
 plan_reset() { : > "$SPORE_PLAN"; }
 
@@ -58,6 +60,13 @@ plan_firstboot() {
     pfb_id=$1 pfb_script=$2
     pfb_sha=$(printf '%s\n' "$pfb_script" | content_put)
     _emit firstboot "$pfb_id" "$pfb_sha"
+}
+
+# Same shape as firstboot, but executed before any package is installed.
+plan_bootstrap() {
+    pbs_id=$1 pbs_script=$2
+    pbs_sha=$(printf '%s\n' "$pbs_script" | content_put)
+    _emit bootstrap "$pbs_id" "$pbs_sha"
 }
 
 # plan_blob <name> — resolved against blobs.conf for the target arch at plan time,

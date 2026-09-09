@@ -18,7 +18,8 @@ ssh_plan() {
 
     ssh_conf="Port $ssh_port
 PermitRootLogin $ssh_root
-PasswordAuthentication $ssh_pw"
+PasswordAuthentication $ssh_pw
+PermitEmptyPasswords no"
 
     # Drop-in if the stock config pulls one in, an owned block if not.
     if sshd_include_supported; then

@@ -53,11 +53,15 @@ fi
 section 'plan (pure: no root, no target, no side effects)'
 PLAN=$(alpine "$SPORE" --spore "$EX" plan 2>&1)
 has  'plans openssh package'          "$PLAN" 'pkg        openssh'
-has  'plans dufs blob'                "$PLAN" 'blob       dufs -> /usr/local/bin/dufs'
-has  'plans generated dufs service'   "$PLAN" 'file       /etc/init.d/dufs (0755'
+has  'installs dufs from a package'   "$PLAN" 'pkg        dufs'
+has  'configures dufs via config.yaml' "$PLAN" 'file       /etc/dufs/config.yaml'
+hasnt 'does not generate an init script' "$PLAN" '/etc/init.d/dufs'
+hasnt 'does not fetch dufs as a blob'  "$PLAN" 'blob       dufs'
 has  'plans sshd in default runlevel' "$PLAN" 'svc        sshd -> default [on]'
 has  'plans host keys as firstboot'   "$PLAN" 'firstboot  ssh-hostkeys'
-has  'persists blob dest (diskless)'  "$PLAN" 'persist    /usr/local/bin/dufs'
+has  'enables community before installing' "$PLAN" 'bootstrap  repos-community'
+has  'points apk cache at real media' "$PLAN" 'bootstrap  repos-apkcache'
+has  'persists /home for user accounts' "$PLAN" 'persist    /home'
 has  'warns firewall not activated'   "$PLAN" 'NOT activated'
 hasnt 'carries no private key material' "$PLAN" 'ssh_host_'
 
@@ -69,16 +73,18 @@ export SPORE_RUN_LOG="$LOG"
 OUT=$(alpine "$SPORE" --spore "$EX" --root "$R" apply 2>&1)
 unset SPORE_RUN_LOG
 
-has 'reports changes'        "$OUT" '22 changed, 0 already correct'
+has 'everything was new'        "$OUT" ', 0 already correct'
 check 'authorized_keys is 0600' "$(file_mode "$R/root/.ssh/authorized_keys")" 600
 check '.ssh is 0700'            "$(file_mode "$R/root/.ssh")"                 700
-check 'init.d/dufs is 0755'     "$(file_mode "$R/etc/init.d/dufs")"           755
-check 'conf.d/dufs is 0644'     "$(file_mode "$R/etc/conf.d/dufs")"           644
+check 'doas.d conf is 0600'     "$(file_mode "$R/etc/doas.d/gui.conf")"       600
 
 has 'sshd config carries owned block' "$(cat "$R/etc/ssh/sshd_config")" '# BEGIN spore:sshd'
 has 'sshd port set'                   "$(cat "$R/etc/ssh/sshd_config")" 'Port 22'
-has 'dufs opts rendered'              "$(cat "$R/etc/conf.d/dufs")"     '--bind 0.0.0.0 --port 5000 /srv/dufs'
-has 'dufs uses supervise-daemon'      "$(cat "$R/etc/init.d/dufs")"     'supervisor="supervise-daemon"'
+has 'empty passwords always refused'  "$(cat "$R/etc/ssh/sshd_config")" 'PermitEmptyPasswords no'
+has 'dufs serve-path rendered'        "$(cat "$R/etc/dufs/config.yaml")" "serve-path: '/media/storage'"
+has 'dufs port rendered'              "$(cat "$R/etc/dufs/config.yaml")" 'port: 443'
+has 'dufs TLS wired up'               "$(cat "$R/etc/dufs/config.yaml")" 'tls-cert: /etc/dufs/tls/server.crt'
+has 'doas rule uses persist'          "$(cat "$R/etc/doas.d/gui.conf")" 'permit persist gui as root'
 has 'hostname written'                "$(cat "$R/etc/hostname")"        'galadriel'
 
 section 'external commands the executor would have run'
@@ -87,12 +93,23 @@ has 'apk add openssh'          "$CMDS" 'apk add --no-progress openssh'
 has 'apk add awall'            "$CMDS" 'apk add --no-progress awall'
 has 'rc-update add sshd'       "$CMDS" 'rc-update add sshd default'
 has 'rc-update add dufs'       "$CMDS" 'rc-update add dufs default'
-has 'blob pinned by sha256'    "$CMDS" '817769f726613194bcff9d0e3e481eaccc86ac11208857614f36a8c02f410977'
+has 'apk add dufs'             "$CMDS" 'apk add --no-progress dufs'
+has 'apk add libcap for :443'  "$CMDS" 'apk add --no-progress libcap'
+
+# The ordering invariant: enabling community must precede every apk add, or
+# `apk add dufs` fails on a stock Alpine.
+FIRST_APK=$(grep -n 'apk add' "$LOG" | head -1 | cut -d: -f1)
+FIRST_SH=$(grep -n '^sh ' "$LOG" | head -1 | cut -d: -f1)
+if [ -n "$FIRST_SH" ] && [ -n "$FIRST_APK" ] && [ "$FIRST_SH" -lt "$FIRST_APK" ]; then
+    t_ok 'bootstrap scripts run before any apk add'
+else
+    t_fail 'bootstrap scripts run before any apk add' "first sh=$FIRST_SH first apk=$FIRST_APK"
+fi
 
 section 'firewall policy is generated from other modules ports'
 AW=$(cat "$R/etc/awall/optional/spore.json")
 has 'opens ssh port'  "$AW" '"spore-tcp-22": { "proto": "tcp", "port": [22] }'
-has 'opens dufs port' "$AW" '"spore-tcp-5000": { "proto": "tcp", "port": [5000] }'
+has 'opens dufs port' "$AW" '"spore-tcp-443": { "proto": "tcp", "port": [443] }'
 if command -v python3 >/dev/null 2>&1; then
     if python3 -c "import json,sys; json.load(open('$R/etc/awall/optional/spore.json'))" 2>/dev/null
     then t_ok 'awall policy is valid JSON'; else t_fail 'awall policy is valid JSON'; fi
@@ -104,14 +121,14 @@ LOG2=$(mktemp /tmp/spore-log2.XXXXXX)
 export SPORE_RUN_LOG="$LOG2"
 OUT2=$(alpine "$SPORE" --spore "$EX" --root "$R" apply 2>&1)
 unset SPORE_RUN_LOG
-has   'second apply changes nothing'      "$OUT2" '0 changed, 22 already correct'
+has   'second apply changes nothing'      "$OUT2" '0 changed,'
 check 'second apply runs no commands'     "$(wc -l < "$LOG2" | tr -d ' ')" 0
 
 # -------------------------------------------------------------- dry run -----
 section 'dry run'
 R2=$(mktemp -d /tmp/spore-dry.XXXXXX)
 DRY=$(alpine "$SPORE" --spore "$EX" --root "$R2" --dry-run apply 2>&1)
-has   'announces writes'          "$DRY" 'would write file /etc/conf.d/dufs'
+has   'announces writes'          "$DRY" 'would write file /etc/dufs/config.yaml'
 has   'announces package install' "$DRY" 'would install package openssh'
 check 'writes nothing at all'     "$(find "$R2" -mindepth 1 | wc -l | tr -d ' ')" 0
 
@@ -119,7 +136,7 @@ check 'writes nothing at all'     "$(find "$R2" -mindepth 1 | wc -l | tr -d ' ')
 section 'status and diff'
 ST=$(alpine "$SPORE" --spore "$EX" --root "$R" status 2>&1)
 has 'status clean after apply' "$ST" 'ssh        ok'
-printf 'tampered\n' >> "$R/etc/conf.d/dufs"
+printf '# tampered\n' >> "$R/etc/dufs/config.yaml"
 ST2=$(alpine "$SPORE" --spore "$EX" --root "$R" status 2>&1)
 has 'status detects drift'     "$ST2" 'dufs       1 of'
 DF=$(alpine "$SPORE" --spore "$EX" --root "$R" diff 2>&1)
@@ -133,6 +150,7 @@ LXC=$(env SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=no SPORE_FACT_PERSIST=rootf
           "$SPORE" --spore "$EX" --root "$R3" apply 2>&1)
 has   'unprivileged LXC: firewall n/a'     "$LXC" 'firewall: n/a here (no NET_ADMIN)'
 has   'unprivileged LXC: hostname applied' "$LXC" 'file /etc/hostname'
+has   'unprivileged LXC: dufs still fine'  "$LXC" 'file /etc/dufs/config.yaml'
 has   'unprivileged LXC: interfaces skipped' "$LXC" 'interfaces and DNS skipped'
 check 'unprivileged LXC: no awall policy'  "$([ -f "$R3/etc/awall/optional/spore.json" ] && echo yes || echo no)" no
 hasnt 'unprivileged LXC: no diskless warning' "$LXC" 'nothing here survives a reboot'
@@ -144,10 +162,32 @@ NOINIT=$(env SPORE_FACT_INIT=none SPORE_FACT_NETADMIN=no SPORE_FACT_PERSIST=root
 has 'no OpenRC: ssh n/a'  "$NOINIT" 'ssh: n/a here (no OpenRC)'
 has 'no OpenRC: dufs n/a' "$NOINIT" 'dufs: n/a here (no OpenRC)'
 
-section 'arch selects the right blob'
+section 'arch handling'
+# dufs is arch=all in Alpine community, so nothing in the example spore is
+# arch-specific any more; the spore must still plan cleanly on aarch64.
 A64=$(env SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=yes SPORE_FACT_PERSIST=lbu \
           SPORE_FACT_ARCH=aarch64 SPORE_FACT_ROOT=yes "$SPORE" --spore "$EX" plan 2>&1)
-check 'aarch64 plan builds' "$(printf '%s' "$A64" | grep -c 'blob       dufs')" 1
+has 'aarch64 plans the same package' "$A64" 'pkg        dufs'
+
+# The blob path is still there for genuinely unpackaged things, so its per-arch
+# resolution is tested directly.
+BS=$(mktemp -d /tmp/spore-blobs.XXXXXX)
+cat > "$BS/blobs.conf" <<'BLOBS'
+# name arch url sha256 dest mode member
+tool  x86_64   https://example.invalid/tool-amd64.tgz  aaaa  /usr/local/bin/tool  0755  tool
+tool  aarch64  https://example.invalid/tool-arm64.tgz  bbbb  /usr/local/bin/tool  0755  tool
+BLOBS
+lookup() {
+    env SPORE_DIR="$BS" sh -c '
+        . '"$ROOT"'/lib/core.sh; . '"$ROOT"'/lib/blob.sh
+        SPORE_DIR='"$BS"'
+        blob_lookup tool '"$1"'
+    ' 2>/dev/null
+}
+has   'blob lookup picks x86_64'   "$(lookup x86_64)"  'tool-amd64.tgz'
+has   'blob lookup picks aarch64'  "$(lookup aarch64)" 'tool-arm64.tgz'
+check 'blob lookup fails on unknown arch' "$(lookup riscv64 >/dev/null 2>&1 && echo found || echo absent)" absent
+rm -rf "$BS"
 
 # --------------------------------------------------- marked block append -----
 section 'owned block appends to a stock config and stays idempotent'
@@ -209,7 +249,7 @@ PLOG=$(mktemp /tmp/spore-plog.XXXXXX)
 export SPORE_RUN_LOG="$PLOG"
 alpine "$SPORE" --spore "$EX" --root "$R" persist >/dev/null 2>&1
 unset SPORE_RUN_LOG
-has 'includes paths outside /etc' "$(cat "$PLOG")" 'lbu include /usr/local/bin/dufs'
+has 'includes paths outside /etc' "$(cat "$PLOG")" 'lbu include /home'
 has 'runs lbu commit'             "$(cat "$PLOG")" 'lbu commit'
 hasnt 'does not include /etc (already in overlay)' "$(cat "$PLOG")" 'lbu include /etc'
 

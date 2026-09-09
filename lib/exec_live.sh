@@ -12,12 +12,13 @@ exec_plan() {
         while IFS="$SPORE_TAB" read -r ep_mod ep_act f1 f2 f3 f4 f5 f6; do
             [ -n "$ep_act" ] || continue
             case $ep_act in
+                bootstrap) el_script    bootstrap "$f1" "$f2" ;;
                 pkg)       el_pkg       "$f1" ;;
                 blob)      el_blob      "$f1" "$f2" "$f3" "$f4" "$f5" "$f6" ;;
                 dir)       el_dir       "$f1" "$f2" ;;
                 file)      el_file      "$f1" "$f2" "$f3" "$f4" ;;
                 svc)       el_svc       "$f1" "$f2" "$f3" ;;
-                firstboot) el_firstboot "$f1" "$f2" ;;
+                firstboot) el_script    firstboot "$f1" "$f2" ;;
                 *) warn "unknown action: $ep_act" ;;
             esac
         done < "$SPORE_WORK/pass.tsv"
@@ -116,16 +117,19 @@ el_blob() {
     changed "blob $eb_name"
 }
 
-# Deferred work: run now under `apply`; under `build` this becomes a script in
-# /etc/local.d so it runs at first germination instead.
-el_firstboot() {
-    efb_id=$1 efb_sha=$2
-    efb_stamp=$(rootpath "/var/lib/spore/firstboot/$efb_id")
-    if [ -f "$efb_stamp" ]; then unchanged "firstboot $efb_id"; return 0; fi
-    if ! mutate; then say "would run firstboot $efb_id"; return 0; fi
+# Scripted work, stamped so it runs once. `bootstrap` runs before packages;
+# `firstboot` is deferred work that runs now under `apply` and, under `build`,
+# becomes a script in /etc/local.d that runs at first germination instead.
+el_script() {
+    es_kind=$1 es_id=$2 es_sha=$3
+    es_stamp=$(rootpath "/var/lib/spore/$es_kind/$es_id")
+    if [ -f "$es_stamp" ] && [ "$(cat "$es_stamp")" = "$es_sha" ]; then
+        unchanged "$es_kind $es_id"; return 0
+    fi
+    if ! mutate; then say "would run $es_kind $es_id"; return 0; fi
 
-    run sh "$(content_path "$efb_sha")"
-    mkdir -p "$(dirname "$efb_stamp")"
-    printf '%s\n' "$efb_sha" > "$efb_stamp"
-    changed "firstboot $efb_id"
+    run sh "$(content_path "$es_sha")"
+    mkdir -p "$(dirname "$es_stamp")"
+    printf '%s\n' "$es_sha" > "$es_stamp"
+    changed "$es_kind $es_id"
 }
