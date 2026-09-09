@@ -73,7 +73,8 @@ export SPORE_RUN_LOG="$LOG"
 OUT=$(alpine "$SPORE" --spore "$EX" --root "$R" apply 2>&1)
 unset SPORE_RUN_LOG
 
-has 'everything was new'        "$OUT" ', 0 already correct'
+has 'first apply creates the configs' "$OUT" '+ file /etc/dufs/config.yaml'
+has 'first apply enables the services' "$OUT" '+ service sshd (default)'
 check 'authorized_keys is 0600' "$(file_mode "$R/root/.ssh/authorized_keys")" 600
 check '.ssh is 0700'            "$(file_mode "$R/root/.ssh")"                 700
 check 'doas.d conf is 0600'     "$(file_mode "$R/etc/doas.d/gui.conf")"       600
@@ -212,7 +213,7 @@ printf 'clash\n' > "$CS/files/etc/hostname"
 if CONF=$(alpine "$SPORE" --spore "$CS" plan 2>&1); then
     t_fail 'planner refuses conflicting claims' 'plan succeeded'
 else
-    has 'planner refuses conflicting claims' "$CONF" 'claimed by both'
+    has 'planner refuses conflicting claims' "$CONF" 'written by both'
 fi
 
 # ----------------------------------------------------------------- blob -----
@@ -240,6 +241,75 @@ rm -rf "$BD/out"
 BAD=$(blob_probe 0000000000000000000000000000000000000000000000000000000000000000 || true)
 has   'wrong checksum is rejected'  "$BAD" 'checksum mismatch'
 check 'nothing installed on mismatch' "$([ -e "$BD/out/tool" ] && echo yes || echo no)" no
+
+# -------------------------------------------------------------- storage -----
+section 'storage: declared volumes, fstab as an owned block'
+ST=$(mktemp -d /tmp/spore-stor.XXXXXX)
+mkdir -p "$ST/etc"
+cat > "$ST/etc/fstab" <<'FSTAB'
+# /etc/fstab: static file system information
+UUID=root-uuid  /      ext4  rw,relatime  0 1
+tmpfs           /tmp   tmpfs defaults     0 0
+FSTAB
+alpine "$SPORE" --spore "$EX" --root "$ST" apply >/dev/null 2>&1
+FS=$(cat "$ST/etc/fstab")
+
+has 'existing root entry survives'  "$FS" 'UUID=root-uuid  /      ext4'
+has 'existing tmpfs entry survives' "$FS" 'tmpfs           /tmp'
+has 'block is owned and delimited'  "$FS" '# BEGIN spore:storage'
+check 'original fstab kept as .spore-orig' \
+    "$([ -f "$ST/etc/fstab.spore-orig" ] && echo yes || echo no)" yes
+
+has 'ext4 volume mounted by LABEL' "$FS" 'LABEL=archive	/media/storage/archive	ext4	noatime,nofail'
+has 'exfat gets umask, not chown'  "$FS" 'UUID=A1B2-C3D4	/media/storage/photos	exfat	noatime,nofail,umask=000'
+has 'boot medium is a bind mount'  "$FS" '/media/usb	/media/storage/bootusb	none	bind,nofail'
+
+# nofail on every generated entry: an absent disk must never block boot.
+NOFAIL_MISSING=$(awk '/BEGIN spore:storage/,/END spore:storage/' "$ST/etc/fstab" \
+                 | grep -v '^#' | grep -c -v 'nofail' || true)
+check 'every entry carries nofail' "$NOFAIL_MISSING" 0
+
+has 'filesystem tools installed per type' "$(alpine "$SPORE" --spore "$EX" plan 2>&1)" 'pkg        exfatprogs'
+check 'mountpoints created' \
+    "$([ -d "$ST/media/storage/archive" ] && [ -d "$ST/media/storage/photos" ] && echo yes || echo no)" yes
+
+alpine "$SPORE" --spore "$EX" --root "$ST" apply >/dev/null 2>&1
+check 'block not duplicated on re-apply' "$(grep -c 'BEGIN spore:storage' "$ST/etc/fstab")" 1
+
+SST=$(alpine "$SPORE" --spore "$EX" --root "$ST" status 2>&1)
+has 'status reports live mount state' "$SST" '/media/storage/archive NOT mounted'
+rm -rf "$ST"
+
+section 'storage refuses what it cannot make safe'
+BADS=$(mktemp -d /tmp/spore-badstor.XXXXXX)/s
+cp -r "$EX" "$BADS"
+cat > "$BADS/volumes.conf" <<'BADV'
+../escape  LABEL=x        ext4  -
+weird      notaspec       ext4  -
+risky      LABEL=y        ext4  noatime
+BADV
+BADP=$(alpine "$SPORE" --spore "$BADS" plan 2>&1)
+has 'rejects a name that escapes the root'  "$BADP" "name must be alphanumeric"
+has 'rejects an unrecognised spec'          "$BADP" "is not UUID=, LABEL="
+has 'warns when custom options omit nofail' "$BADP" 'without nofail'
+rm -rf "$BADS"
+
+section 'directory claims: agreement is not conflict'
+# storage and dufs both want /media/storage to exist. Same mode, so that is
+# agreement, not a conflict.
+has 'shared dir at the same mode is allowed' "$(alpine "$SPORE" --spore "$EX" plan 2>&1)" 'dir        /media/storage (0755)'
+
+CD=$(mktemp -d /tmp/spore-dirclash.XXXXXX)/s
+cp -r "$EX" "$CD"
+printf 'STORAGE_ROOT=/srv/shared\n' > "$CD/modules/storage.conf"
+printf 'DUFS_SERVE=/srv/shared\n' >> "$CD/modules/dufs.conf"
+sed -i 's|^archive .*|archive  LABEL=archive  ext4  -|' "$CD/volumes.conf"
+if CDP=$(alpine "$SPORE" --spore "$CD" plan 2>&1); then
+    t_ok 'same dir at the same mode from two modules plans fine'
+else
+    t_fail 'same dir at the same mode from two modules plans fine' "$CDP"
+fi
+rm -rf "$CD"
 
 # -------------------------------------------------------------- secrets -----
 section 'secrets travel sealed, never in cleartext'

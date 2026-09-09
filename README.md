@@ -140,6 +140,7 @@ package files are re-downloaded every boot.
 | `ssh` | OpenSSH, keys, root/password policy | OpenRC |
 | `dufs` | `apk add dufs`, render `/etc/dufs/config.yaml`, TLS, setcap | OpenRC |
 | `users` | accounts, doas rules, persist `/home` | root |
+| `storage` | mount declared volumes under a serve root | root |
 | — | secrets are handled by the core, not a module | `age` on the target |
 | `net` | hostname (anywhere), interfaces and DNS | NET_ADMIN for the latter |
 | `firewall` | awall policy generated from every module's declared ports | NET_ADMIN, OpenRC |
@@ -188,19 +189,54 @@ the actions, so they cannot drift out of sync with what the module writes.
 Two modules claiming the same path is refused at plan time rather than settled by
 emit order.
 
+### Storage
+
+Volumes are declared in `volumes.conf`, keyed by a stable identifier — the
+interactive "which disk?" of a setup wizard has no place in something meant to
+produce the same machine twice.
+
+```
+# <name>  <spec>  <fstype>  <options|->
+archive  LABEL=archive     ext4   -
+photos   UUID=A1B2-C3D4    exfat  -
+bootusb  bind:/media/usb   -      -
+```
+
+`/dev/sdb1` renumbers when you plug things in differently; UUID and LABEL do not.
+`bind:` mounts an existing path, which is how the boot medium gets served without
+exposing it as a raw device.
+
+Three things it will not let you get wrong:
+
+- **`nofail` on every entry.** A disk that is not plugged in must never stop a box
+  from booting.
+- **vfat/exfat/ntfs get `umask`, not `chown`.** Those filesystems carry no Unix
+  ownership, so permissions come from the mount. `STORAGE_OWNER` is applied only
+  to filesystems that can actually hold it, and the chown tolerates failure.
+  (Numeric `STORAGE_FAT_UID`/`GID` only — busybox `mount` does not translate
+  names for the vfat kernel options, so `uid=dufs` would be rejected. `umask=000`
+  already grants access, which makes them optional.)
+- **fstab is an owned block, never a rewrite.** The root filesystem and anything
+  else already in there is not the spore's to touch, and re-applying does not
+  duplicate the block.
+
+A volume whose name would escape the serve root, or whose spec is not a
+recognised identifier, is refused at plan time rather than written into fstab.
+
 ## Tests
 
 ```sh
 ./tests/run.sh
 ```
 
-123 checks, no Alpine and no container required: plan assertions, a synthetic-root
+143 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering
 invariant, both persist backends, and the secrets path end to end with real age
 keys — byte-exact round-trip of a private key, no plaintext in the plan, and a
-`diff` that withholds content. `dash -n` covers syntax; `shellcheck -s sh`
+`diff` that withholds content. Storage is covered against a pre-existing fstab,
+so the test proves the root filesystem entry survives. `dash -n` covers syntax; `shellcheck -s sh`
 runs when installed.
 
 ### What the tests cannot cover

@@ -123,23 +123,30 @@ plan_notes_show() {
     while read -r pn_l; do printf '  %s%s%s\n' "$_c_yellow" "$pn_l" "$_c_reset" >&2; done < "$SPORE_WORK/notes"
 }
 
-# Two modules writing the same path is always a bug — the winner would depend on
-# emit order, and modes would silently disagree. A pure plan makes this cheap to
-# catch, so catch it rather than letting last-writer-wins decide.
+# Two modules writing the same *file* is always a bug — the winner would depend
+# on emit order and the modes could silently disagree. Two modules wanting the
+# same *directory* to exist is not a bug, it is agreement; that is only a
+# conflict when they disagree about its mode. A pure plan makes both cheap to
+# check, so check rather than letting last-writer-wins decide.
 plan_validate() {
     awk -F'\t' '
-        $2 == "file" || $2 == "dir" || $2 == "secret" {
-            if ($3 in owner && owner[$3] != $1)
-                printf "%s\t%s\t%s\n", $3, owner[$3], $1
-            else if ($3 in owner)
-                printf "%s\t%s\t%s\n", $3, owner[$3], $1
-            owner[$3] = $1
+        $2 == "file" || $2 == "secret" || $2 == "dir" {
+            path = $3; mode = $4
+            kind = ($2 == "dir") ? "dir" : "content"
+            if (path in seen) {
+                if (kind != "dir" || seen[path] != "dir")
+                    printf "%s\t%s\t%s\t%s\n", path, owner[path], $1, "written by both"
+                else if (mode_of[path] != mode)
+                    printf "%s\t%s\t%s\t%s\n", path, owner[path], $1,
+                        "created with mode " mode_of[path] " and " mode
+            }
+            seen[path] = kind; mode_of[path] = mode; owner[path] = $1
         }
     ' "$SPORE_PLAN" | sort -u > "$SPORE_WORK/conflicts"
 
     [ -s "$SPORE_WORK/conflicts" ] || return 0
-    while IFS="$SPORE_TAB" read -r pv_path pv_a pv_b; do
-        warn "$pv_path is claimed by both '$pv_a' and '$pv_b'"
+    while IFS="$SPORE_TAB" read -r pv_path pv_a pv_b pv_why; do
+        warn "$pv_path: $pv_why ('$pv_a' and '$pv_b')"
     done < "$SPORE_WORK/conflicts"
     die "conflicting claims in the plan; resolve them before applying"
 }

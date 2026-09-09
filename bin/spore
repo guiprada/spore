@@ -171,6 +171,12 @@ cmd_status() {
         else
             printf '  %-10s %s%s of %s differ%s\n' "$cs_m" "$_c_red" "$cs_drift" "$cs_total" "$_c_reset"
         fi
+
+        # Optional per-module detail the plan cannot know (is a volume mounted?).
+        if command -v "${cs_m}_status_extra" >/dev/null 2>&1; then
+            SPORE_MOD=$cs_m
+            "${cs_m}_status_extra" 2>/dev/null | sed 's/^/               /'
+        fi
     done
     plan_notes_show
 }
