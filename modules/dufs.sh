@@ -48,8 +48,24 @@ allow-delete: true"
         fi
     fi
 
+    # An auth rule carries a password, so it comes from a sealed secret. Naming
+    # it here puts a marker in the template; the value is substituted on the host
+    # at write time and the whole config.yaml becomes a secret action.
+    dufs_auth_secret=$(mconf DUFS_AUTH_SECRET '')
     dufs_auth=$(mconf DUFS_AUTH '')
-    if [ -n "$dufs_auth" ]; then
+    dufs_sensitive=no
+    if [ -n "$dufs_auth_secret" ]; then
+        if secret_exists "$dufs_auth_secret"; then
+            dufs_yaml="$dufs_yaml
+auth:
+  - @@SECRET:$dufs_auth_secret@@"
+            dufs_sensitive=yes
+        else
+            plan_note "dufs: DUFS_AUTH_SECRET names '$dufs_auth_secret', which this spore does not carry"
+        fi
+    elif [ -n "$dufs_auth" ]; then
+        plan_note "dufs: DUFS_AUTH holds a password in cleartext — seal it instead:
+         spore seal dufs-auth, then set DUFS_AUTH_SECRET=dufs-auth"
         dufs_yaml="$dufs_yaml
 auth:
   - $dufs_auth"
@@ -60,9 +76,18 @@ auth:
 tls-cert: $dufs_cert
 tls-key: $dufs_key"
 
-        # A certificate is a secret: generated on the host, never carried in the
-        # spore. Self-signed with the box's own address as CN.
-        if mconf_bool DUFS_TLS_SELFSIGNED no; then
+        # Preferred: the key travels sealed, so the same host identity survives a
+        # rebuild instead of changing under every client.
+        dufs_key_secret=$(mconf DUFS_TLS_KEY_SECRET '')
+        dufs_cert_secret=$(mconf DUFS_TLS_CERT_SECRET '')
+        if [ -n "$dufs_key_secret" ] && secret_exists "$dufs_key_secret"; then
+            plan_secret "$dufs_key" 0600 "$dufs_key_secret" dufs:dufs
+            if [ -n "$dufs_cert_secret" ] && secret_exists "$dufs_cert_secret"; then
+                plan_secret "$dufs_cert" 0644 "$dufs_cert_secret" dufs:dufs
+            else
+                plan_note "dufs: TLS key is sealed but the certificate is not (DUFS_TLS_CERT_SECRET)"
+            fi
+        elif mconf_bool DUFS_TLS_SELFSIGNED no; then
             plan_pkg openssl
             plan_firstboot dufs-tls "set -e
 if [ ! -f '$dufs_cert' ] || [ ! -f '$dufs_key' ]; then
@@ -78,7 +103,11 @@ chmod 600 '$dufs_key' 2>/dev/null || true"
         fi
     fi
 
-    plan_file /etc/dufs/config.yaml 0644 "$dufs_yaml"
+    if [ "$dufs_sensitive" = yes ]; then
+        plan_secret_file /etc/dufs/config.yaml 0640 "$dufs_yaml" dufs:dufs
+    else
+        plan_file /etc/dufs/config.yaml 0644 "$dufs_yaml"
+    fi
 
     # Binding below 1024 as a non-root user needs the capability, or the service
     # starts and immediately fails.

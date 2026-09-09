@@ -17,6 +17,7 @@ exec_plan() {
                 blob)      el_blob      "$f1" "$f2" "$f3" "$f4" "$f5" "$f6" ;;
                 dir)       el_dir       "$f1" "$f2" ;;
                 file)      el_file      "$f1" "$f2" "$f3" "$f4" ;;
+                secret)    el_secret    "$f1" "$f2" "$f3" "$f4" ;;
                 svc)       el_svc       "$f1" "$f2" "$f3" ;;
                 firstboot) el_script    firstboot "$f1" "$f2" ;;
                 *) warn "unknown action: $ep_act" ;;
@@ -72,6 +73,33 @@ el_file() {
         run chown "$ef_owner" "$ef_dst"
     fi
     changed "file $ef_path"
+}
+
+# Rendered under umask 077 into the workspace, compared, then moved. The
+# plaintext is never logged, never announced, and never enters the content store.
+el_secret() {
+    esc_path=$1 esc_mode=$2 esc_owner=$3 esc_sha=$4
+    esc_dst=$(rootpath "$esc_path")
+
+    if ! mutate; then say "would write secret $esc_path"; return 0; fi
+
+    esc_tmp=$SPORE_WORK/secret.out
+    (umask 077; secret_render "$(content_path "$esc_sha")" > "$esc_tmp")
+
+    if [ -f "$esc_dst" ] && [ "$(sha256_file "$esc_dst")" = "$(sha256_file "$esc_tmp")" ]; then
+        rm -f "$esc_tmp"
+        unchanged "secret $esc_path"
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$esc_dst")"
+    (umask 077; cat "$esc_tmp" > "$esc_dst")
+    chmod "$esc_mode" "$esc_dst"
+    rm -f "$esc_tmp"
+    if [ "$esc_owner" != root:root ] && ! synthetic && [ "$(fact_root)" = yes ]; then
+        run chown "$esc_owner" "$esc_dst"
+    fi
+    changed "secret $esc_path"
 }
 
 el_svc() {

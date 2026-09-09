@@ -62,6 +62,12 @@ plan_build() {
     plan_spore_packages
     plan_spore_files
 
+    # Secrets are decrypted on the target, so age has to be there first. The
+    # package pass runs before the secret pass, so declaring it here suffices.
+    if [ -s "$SPORE_PLAN" ] && awk -F'\t' '$2 == "secret" { found = 1 } END { exit !found }' "$SPORE_PLAN"; then
+        plan_pkg age
+    fi
+
     plan_validate
 }
 

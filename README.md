@@ -48,6 +48,7 @@ Alpine box — and it is the shape the staging executor will need.
 | `pkg` | `apk add` | append to `etc/apk/world` |
 | `blob` | fetch, verify sha256, install | fetch into boot-media cache |
 | `dir` / `file` | write under `/` | write under the staging tree |
+| `secret` | decrypt and substitute, `umask 077` | deferred to first boot |
 | `svc` | `rc-update add` | symlink into `etc/runlevels/` |
 | `firstboot` | run now | emit to `/etc/local.d/` |
 | `persist` | (declaration) | already in the overlay |
@@ -77,8 +78,34 @@ execution and would make validation impossible.
 from `MOD_DATA` (payload → a mount). Mixing them is what makes a portable config
 stop being portable, so they are kept apart from the start.
 
-**Secrets are never carried.** Host keys are generated on arrival; passwords come
-from the host. A spore is safe to commit.
+**Secrets travel sealed, never in cleartext.** A spore carries its secrets as
+[age](https://github.com/FiloSottile/age) ciphertext in `secrets/<name>.age`,
+alongside the public `secrets/recipients`. Both are safe to commit. The private
+identity lives on the host and is the one thing a spore cannot carry — it is what
+unlocks everything the spore does carry.
+
+```sh
+spore seal dufs-auth                  # reads the value from stdin
+spore seal ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key
+spore secrets                         # what this spore carries
+```
+
+Reference a sealed secret from a module and it is substituted **on the host at
+write time**:
+
+```
+DUFS_AUTH_SECRET=dufs-auth
+SSH_HOST_KEY_SECRETS="ssh_host_ed25519_key"
+```
+
+Plaintext never enters the plan. The content store holds a template with
+`@@SECRET:name@@` markers; the executor decrypts under `umask 077` straight to
+the destination. `plan` shows the marker, `diff` reports that a secret differs
+without printing it, and a file that carries a secret is written 0600/0640 rather
+than world-readable.
+
+Sealing the ssh host keys means a rebuilt box keeps its identity, so clients never
+see `REMOTE HOST IDENTIFICATION HAS CHANGED`.
 
 ## Hosts differ, honestly
 
@@ -113,6 +140,7 @@ package files are re-downloaded every boot.
 | `ssh` | OpenSSH, keys, root/password policy | OpenRC |
 | `dufs` | `apk add dufs`, render `/etc/dufs/config.yaml`, TLS, setcap | OpenRC |
 | `users` | accounts, doas rules, persist `/home` | root |
+| — | secrets are handled by the core, not a module | `age` on the target |
 | `net` | hostname (anywhere), interfaces and DNS | NET_ADMIN for the latter |
 | `firewall` | awall policy generated from every module's declared ports | NET_ADMIN, OpenRC |
 
@@ -166,11 +194,13 @@ emit order.
 ./tests/run.sh
 ```
 
-103 checks, no Alpine and no container required: plan assertions, a synthetic-root
+123 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering
-invariant, and both persist backends. `dash -n` covers syntax; `shellcheck -s sh`
+invariant, both persist backends, and the secrets path end to end with real age
+keys — byte-exact round-trip of a private key, no plaintext in the plan, and a
+`diff` that withholds content. `dash -n` covers syntax; `shellcheck -s sh`
 runs when installed.
 
 ### What the tests cannot cover
@@ -182,8 +212,8 @@ cannot physically reach — especially `awall activate`.
 
 ## Not yet
 
-`build` (bake an apkovl offline so a box boots already configured) · `age`
--encrypted secrets · the fleet layer (`diff hostA hostB`, profile inheritance,
+`build` (bake an apkovl offline so a box boots already configured) · the fleet
+layer (`diff hostA hostB`, profile inheritance,
 `push` over ssh).
 
 `build` is the reason the planner is pure. It is one more executor over an action

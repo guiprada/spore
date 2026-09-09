@@ -12,7 +12,7 @@ SPORE_PREFIX=$(CDPATH='' cd -- "$(dirname -- "$SPORE_SELF")/.." && pwd)
 SPORE_LIB=$SPORE_PREFIX/lib
 SPORE_MODULES=$SPORE_PREFIX/modules
 
-for _f in core conf facts plan render blob module exec_live exec_print persist; do
+for _f in core conf facts plan render blob secret module exec_live exec_print persist; do
     . "$SPORE_LIB/$_f.sh"
 done
 
@@ -33,12 +33,15 @@ commands:
   persist        make the current state survive a reboot
   doctor         host facts and sanity checks
   modules        list available modules
+  secrets        list the secrets this spore carries
+  seal NAME [F]  encrypt F (or stdin) into the spore as NAME
 
 options:
   -s, --spore DIR   the spore to use (default: $SPORE_DIR, ./spore,
                     or /var/lib/spore/spore)
   -r, --root DIR    apply under DIR instead of / (synthetic root)
   -n, --dry-run     announce actions, change nothing
+  -i, --identity F  age identity used to decrypt this spore's secrets
       --persist     with `apply`: commit afterwards
   -h, --help        this
   -V, --version     version
@@ -53,6 +56,7 @@ while [ $# -gt 0 ]; do
         -s|--spore)   [ $# -ge 2 ] || die "--spore needs a directory"; SPORE_DIR=$2; shift 2 ;;
         -r|--root)    [ $# -ge 2 ] || die "--root needs a directory";  SPORE_ROOT=$2; shift 2 ;;
         -n|--dry-run) SPORE_DRYRUN=1; shift ;;
+        -i|--identity) [ $# -ge 2 ] || die "--identity needs a file"; SPORE_IDENTITY=$2; shift 2 ;;
         --persist)    SPORE_DO_PERSIST=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         -V|--version) printf 'spore %s\n' "$SPORE_VERSION"; exit 0 ;;
@@ -147,6 +151,10 @@ cmd_status() {
                     if [ ! -f "$cs_dst" ] || [ "$(sha256_file "$cs_dst")" != "$g4" ]; then
                         cs_drift=$((cs_drift + 1))
                     fi ;;
+                secret)
+                    cs_total=$((cs_total + 1))
+                    cs_dst=$(rootpath "$g1")
+                    if [ ! -f "$cs_dst" ]; then cs_drift=$((cs_drift + 1)); fi ;;
                 svc)
                     cs_total=$((cs_total + 1))
                     cs_link=$(rootpath "/etc/runlevels/$g2/$g1")
@@ -170,6 +178,31 @@ cmd_status() {
 cmd_diff() {
     prepare
     cd_any=0
+    # Secrets are compared, never displayed: a diff that prints a decrypted
+    # private key defeats the point of carrying it encrypted.
+    plan_lines_of_type secret > "$SPORE_WORK/secrets.tsv"
+    while IFS="$SPORE_TAB" read -r cs2_mod cs2_act k1 k2 k3 k4; do
+        [ -n "$k1" ] || continue
+        cd_any=1
+        cs2_dst=$(rootpath "$k1")
+        if ! secret_can_decrypt; then
+            printf '%s??? %s (encrypted; no identity available to compare)%s\n' \
+                "$_c_yellow" "$k1" "$_c_reset"
+        elif [ ! -f "$cs2_dst" ]; then
+            printf '%s+++ %s (absent; would be written from an encrypted secret)%s\n' \
+                "$_c_green" "$k1" "$_c_reset"
+        else
+            (umask 077; secret_render "$(content_path "$k4")" > "$SPORE_WORK/cmp.out")
+            if [ "$(sha256_file "$cs2_dst")" = "$(sha256_file "$SPORE_WORK/cmp.out")" ]; then
+                cd_any=0
+            else
+                printf '%s!!! %s (differs from the spore; content withheld)%s\n' \
+                    "$_c_yellow" "$k1" "$_c_reset"
+            fi
+            rm -f "$SPORE_WORK/cmp.out"
+        fi
+    done < "$SPORE_WORK/secrets.tsv"
+
     plan_lines_of_type file > "$SPORE_WORK/files.tsv"
     while IFS="$SPORE_TAB" read -r cd_mod cd_act h1 h2 h3 h4; do
         cd_dst=$(rootpath "$h1")
@@ -213,6 +246,38 @@ cmd_doctor() {
     persist_warnings
 }
 
+cmd_secrets() {
+    spore_load
+    if [ ! -d "$SPORE_DIR/secrets" ]; then
+        printf 'this spore carries no secrets\n'; return 0
+    fi
+    printf 'identity  %s%s\n' "$(secret_identity)" \
+        "$([ -f "$(secret_identity)" ] && printf '' || printf '  (not present here)')"
+    printf 'recipients %s\n\n' \
+        "$([ -f "$SPORE_DIR/secrets/recipients" ] && printf 'secrets/recipients' || printf '(none — cannot seal)')"
+    for cse_s in $(secret_list); do
+        printf '  %s\n' "$cse_s"
+    done
+}
+
+cmd_seal() {
+    [ $# -ge 1 ] || die "usage: spore seal NAME [FILE]"
+    spore_load
+    cse_name=$1
+    cse_src=${2:--}
+    cse_rcpt=$SPORE_DIR/secrets/recipients
+    [ -f "$cse_rcpt" ] || die "no secrets/recipients in this spore — add age public keys there first"
+    command -v "$SPORE_AGE" >/dev/null 2>&1 || die "age is not installed"
+    mkdir -p "$SPORE_DIR/secrets"
+    if [ "$cse_src" = - ]; then
+        "$SPORE_AGE" --encrypt -R "$cse_rcpt" -o "$SPORE_DIR/secrets/$cse_name.age"
+    else
+        [ -f "$cse_src" ] || die "no such file: $cse_src"
+        "$SPORE_AGE" --encrypt -R "$cse_rcpt" -o "$SPORE_DIR/secrets/$cse_name.age" "$cse_src"
+    fi
+    printf 'sealed secrets/%s.age\n' "$cse_name"
+}
+
 cmd_modules() {
     for cm_m in $(module_available); do
         SPORE_DIR=${SPORE_DIR:-/nonexistent}
@@ -228,11 +293,13 @@ cmd_modules() {
 cmd_init() {
     ci_dir=${1:-./spore}
     [ ! -e "$ci_dir" ] || die "$ci_dir already exists"
-    mkdir -p "$ci_dir/modules" "$ci_dir/files"
+    mkdir -p "$ci_dir/modules" "$ci_dir/files" "$ci_dir/secrets"
     cat > "$ci_dir/spore.conf" <<'INIT'
 FORMAT=1
 HOST=changeme
 MODULES="ssh net"
+# Where the age private key lives on the host. Never inside the spore.
+SECRETS_IDENTITY=/etc/spore/identity
 INIT
     cat > "$ci_dir/modules/ssh.conf" <<'INIT'
 SSH_ENABLED=yes
@@ -259,6 +326,8 @@ case $SPORE_CMD in
     persist) cmd_persist ;;
     doctor)  cmd_doctor ;;
     modules|module) cmd_modules ;;
+    secrets) cmd_secrets ;;
+    seal)    cmd_seal "$@" ;;
     help)    usage ;;
     *)       die "unknown command: $SPORE_CMD (try: spore --help)" ;;
 esac

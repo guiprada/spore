@@ -241,6 +241,84 @@ BAD=$(blob_probe 000000000000000000000000000000000000000000000000000000000000000
 has   'wrong checksum is rejected'  "$BAD" 'checksum mismatch'
 check 'nothing installed on mismatch' "$([ -e "$BD/out/tool" ] && echo yes || echo no)" no
 
+# -------------------------------------------------------------- secrets -----
+section 'secrets travel sealed, never in cleartext'
+if ! command -v age >/dev/null 2>&1; then
+    printf '  skip  age not installed\n'
+else
+    SD=$(mktemp -d /tmp/spore-sec.XXXXXX)
+    cp -r "$EX" "$SD/s"
+    mkdir -p "$SD/s/secrets"
+    age-keygen -o "$SD/identity" 2>"$SD/pub"
+    grep -o 'age1[a-z0-9]*' "$SD/pub" > "$SD/s/secrets/recipients"
+    sed -i "s|^SECRETS_IDENTITY=.*|SECRETS_IDENTITY=$SD/identity|" "$SD/s/spore.conf"
+
+    # a single-line field secret, and a multi-line whole-file secret
+    printf 'admin:hunter2@/:rw' | "$SPORE" --spore "$SD/s" seal dufs-auth >/dev/null
+    openssl genpkey -algorithm ed25519 -out "$SD/hostkey" 2>/dev/null
+    KEY_SHA=$(sha256sum "$SD/hostkey" | cut -d' ' -f1)
+    "$SPORE" --spore "$SD/s" seal ssh_host_ed25519_key "$SD/hostkey" >/dev/null
+    printf 'DUFS_AUTH_SECRET=dufs-auth\n' >> "$SD/s/modules/dufs.conf"
+    printf 'SSH_HOST_KEY_SECRETS="ssh_host_ed25519_key"\n' >> "$SD/s/modules/ssh.conf"
+
+    check 'sealed file is age ciphertext' \
+        "$(head -c 14 "$SD/s/secrets/dufs-auth.age")" 'age-encryption'
+    hasnt 'ciphertext does not contain the password' \
+        "$(cat "$SD/s/secrets/dufs-auth.age")" 'hunter2'
+
+    SP=$(alpine "$SPORE" --spore "$SD/s" plan 2>&1)
+    has 'config carrying a password becomes a secret action' "$SP" 'secret     /etc/dufs/config.yaml'
+    has 'host key is a secret action'                        "$SP" 'secret     /etc/ssh/ssh_host_ed25519_key'
+    has 'age is installed before secrets are written'        "$SP" 'pkg        age'
+    hasnt 'plan never shows the password'                    "$SP" 'hunter2'
+
+    SR=$(mktemp -d /tmp/spore-secroot.XXXXXX)
+    SW=$(mktemp -d /tmp/spore-secwork.XXXXXX)
+    SPORE_WORK=$SW alpine "$SPORE" --spore "$SD/s" --root "$SR" apply >/dev/null 2>&1
+
+    # The property that matters: plaintext never enters the plan.
+    if grep -rq -e hunter2 -e 'PRIVATE KEY' "$SW" 2>/dev/null
+    then t_fail 'plaintext never enters the plan workspace' "found under $SW"
+    else t_ok 'plaintext never enters the plan workspace'; fi
+    has 'content store holds only a marker' \
+        "$(cat "$SW"/content/* 2>/dev/null)" '@@SECRET:dufs-auth@@'
+
+    check 'whole-file secret round-trips byte for byte' \
+        "$(sha256sum "$SR/etc/ssh/ssh_host_ed25519_key" | cut -d' ' -f1)" "$KEY_SHA"
+    check 'host key is 0600' "$(file_mode "$SR/etc/ssh/ssh_host_ed25519_key")" 600
+    check 'secret-bearing config is 0640' "$(file_mode "$SR/etc/dufs/config.yaml")" 640
+    has 'field secret substituted on the host' \
+        "$(cat "$SR/etc/dufs/config.yaml")" 'admin:hunter2@/:rw'
+
+    # diff must compare without ever printing the value
+    printf '# drift\n' >> "$SR/etc/dufs/config.yaml"
+    SDF=$(alpine "$SPORE" --spore "$SD/s" --root "$SR" diff 2>&1)
+    has   'diff reports a drifted secret'    "$SDF" 'differs from the spore; content withheld'
+    hasnt 'diff never prints the password'   "$SDF" 'hunter2'
+
+    SEC2=$(alpine "$SPORE" --spore "$SD/s" --root "$SR" apply 2>&1)
+    has 'secrets are idempotent once correct' "$SEC2" '. secret /etc/ssh/ssh_host_ed25519_key'
+
+    # dry run must not require the identity at all
+    SDRY=$(env SPORE_IDENTITY=/nonexistent SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=yes \
+               SPORE_FACT_PERSIST=lbu SPORE_FACT_ROOT=yes \
+               "$SPORE" --spore "$SD/s" --root "$(mktemp -d)" --dry-run apply 2>&1)
+    has 'dry run needs no identity' "$SDRY" 'would write secret /etc/dufs/config.yaml'
+
+    # a missing identity must fail loudly, not silently write a marker
+    SBAD=$(env SPORE_IDENTITY=/nonexistent SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=yes \
+                SPORE_FACT_PERSIST=lbu SPORE_FACT_ROOT=yes \
+                "$SPORE" --spore "$SD/s" --root "$(mktemp -d)" apply 2>&1 || true)
+    has 'missing identity is a clear error' "$SBAD" 'needs the identity at'
+
+    # naming a secret the spore does not carry is reported, not ignored
+    printf 'SSH_HOST_KEY_SECRETS="ssh_host_rsa_key"\n' >> "$SD/s/modules/ssh.conf"
+    SMISS=$(alpine "$SPORE" --spore "$SD/s" plan 2>&1)
+    has 'missing secret is reported' "$SMISS" "does not carry"
+
+    rm -rf "$SD" "$SR" "$SW"
+fi
+
 # -------------------------------------------------------------- persist -----
 section 'persist backends'
 PR=$(alpine "$SPORE" --spore "$EX" --root "$R" persist 2>&1)

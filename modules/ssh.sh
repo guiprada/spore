@@ -38,8 +38,33 @@ PermitEmptyPasswords no"
         fi
     fi
 
-    # Host keys are secrets: never carried, generated on arrival.
-    plan_firstboot ssh-hostkeys 'ssh-keygen -A'
+    # Host keys are secrets. Sealed into the spore they travel with it, so a
+    # rebuilt box keeps its identity and clients do not see the
+    # REMOTE HOST IDENTIFICATION HAS CHANGED warning. ssh-keygen -A afterwards
+    # only fills in key types that are missing, so it leaves ours alone.
+    ssh_key_secrets=$(mconf SSH_HOST_KEY_SECRETS '')
+    ssh_restored=''
+    for ssh_k in $ssh_key_secrets; do
+        if secret_exists "$ssh_k"; then
+            plan_secret "/etc/ssh/$ssh_k" 0600 "$ssh_k"
+            ssh_restored="$ssh_restored /etc/ssh/$ssh_k"
+        else
+            plan_note "ssh: SSH_HOST_KEY_SECRETS names '$ssh_k', which this spore does not carry"
+        fi
+    done
+
+    if [ -n "$ssh_restored" ]; then
+        # Public halves are derived, never stored.
+        plan_firstboot ssh-hostkeys "set -e
+for k in$ssh_restored; do
+    [ -f \"\$k\" ] || continue
+    ssh-keygen -y -f \"\$k\" > \"\$k.pub\"
+    chmod 644 \"\$k.pub\"
+done
+ssh-keygen -A"
+    else
+        plan_firstboot ssh-hostkeys 'ssh-keygen -A'
+    fi
 
     if mconf_bool SSH_ENABLED yes; then
         plan_svc sshd default on
