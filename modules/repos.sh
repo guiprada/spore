@@ -32,7 +32,9 @@ elif grep -qE "^[[:space:]]*#.*/community" "$f"; then
 else
     main=$(grep -m1 -E "^[[:space:]]*[^#[:space:]].*/main[[:space:]]*$" "$f" || true)
     if [ -z "$main" ]; then
-        echo "spore: no active /main repository in $f to derive /community from" >&2
+        echo "spore: no active /main repository in $f to derive /community from." >&2
+        echo "spore: a booted ISO often lists only its local /apks repository." >&2
+        echo "spore: run \`setup-apkrepos -1\` to add a network mirror, then apply again." >&2
         exit 1
     fi
     printf "%s\n" "$main" | sed "s|/main[[:space:]]*$|/community|" >> "$f"

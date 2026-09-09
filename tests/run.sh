@@ -272,6 +272,19 @@ check 'leaves an enabled community alone' \
 # A booted ISO: a local apks repo alongside the network mirror, which must survive.
 check 'keeps a local ISO repo and still adds community' \
     "$(repos_case x "$(printf '/media/usb/apks\nhttps://x/alpine/v3.20/main')")" '1 3'
+
+# A freshly booted ISO before setup-apkrepos: only its own local repository, no
+# mirror to derive community from. Refusing is right; refusing silently is not.
+repos_err() {
+    re_d=$(mktemp -d); mkdir -p "$re_d/etc/apk"
+    printf '%s\n' "$1" > "$re_d/etc/apk/repositories"
+    sed "s|/etc/apk/repositories|$re_d/etc/apk/repositories|g; s|^apk update|true|" "$RSCRIPT" > "$re_d/run.sh"
+    sh "$re_d/run.sh" 2>&1 >/dev/null || true
+    rm -rf "$re_d"
+}
+RERR=$(repos_err '/media/sr0/apks')
+has 'booted ISO with no mirror is a clear error' "$RERR" 'no active /main repository'
+has 'and says how to fix it'                     "$RERR" 'setup-apkrepos -1'
 rm -rf "$RW"
 
 # -------------------------------------------------------------- storage -----
