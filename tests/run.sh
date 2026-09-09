@@ -230,6 +230,7 @@ SPORE_FACT_CA_STORE=empty
 CAEMPTY=$(alpine "$SPORE" --spore "$EX" doctor 2>&1)
 has 'empty store is distinguished'    "$CAEMPTY" 'holds no certificates'
 has 'and warns update-ca-certificates can cause it' "$CAEMPTY" 'can leave it empty'
+has 'and warns that s_client will mislead'          "$CAEMPTY" 'does not mean this is fine'
 unset SPORE_FACT_CA_STORE
 
 # ----------------------------------------------------------------- blob -----
@@ -386,6 +387,7 @@ SPORE_FACT_CA_STORE=empty
 CAEMPTY=$(alpine "$SPORE" --spore "$EX" doctor 2>&1)
 has 'empty store is distinguished'    "$CAEMPTY" 'holds no certificates'
 has 'and warns update-ca-certificates can cause it' "$CAEMPTY" 'can leave it empty'
+has 'and warns that s_client will mislead'          "$CAEMPTY" 'does not mean this is fine'
 unset SPORE_FACT_CA_STORE
 
 # ----------------------------------------------------------------- blob -----

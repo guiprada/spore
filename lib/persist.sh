@@ -50,7 +50,14 @@ ca_warnings() {
         empty)   warn "the CA trust store at /etc/ssl/certs/ca-certificates.crt
          exists but holds no certificates. update-ca-certificates regenerates
          that file and can leave it empty.
-         Fix: apk add --force-overwrite ca-certificates-bundle" ;;
+
+         Note that \`openssl s_client\` will still verify happily: it reads the
+         DIRECTORY /etc/ssl/certs, while git and curl read the single bundle
+         FILE. A passing s_client does not mean this is fine.
+
+         Fix: apk add --force-overwrite ca-certificates-bundle
+         (do not run update-ca-certificates after — that is what empties it)
+         Or point a tool at the directory: git config http.sslCAPath /etc/ssl/certs" ;;
     esac
 }
 

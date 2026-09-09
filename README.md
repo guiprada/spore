@@ -51,6 +51,14 @@ bundle rather than regenerating it again:
 apk add --force-overwrite ca-certificates-bundle
 ```
 
+The confusing part, worth knowing before you spend an evening on it: `openssl
+s_client` reads the **directory** `/etc/ssl/certs/`, while git and curl read the
+single **bundle file** `/etc/ssl/certs/ca-certificates.crt`. So an empty bundle
+gives you `verify return:1` from openssl and `unable to get local issuer
+certificate` from git, at the same time, on the same box. A passing `s_client` is
+not evidence the store is healthy — count the certificates in the bundle
+instead, which is what `spore doctor` does.
+
 ## The model
 
 ```
