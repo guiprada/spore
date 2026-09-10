@@ -16,7 +16,7 @@ mconf()      { conf_get  "$SPORE_DIR/modules/$SPORE_MOD.conf" "$1" "${2-}"; }
 mconf_bool() { conf_bool "$SPORE_DIR/modules/$SPORE_MOD.conf" "$1" "${2-}"; }
 
 module_meta() {
-    MOD_DESC='' MOD_REQUIRES='' MOD_DATA='' MOD_PORTS=''
+    MOD_DESC='' MOD_REQUIRES='' MOD_DATA='' MOD_PORTS='' MOD_LOGINS=''
     SPORE_MOD=$1
     "${1}_meta"
 }
@@ -33,6 +33,7 @@ plan_build() {
     plan_reset
     : > "$SPORE_WORK/skipped"
     SPORE_ALL_PORTS=''
+    SPORE_ALL_LOGINS=''
 
     for pb_m in $SPORE_MODULE_LIST; do
         module_load "$pb_m"
@@ -48,6 +49,7 @@ plan_build() {
             continue
         fi
         SPORE_ALL_PORTS="$SPORE_ALL_PORTS $MOD_PORTS"
+        SPORE_ALL_LOGINS="$SPORE_ALL_LOGINS $MOD_LOGINS"
     done
 
     # Pass 2 — emit actions.

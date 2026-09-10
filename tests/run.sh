@@ -82,8 +82,7 @@ unset SPORE_RUN_LOG
 
 has 'first apply creates the configs' "$OUT" '+ file /etc/dufs/config.yaml'
 has 'first apply enables the services' "$OUT" '+ service sshd (default)'
-check 'authorized_keys is 0600' "$(file_mode "$R/root/.ssh/authorized_keys")" 600
-check '.ssh is 0700'            "$(file_mode "$R/root/.ssh")"                 700
+check 'doas.d conf is 0600'     "$(file_mode "$R/etc/doas.d/gui.conf")"       600
 check 'doas.d conf is 0600'     "$(file_mode "$R/etc/doas.d/gui.conf")"       600
 
 has 'sshd config carries owned block' "$(cat "$R/etc/ssh/sshd_config")" '# BEGIN spore:sshd'
@@ -106,10 +105,41 @@ has 'doas rule uses persist'          "$(cat "$R/etc/doas.d/gui.conf")" 'permit 
 
 section 'a user with no key cannot log in, and is told so'
 UK=$(mktemp -d)/s; cp -r "$EX" "$UK"
+rm -f "$UK/keys/gui.authorized_keys"
+# ssh must refuse outright when nothing could log in.
+if UKP=$(alpine "$SPORE" --spore "$UK" plan 2>&1); then
+    t_fail 'ssh refuses when nothing could log in' 'plan succeeded'
+else
+    has 'ssh refuses when nothing could log in' "$UKP" 'Nothing could log in'
+fi
+
+# The other refusal: a password-less root exposed to the network.
+UKD=$(mktemp -d)/s; cp -r "$EX" "$UKD"
+sed -i 's/^SSH_PERMIT_ROOT_LOGIN=.*/SSH_PERMIT_ROOT_LOGIN=yes/; s/^SSH_PASSWORD_AUTH=.*/SSH_PASSWORD_AUTH=yes/' \
+    "$UKD/modules/ssh.conf"
+export SPORE_FACT_ROOT_PASSWORD=empty
+if UKDP=$(alpine "$SPORE" --spore "$UKD" plan 2>&1); then
+    t_fail 'ssh refuses a password-less root on the network' 'plan succeeded'
+else
+    has 'ssh refuses a password-less root on the network' "$UKDP" 'unauthenticated root shell'
+fi
+# ...and allows it once root has a password.
+SPORE_FACT_ROOT_PASSWORD=set
+if alpine "$SPORE" --spore "$UKD" plan >/dev/null 2>&1; then
+    t_ok 'and allows it once root has a password'
+else
+    t_fail 'and allows it once root has a password'
+fi
+unset SPORE_FACT_ROOT_PASSWORD
+rm -rf "$UKD"
+sed -i 's/^USERS=.*/USERS=""/' "$UK/modules/users.conf"
+sed -i 's/^USERS_DOAS=.*/USERS_DOAS=""/' "$UK/modules/users.conf"
+sed -i 's/^SSH_ENABLED=.*/SSH_ENABLED=no/' "$UK/modules/ssh.conf"
 UKP=$(alpine "$SPORE" --spore "$UK" plan 2>&1)
-has 'warns about a keyless user' "$UKP" 'has no way to log in over ssh'
+has 'ssh disabled plans it off' "$UKP" 'svc        sshd -> default [off]'
 # With a key present, account creation and key install are one action.
 mkdir -p "$UK/keys"
+sed -i 's/^USERS=.*/USERS="gui"/' "$UK/modules/users.conf"
 printf 'ssh-ed25519 AAAATEST tester\n' > "$UK/keys/gui.authorized_keys"
 UKR=$(mktemp -d)
 alpine "$SPORE" --spore "$UK" --root "$UKR" apply >/dev/null 2>&1
@@ -118,7 +148,7 @@ SPORE_WORK=$UKW alpine "$SPORE" --spore "$UK" plan >/dev/null 2>&1
 UKS=$(cat "$UKW"/content/* 2>/dev/null | grep -A6 'adduser -D')
 has 'installs the key with the account' "$UKS" '/home/gui/.ssh'
 has 'and the key content itself'        "$UKS" 'ssh-ed25519 AAAATEST'
-hasnt 'no longer warns once a key exists' "$(alpine "$SPORE" --spore "$UK" plan 2>&1)" 'has no way to log in'
+has 'a keyed account is a usable login' "$(alpine "$SPORE" --spore "$UK" plan 2>&1)" 'firstboot  user-gui'
 rm -rf "$UK" "$UKR" "$UKW"
 has 'hostname written'                "$(cat "$R/etc/hostname")"        'changeme'
 

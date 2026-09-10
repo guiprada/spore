@@ -7,6 +7,15 @@
 users_meta() {
     MOD_DESC='user accounts and doas'
     MOD_REQUIRES='root'
+    # An account is only a way in if it has a key: adduser -D leaves no password.
+    for um_u in $(mconf USERS ''); do
+        if [ -f "$SPORE_DIR/keys/$um_u.authorized_keys" ]; then
+            MOD_LOGINS="$MOD_LOGINS $um_u"
+        fi
+    done
+    # A trailing conditional would make this function's status that of its last
+    # test, and under `set -e` a false one kills the run with no message.
+    return 0
 }
 
 users_plan() {
@@ -51,6 +60,10 @@ chmod 600 '/home/$users_u/.ssh/authorized_keys'"
             # user can become root without a password, which is a real trade and
             # should be a deliberate one.
             if mconf_bool USERS_DOAS_NOPASS no; then
+                plan_note "users: '$users_a' gets doas without a password.
+         Anything running as this account becomes root without authenticating.
+         Set USERS_DOAS_NOPASS=no and give the account a password instead, if
+         this box is not single-purpose."
                 users_rule="permit nopass $users_a as root"
             else
                 users_rule="permit persist $users_a as root"

@@ -75,6 +75,18 @@ fact_lbu_dest() {
     printf 'unset'
 }
 
+# Whether root has a usable password. The v12 wizard checked this before
+# offering to enable ssh, and it was right to: root login plus password auth
+# plus no password is an open shell on the network.
+fact_root_password() {
+    if [ -n "${SPORE_FACT_ROOT_PASSWORD:-}" ]; then printf '%s' "$SPORE_FACT_ROOT_PASSWORD"; return 0; fi
+    frp_h=$(awk -F: '$1 == "root" { print $2; exit }' /etc/shadow 2>/dev/null)
+    case $frp_h in
+        ''|'!'|'*'|'!!') printf empty ;;
+        *) printf set ;;
+    esac
+}
+
 fact_alpine() {
     if [ -n "${SPORE_FACT_ALPINE:-}" ]; then printf '%s' "$SPORE_FACT_ALPINE"; return 0; fi
     if [ -f /etc/alpine-release ]; then cat /etc/alpine-release; else printf none; fi

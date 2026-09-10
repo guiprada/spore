@@ -1,0 +1,3 @@
+# REPLACE THIS. Public keys only, one per line. Without a real key here, and
+# with root login and password auth both off, nothing can reach this machine.
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyReplaceMeWithYourOwnPublicKey you@example
