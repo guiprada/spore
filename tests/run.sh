@@ -895,6 +895,35 @@ check 'the ntp client'                  "$(grep '^SYSTEM_NTP=' "$WZS/modules/sys
                                         'SYSTEM_NTP=chrony'
 has 'time sync through setup-ntp'       "$WZP" 'firstboot  system-ntp'
 has 'and the apkovl has a destination'  "$WZP" 'file       /etc/lbu/lbu.conf'
+# An existing machine is offered up for replacement rather than refused — but
+# only a machine, and only when the answer is yes. Its identity is in there.
+WZE=$(mktemp -d /tmp/spore-wizexist.XXXXXX)
+printf '%s\n' 'again' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' 'n' |
+    "$SPORE" setup "$WZE/m" >/dev/null 2>&1 || true
+WZE_ID=$WZE/m/spore/spore.conf
+check 'a machine was created' "$([ -f "$WZE_ID" ] && echo yes || echo no)" yes
+printf 'MARKER\n' > "$WZE/m/spore/keys/marker"
+# Declining leaves it exactly as it was, and says how to change one thing.
+printf '%s\n' 'again' 'n' | "$SPORE" setup "$WZE/m" > "$WZE/decline" 2>&1 || true
+check 'declining leaves it untouched' \
+    "$([ -f "$WZE/m/spore/keys/marker" ] && echo yes || echo no)" yes
+has 'and points at editing instead' "$(cat "$WZE/decline")" 'edit the file rather than'
+# Accepting replaces it.
+printf '%s\n' 'again' 'y' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' 'n' |
+    "$SPORE" setup "$WZE/m" >/dev/null 2>&1 || true
+check 'accepting replaces it' \
+    "$([ -f "$WZE/m/spore/keys/marker" ] && echo stale || echo fresh)" fresh
+# A directory that is not a machine is never offered up for deletion.
+mkdir -p "$WZE/notamachine"; printf 'important\n' > "$WZE/notamachine/data"
+if WZEO=$(printf '%s\n' 'again' 'y' | "$SPORE" setup "$WZE/notamachine" 2>&1); then
+    t_fail 'a non-machine directory is never replaced' 'succeeded'
+else
+    has 'a non-machine directory is never replaced' "$WZEO" 'is not a machine directory'
+fi
+check 'and its contents survive' \
+    "$([ -f "$WZE/notamachine/data" ] && echo yes || echo no)" yes
+rm -rf "$WZE"
+
 # With no argument it lands under ~/machines, named for the host, and says so.
 WZH=$(mktemp -d /tmp/spore-wizhome.XXXXXX)
 printf '%s\n' 'homehost' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' \

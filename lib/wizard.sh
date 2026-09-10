@@ -92,13 +92,29 @@ INTRO
             wz_dir=./$wz_host
         fi
     fi
-    if [ -e "$wz_dir" ]; then
-        die "$wz_dir already exists.
-        That is where this machine would go. Remove it, or name somewhere else:
-            spore setup <directory>"
-    fi
     wz_say ''
     wz_say "  → $wz_dir"
+
+    if [ -e "$wz_dir" ]; then
+        # Only ever offered for something that is already a machine directory.
+        # Answering yes to a prompt is not consent to delete an arbitrary path.
+        [ -f "$wz_dir/spore/spore.conf" ] ||
+            die "$wz_dir already exists and is not a machine directory.
+        Name somewhere else:  spore setup <directory>"
+
+        wz_say ''
+        wz_say "There is already a machine there. Starting again replaces it —"
+        if [ -f "$wz_dir/identity" ]; then
+            wz_say "including its identity, so every password and host key sealed"
+            wz_say "into it becomes undecryptable."
+        fi
+        [ "$(wz_yn 'Replace it?' n)" = yes ] ||
+            die "left $wz_dir alone.
+        To change one thing, edit the file rather than starting again:
+            \$EDITOR $wz_dir/spore/modules/<module>.conf
+            sudo spore install $wz_dir /dev/sdX"
+        rm -rf "$wz_dir"
+    fi
 
     # --- console -------------------------------------------------------------
     wz_head 'Console'
