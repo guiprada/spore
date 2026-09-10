@@ -542,6 +542,11 @@ has 'keeps /usr/local across lbu'  "$SEEDLIST" 'etc/apk/protected_paths.d/spore.
 hasnt 'carries no spore'           "$SEEDLIST" 'etc/spore/spore'
 hasnt 'bakes no repository list'   "$SEEDLIST" 'etc/apk/repositories'
 
+# The initramfs restores whatever ownership the archive records, and the overlay
+# is normally built by an ordinary user on a workstation.
+SEEDOWN=$(tar -tvzf "$SEEDF" | awk '{ print $2 }' | sort -u | tr '\n' ' ')
+check 'everything is owned by root' "$SEEDOWN" '0/0 '
+
 SEEDSTART=$(tar -xzOf "$SEEDF" ./etc/local.d/spore.start)
 has 'hook discovers a spore on media' "$SEEDSTART" '/media/*/spore'
 has 'hook scans block devices too'    "$SEEDSTART" '/dev/sd'

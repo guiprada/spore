@@ -83,5 +83,23 @@ START
     # local.d only runs if the `local` service is in the default runlevel.
     ln -sf /etc/init.d/local "$sb_stage/etc/runlevels/default/local"
 
-    tar -czf "$sb_out" -C "$sb_stage" .
+    # The overlay is unpacked by the initramfs as root, which restores whatever
+    # ownership the archive records. Built by an ordinary user — which is the
+    # normal case, since the point is to prepare this from a workstation — every
+    # file would arrive owned by that uid.
+    sb_towner=''
+    if : > "$SPORE_WORK/.tarprobe" &&
+       tar --owner=0 --group=0 --numeric-owner \
+           -cf /dev/null -C "$SPORE_WORK" .tarprobe 2>/dev/null
+    then
+        sb_towner='--owner=0 --group=0 --numeric-owner'
+    elif [ "$(id -u)" != 0 ]; then
+        warn "this tar cannot force ownership, and you are not root, so the
+         overlay will record uid $(id -u). The initramfs restores that verbatim.
+         Build it as root, or with GNU tar."
+    fi
+    rm -f "$SPORE_WORK/.tarprobe"
+
+    # shellcheck disable=SC2086  # deliberate word splitting of the option list
+    tar $sb_towner -czf "$sb_out" -C "$sb_stage" .
 }
