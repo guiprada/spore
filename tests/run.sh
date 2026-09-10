@@ -124,7 +124,7 @@ else
     has 'ssh refuses a password-less root on the network' "$UKDP" 'unauthenticated root shell'
 fi
 # ...and allows it once root has a password.
-SPORE_FACT_ROOT_PASSWORD=set
+SPORE_FACT_ROOT_PASSWORD='set'
 if alpine "$SPORE" --spore "$UKD" plan >/dev/null 2>&1; then
     t_ok 'and allows it once root has a password'
 else
