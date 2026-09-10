@@ -22,8 +22,9 @@ Every command is the tool pointed at a spore:
 `-s` always names the bundle, never this repository.
 
 ```sh
-spore new NAME DIR   # prepare a machine, on a workstation
-spore install DIR /media/$USER/DATA    # write it to a data partition
+spore setup          # guided: asks, then writes a machine directory
+spore media /dev/sdX alpine.iso        # partition and write a boot medium
+spore install DIR /mnt/data            # put the machine on it
 
 spore apply          # converge this host to the spore
 spore persist        # make it survive a reboot
@@ -256,6 +257,7 @@ package files are re-downloaded every boot.
 | `ssh` | OpenSSH, keys, root/password policy | OpenRC |
 | `dufs` | `apk add dufs`, render `/etc/dufs/config.yaml`, TLS, setcap | OpenRC |
 | `users` | accounts, doas rules, persist `/home` | root |
+| `system` | keyboard layout and timezone, via Alpine's own setup-* tools | root |
 | `storage` | mount declared volumes under a serve root | root |
 | `apkovl` | where `lbu commit` writes — without it a diskless box forgets everything | diskless |
 | — | secrets are handled by the core, not a module | `age` on the target |
@@ -382,6 +384,21 @@ recognised identifier, is refused at plan time rather than written into fstab.
 
 ## Making the boot medium
 
+```sh
+spore setup                                 # answers a machine's questions
+sudo spore media /dev/sdX alpine-standard-*.iso
+sudo mount /dev/sdX2 /mnt/data
+spore install ~/machines/<name> /mnt/data
+sudo umount /mnt/data
+```
+
+`setup` asks for hostname, keyboard layout, timezone, network, account, key and
+ssh, then writes a spore carrying only the modules you answered for — no volumes
+and no file server you did not ask about. `media` erases the disk you name, so it
+prints it, refuses one this machine is mounted from, and makes you type the path
+back. Everything below is what those two do, for when you would rather do it by
+hand.
+
 One stick, two partitions: a read-only Alpine and a writable data area. The
 system is identical on every boot and cannot drift; everything that changes
 lives on the other partition.
@@ -507,7 +524,7 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-260 checks, no Alpine and no container required: plan assertions, a synthetic-root
+285 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering

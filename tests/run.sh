@@ -149,18 +149,36 @@ has 'as an owned block, not a rewrite' "$(cat "$AVR/etc/lbu/lbu.conf")" \
     'LBU_BACKUPDIR=/media/storage/data'
 has 'and the block is delimited'       "$(cat "$AVR/etc/lbu/lbu.conf")" '# BEGIN spore:lbu'
 
-# A spore that names no destination, on a host that names none either, is the
-# case that must not plan quietly.
+# Named nothing: the apkovl goes beside the spore. That partition is the one we
+# know is mounted and writable, because the spore was just read off it.
 printf 'APKOVL_BACKUPDIR=\n' > "$AV/modules/apkovl.conf"
-if AVN=$(alpine "$SPORE" --spore "$AV" plan 2>&1); then
-    t_fail 'refuses to commit into the void' 'plan succeeded'
+AVD=$(alpine "$SPORE" --spore "$AV" plan 2>&1)
+has 'unnamed, it commits beside the spore' "$AVD" "at $(dirname "$AV")"
+AVR2=$(mktemp -d /tmp/spore-apkovlbeside.XXXXXX)
+alpine "$SPORE" --spore "$AV" --root "$AVR2" apply >/dev/null 2>&1
+has 'and that is what lbu.conf says' "$(cat "$AVR2/etc/lbu/lbu.conf")" \
+    "LBU_BACKUPDIR=$(dirname "$AV")"
+rm -rf "$AVR2"
+
+# With nowhere beside it either — the spore exported to the rootfs path on a
+# diskless box — committing would write nowhere at all, and that must not plan
+# quietly. Skipped rather than disturbing a real /var/lib/spore.
+if [ -e /var/lib/spore ]; then
+    t_skip '/var/lib/spore exists here — nowhere-to-commit assertions'
 else
-    has 'refuses to commit into the void' "$AVN" 'converges on every boot and keeps'
+    mkdir -p /var/lib/spore && cp -r "$AV" /var/lib/spore/spore
+    if AVN=$(alpine "$SPORE" --spore /var/lib/spore/spore plan 2>&1); then
+        t_fail 'refuses to commit into the void' 'plan succeeded'
+    else
+        has 'refuses to commit into the void' "$AVN" 'converges on every boot and keeps'
+    fi
+    # ...but a host already configured by hand is deferred to, not overridden.
+    SPORE_FACT_LBU_DEST=/media/data
+    AVH=$(alpine "$SPORE" --spore /var/lib/spore/spore plan 2>&1)
+    has 'a hand-configured host is kept' "$AVH" "kept (/media/data)"
+    SPORE_FACT_LBU_DEST=unset
+    rm -rf /var/lib/spore
 fi
-# ...but a host already configured by hand is deferred to, not overridden.
-SPORE_FACT_LBU_DEST=/media/data
-AVH=$(alpine "$SPORE" --spore "$AV" plan 2>&1)
-has 'a hand-configured host is kept' "$AVH" "kept (/media/data)"
 # Both keys at once is refused: LBU_BACKUPDIR wins in lbu, so the other would
 # read as configured and never be written to.
 printf 'APKOVL_BACKUPDIR=/media/storage/data\nAPKOVL_MEDIA=data\n' > "$AV/modules/apkovl.conf"
@@ -824,6 +842,64 @@ check 'exported spore is readable' "$([ -f "$R3/var/lib/spore/spore/spore.conf" 
 # ------------------------------------------------------------ bootstrap -----
 # The workstation side. Everything here exists because it used to be done by
 # hand, and each step had its own way of failing quietly.
+section 'spore setup: the guided path'
+# The whole point is that the answers produce a spore that plans as a target —
+# so it is driven here exactly as a person would, and then planned.
+WZ=$(mktemp -d /tmp/spore-wiz.XXXXXX)
+printf 'ssh-ed25519 AAAAC3WizardTestKey tester@workstation\n' > "$WZ/id.pub"
+printf '%s\n' \
+    'wizhost' 'br br-abnt2' 'America/Sao_Paulo' 'eth0' 'static' \
+    '192.168.1.50' '255.255.255.0' '192.168.1.1' '192.168.1.1 1.1.1.1' \
+    'tester' 'y' "$WZ/id.pub" 'y' '2222' |
+    SPORE_PUBKEY="$WZ/id.pub" "$SPORE" setup "$WZ/m" >/dev/null 2>&1
+WZS=$WZ/m/spore
+
+check 'the host is what was answered' "$(grep '^HOST=' "$WZS/spore.conf")" 'HOST=wizhost'
+has   'only the modules asked about'  "$(grep '^MODULES=' "$WZS/spore.conf")" 'repos system net users ssh apkovl'
+hasnt 'no file server nobody asked for' "$(grep '^MODULES=' "$WZS/spore.conf")" 'dufs'
+hasnt 'and no volumes that do not exist' "$(grep '^MODULES=' "$WZS/spore.conf")" 'storage'
+check 'the static address is recorded' "$(grep '^NET_ADDRESS=' "$WZS/modules/net.conf")" \
+                                       'NET_ADDRESS=192.168.1.50'
+check 'the keymap, as setup-keymap takes it' "$(grep '^SYSTEM_KEYMAP=' "$WZS/modules/system.conf")" \
+                                       'SYSTEM_KEYMAP="br br-abnt2"'
+check 'the timezone'                  "$(grep '^SYSTEM_TIMEZONE=' "$WZS/modules/system.conf")" \
+                                       'SYSTEM_TIMEZONE=America/Sao_Paulo'
+check 'the account'                   "$(grep '^USERS=' "$WZS/modules/users.conf")" 'USERS="tester"'
+check 'the key it was given'          "$(cat "$WZS/keys/tester.authorized_keys")" \
+                                       'ssh-ed25519 AAAAC3WizardTestKey tester@workstation'
+check 'ssh on the port answered'      "$(grep '^SSH_PORT=' "$WZS/modules/ssh.conf")" 'SSH_PORT=2222'
+
+# The property that matters: what it wrote is a spore that will actually apply.
+if WZP=$(env SPORE_FACT_ROOT=yes SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=yes \
+             SPORE_FACT_PERSIST=lbu SPORE_FACT_ROOT_PASSWORD=empty \
+             "$SPORE" -s "$WZS" plan 2>&1); then
+    t_ok 'and the result plans for an Alpine target'
+else
+    t_fail 'and the result plans for an Alpine target' "$WZP"
+fi
+has 'keymap set through setup-keymap'   "$WZP" 'firstboot  system-keymap'
+has 'timezone through setup-timezone'   "$WZP" 'firstboot  system-timezone'
+has 'the network comes up before apk'   "$WZP" 'bootstrap  net-up'
+has 'and the apkovl has a destination'  "$WZP" 'file       /etc/lbu/lbu.conf'
+rm -rf "$WZ"
+
+section 'spore media refuses a disk it should not erase'
+if MOUT=$("$SPORE" media /dev/null /etc/hostname 2>&1); then
+    t_fail 'refuses a non-block device' 'succeeded'
+else has 'refuses a non-block device' "$MOUT" 'not a block device'; fi
+# The device backing / must never be offered up, whatever was typed.
+MROOT=$(awk '$2 == "/" { print $1; exit }' /proc/mounts 2>/dev/null)
+case $MROOT in
+    /dev/*)
+        MDISK=$(printf '%s' "$MROOT" | sed 's/p\{0,1\}[0-9]*$//')
+        if MRO=$(printf '%s\n' "$MDISK" | "$SPORE" media "$MDISK" /etc/hostname 2>&1); then
+            t_fail 'refuses the disk this machine runs from' 'succeeded'
+        else
+            has 'refuses the disk this machine runs from' "$MRO" 'in use'
+        fi ;;
+    *) t_skip 'no /dev-backed root here — in-use assertion' ;;
+esac
+
 section 'spore new: a machine directory, ready to edit'
 NB=$(mktemp -d /tmp/spore-boot.XXXXXX)
 printf 'ssh-ed25519 AAAAC3TestKeyForBootstrap tester@workstation\n' > "$NB/id.pub"

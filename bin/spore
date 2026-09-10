@@ -16,7 +16,8 @@ fi
 SPORE_LIB=$SPORE_PREFIX/lib
 SPORE_MODULES=$SPORE_PREFIX/modules
 
-for _f in core conf facts plan render blob secret module exec_live exec_print persist seed bootstrap; do
+for _f in core conf facts plan render blob secret module exec_live exec_print \
+          persist seed bootstrap wizard media; do
     . "$SPORE_LIB/$_f.sh"
 done
 
@@ -29,7 +30,9 @@ spore — declarative configuration for Alpine Linux
 usage: spore [options] <command>
 
 commands:
-  new NAME [DIR]    prepare a machine: spore, identity, your key
+  setup [DIR]       guided: asks, then writes a machine directory
+  media DEV ISO     partition and write a boot medium (ERASES DEV)
+  new NAME [DIR]    the same directory, without the questions
   install DIR TGT   write a machine onto a mounted data partition
 
   init [DIR]     scaffold a new spore
@@ -364,7 +367,20 @@ cmd_install() {
     install_machine "$@"
 }
 
+cmd_setup() {
+    spore_workspace
+    wizard "$@"
+}
+
+cmd_media() {
+    [ $# -eq 2 ] || die "usage: spore media /dev/sdX alpine-standard-*.iso"
+    spore_workspace
+    media_write "$@"
+}
+
 case $SPORE_CMD in
+    setup)   cmd_setup "$@" ;;
+    media)   cmd_media "$@" ;;
     new)     cmd_new "$@" ;;
     install) cmd_install "$@" ;;
     init)    cmd_init "$@" ;;

@@ -27,21 +27,34 @@ apkovl_plan() {
     fi
 
     if [ -z "$ap_dir" ] && [ -z "$ap_media" ]; then
-        # Deferring to a host that was configured by hand is fine. Deferring to
-        # one that was not means committing into the void, which is the failure
-        # this module exists to make impossible.
-        if [ "$(fact_lbu_dest)" = unset ]; then
-            die "apkovl: this host is diskless, /etc/lbu/lbu.conf names no
-         destination, and this spore does not name one either. Committing would
-         write nowhere at all: the machine converges on every boot and keeps
-         none of it, with nothing reporting the loss.
-         Set APKOVL_BACKUPDIR=/path (an absolute path, on a filesystem that is
-         mounted when apply finishes) or APKOVL_MEDIA=name (for /media/name)."
+        # Beside the spore, by default. That partition is the one place we know
+        # is mounted and writable, because we just read the spore off it —
+        # anything else is a guess about how this particular machine mounts its
+        # disks, and a wrong guess here is silent.
+        ap_dir=$(dirname "$SPORE_DIR")
+        case $ap_dir in
+            /|/var/lib/spore|'') ap_dir='' ;;
+        esac
+
+        if [ -z "$ap_dir" ]; then
+            # Deferring to a host configured by hand is fine. Deferring to one
+            # that was not means committing into the void, which is the failure
+            # this module exists to make impossible.
+            if [ "$(fact_lbu_dest)" = unset ]; then
+                die "apkovl: this host is diskless, /etc/lbu/lbu.conf names no
+         destination, this spore does not name one, and the spore is not on a
+         partition to sit beside. Committing would write nowhere at all: the
+         machine converges on every boot and keeps none of it, with nothing
+         reporting the loss.
+         Set APKOVL_BACKUPDIR=/path (absolute, on a filesystem mounted when
+         apply finishes) or APKOVL_MEDIA=name (for /media/name)."
+            fi
+            plan_note "apkovl: this spore names no destination, so the host's own
+         is kept ($(fact_lbu_dest))."
+            return 0
         fi
-        plan_note "apkovl: this spore names no destination, so the host's own is
-         kept ($(fact_lbu_dest)). Set APKOVL_BACKUPDIR or APKOVL_MEDIA to make
-         that part of the spore rather than part of this particular machine."
-        return 0
+        plan_note "apkovl: committing beside the spore, at $ap_dir. Set
+         APKOVL_BACKUPDIR or APKOVL_MEDIA to put it elsewhere."
     fi
 
     if [ -n "$ap_dir" ]; then

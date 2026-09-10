@@ -15,10 +15,11 @@ SPORE_VERSION=0.1.0
 
 SPORE_TAB=$(printf '\t')
 
-_c_reset='' _c_dim='' _c_red='' _c_green='' _c_yellow=''
+_c_reset='' _c_dim='' _c_bold='' _c_red='' _c_green='' _c_yellow=''
 if [ "$SPORE_COLOR" = always ] || { [ "$SPORE_COLOR" = auto ] && [ -t 2 ]; }; then
     _c_reset=$(printf '\033[0m')
     _c_dim=$(printf '\033[2m')
+    _c_bold=$(printf '\033[1m')
     _c_red=$(printf '\033[31m')
     _c_green=$(printf '\033[32m')
     _c_yellow=$(printf '\033[33m')
