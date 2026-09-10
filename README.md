@@ -288,6 +288,41 @@ Three things it will not let you get wrong:
 A volume whose name would escape the serve root, or whose spec is not a
 recognised identifier, is refused at plan time rather than written into fstab.
 
+## Zero-touch first boot
+
+`spore seed` builds a bootstrap apkovl that turns a stock Alpine into your
+machine with nothing typed:
+
+```sh
+spore -s myhost.spore seed
+cp coisas.apkovl.tar.gz /media/data/
+```
+
+The overlay carries the tool, the spore, a baked repository list and an
+`/etc/local.d` hook. On first boot Alpine's initramfs finds it by scanning block
+devices — the boot medium is never written to — and the hook runs
+`apply --persist`, converging the machine and committing the result. It stamps
+only on success, so a failed boot retries rather than leaving a half-built
+machine that looks finished.
+
+Repositories are baked as a *file* rather than left to a bootstrap script,
+because Alpine restores `/etc/apk/world` early in boot, well before `local.d`
+could enable a repository the restore depends on. Declare them in
+`modules/repos.conf`:
+
+```
+REPOS_MIRROR=https://dl-cdn.alpinelinux.org/alpine
+REPOS_RELEASE=v3.24
+```
+
+Without them the seed still builds, and says plainly that the first boot will not
+be unattended.
+
+This is not `build`: nothing bakes the plan into the overlay, and the machine
+still converges itself a minute into its first boot by running the same `apply`
+path as everywhere else. `build` — where the box comes up already configured with
+nothing left to run — is still ahead.
+
 ## Tests
 
 ```sh

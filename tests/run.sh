@@ -524,6 +524,48 @@ else
     rm -rf "$SD" "$SR" "$SW"
 fi
 
+# ----------------------------------------------------------------- seed -----
+section 'seed: a self-contained bootstrap apkovl'
+SEEDD=$(mktemp -d /tmp/spore-seed.XXXXXX)
+SEEDF=$SEEDD/out.apkovl.tar.gz
+SEEDOUT=$(alpine "$SPORE" --spore "$EX" seed "$SEEDF" 2>&1)
+has   'reports what it wrote'      "$SEEDOUT" 'wrote'
+check 'the overlay exists'         "$([ -s "$SEEDF" ] && echo yes || echo no)" yes
+
+SEEDLIST=$(tar -tzf "$SEEDF" | sed 's|^\./||')
+has 'carries the first-boot hook'  "$SEEDLIST" 'etc/local.d/spore.start'
+has 'enables the local service'    "$SEEDLIST" 'etc/runlevels/default/local'
+has 'carries the spore itself'     "$SEEDLIST" 'etc/spore/spore/spore.conf'
+has 'carries the tool'             "$SEEDLIST" 'usr/local/bin/spore'
+has 'keeps /usr/local across lbu'  "$SEEDLIST" 'etc/apk/protected_paths.d/spore.list'
+has 'bakes the repository list'    "$SEEDLIST" 'etc/apk/repositories'
+has 'repositories include community' \
+    "$(tar -xzOf "$SEEDF" ./etc/apk/repositories)" '/community'
+
+# The hook must not re-run once converged, and must not stamp on failure.
+SEEDSTART=$(tar -xzOf "$SEEDF" ./etc/local.d/spore.start)
+has 'hook is idempotent'           "$SEEDSTART" '/etc/spore/.seeded'
+has 'hook applies and persists'    "$SEEDSTART" 'apply --persist'
+has 'hook retries after failure'   "$SEEDSTART" 'will retry on next boot'
+
+# The real property: unpacked onto a blank machine, the embedded tool runs the
+# embedded spore without reference to anything outside the overlay.
+SEEDX=$(mktemp -d /tmp/spore-seedx.XXXXXX)
+tar -xzf "$SEEDF" -C "$SEEDX"
+SEEDPLAN=$(env SPORE_PREFIX="$SEEDX/usr/local/lib/spore" \
+    SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=yes SPORE_FACT_PERSIST=lbu \
+    SPORE_FACT_ARCH=x86_64 SPORE_FACT_ROOT=yes \
+    "$SEEDX/usr/local/lib/spore/bin/spore" -s "$SEEDX/etc/spore/spore" plan 2>&1)
+has 'the unpacked overlay is self-contained' "$SEEDPLAN" 'pkg        dufs'
+has 'and plans the same modules'             "$SEEDPLAN" 'svc        sshd -> default [on]'
+
+# Without a mirror declared, say so rather than producing a silently useless seed.
+NOMIR=$(mktemp -d)/s; cp -r "$EX" "$NOMIR"
+sed -i '/^REPOS_MIRROR=/d; /^REPOS_RELEASE=/d' "$NOMIR/modules/repos.conf"
+NOMIROUT=$(alpine "$SPORE" --spore "$NOMIR" seed "$SEEDD/n.apkovl.tar.gz" 2>&1)
+has 'warns when no mirror is declared' "$NOMIROUT" 'which is not unattended'
+rm -rf "$SEEDD" "$SEEDX" "$NOMIR"
+
 # -------------------------------------------------------------- persist -----
 section 'persist backends'
 PR=$(alpine "$SPORE" --spore "$EX" --root "$R" persist 2>&1)

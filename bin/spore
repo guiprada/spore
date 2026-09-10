@@ -8,11 +8,15 @@
 set -eu
 
 SPORE_SELF=$0
-SPORE_PREFIX=$(CDPATH='' cd -- "$(dirname -- "$SPORE_SELF")/.." && pwd)
+# Overridable so the tool can be installed away from its source tree — the seed
+# apkovl puts it at /usr/local/lib/spore with a wrapper on PATH.
+if [ -z "${SPORE_PREFIX:-}" ]; then
+    SPORE_PREFIX=$(CDPATH='' cd -- "$(dirname -- "$SPORE_SELF")/.." && pwd)
+fi
 SPORE_LIB=$SPORE_PREFIX/lib
 SPORE_MODULES=$SPORE_PREFIX/modules
 
-for _f in core conf facts plan render blob secret module exec_live exec_print persist; do
+for _f in core conf facts plan render blob secret module exec_live exec_print persist seed; do
     . "$SPORE_LIB/$_f.sh"
 done
 
@@ -33,6 +37,7 @@ commands:
   persist        make the current state survive a reboot
   doctor         host facts and sanity checks
   modules        list available modules
+  seed [FILE]    build a bootstrap apkovl for unattended first boot
   secrets        list the secrets this spore carries
   seal NAME [F]  encrypt F (or stdin) into the spore as NAME
 
@@ -254,6 +259,21 @@ cmd_doctor() {
     persist_warnings
 }
 
+cmd_seed() {
+    spore_load
+    spore_workspace
+    cs_out=${1:-$SPORE_HOST.apkovl.tar.gz}
+    case $cs_out in
+        */*) : ;;
+        *) cs_out=$PWD/$cs_out ;;
+    esac
+    seed_build "$cs_out" >/dev/null
+    printf 'wrote %s (%s bytes)\n' "$cs_out" "$(wc -c < "$cs_out" | tr -d ' ')"
+    plan_notes_show
+    printf '\nCopy it to the data partition. The initramfs finds it by scanning\n'
+    printf 'devices, so the boot medium is never written to.\n'
+}
+
 cmd_secrets() {
     spore_load
     if [ ! -d "$SPORE_DIR/secrets" ]; then
@@ -335,6 +355,7 @@ case $SPORE_CMD in
     doctor)  cmd_doctor ;;
     modules|module) cmd_modules ;;
     secrets) cmd_secrets ;;
+    seed)    cmd_seed "$@" ;;
     seal)    cmd_seal "$@" ;;
     help)    usage ;;
     *)       die "unknown command: $SPORE_CMD (try: spore --help)" ;;
