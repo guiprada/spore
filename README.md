@@ -127,6 +127,19 @@ spore seal ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key
 spore secrets                         # what this spore carries
 ```
 
+An account's password can be sealed too, which is what makes a genuinely
+console-free build possible:
+
+```sh
+openssl passwd -6 | spore -s myhost.spore seal gui.password
+```
+
+It is decrypted on the target at first boot and applied with `chpasswd -e`, so
+the hash never enters the plan — only the path to the ciphertext does. The
+firstboot stamp is the hash of its script, so the ciphertext's own checksum is
+embedded in it: rotate the sealed password and the action runs again, rather than
+being silently ignored.
+
 Reference a sealed secret from a module and it is substituted **on the host at
 write time**:
 
@@ -332,7 +345,7 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-192 checks, no Alpine and no container required: plan assertions, a synthetic-root
+206 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering

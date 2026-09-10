@@ -46,6 +46,28 @@ chmod 600 '/home/$users_u/.ssh/authorized_keys'"
         fi
     done
 
+    # A sealed password completes unattended provisioning: no console visit to
+    # run passwd. The hash is decrypted on the target at first boot, so it never
+    # enters the plan — only the path to the ciphertext does.
+    #
+    # The stamp for a firstboot action is the hash of its script, so the
+    # ciphertext's own checksum is embedded: rotate the sealed password and the
+    # script changes, and the action runs again. Without that, a rotated secret
+    # would be silently ignored.
+    for users_p in $users_list; do
+        secret_exists "$users_p.password" || continue
+        plan_pkg age
+        users_ct=$(secret_path "$users_p.password")
+        plan_firstboot "user-$users_p-password" "# secret: $(sha256_file "$users_ct")
+set -e
+hash=\$(age --decrypt -i '$(secret_identity)' '$users_ct') || {
+    echo 'spore: could not decrypt the password for $users_p' >&2
+    exit 1
+}
+printf '%s:%s\\n' '$users_p' \"\$hash\" | chpasswd -e
+unset hash"
+    done
+
     users_admins=$(mconf USERS_DOAS '')
     if [ -n "$users_admins" ]; then
         plan_pkg doas

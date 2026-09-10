@@ -563,6 +563,33 @@ else
                 "$SPORE" --spore "$SD/s" --root "$(mktemp -d)" apply 2>&1 || true)
     has 'missing identity is a clear error' "$SBAD" 'needs the identity at'
 
+    # A sealed password: provisioned unattended, decrypted on the target.
+    openssl passwd -6 hunter2 > "$SD/pwhash" 2>/dev/null
+    "$SPORE" --spore "$SD/s" seal gui.password "$SD/pwhash" >/dev/null
+    PWW=$(mktemp -d)
+    SPORE_WORK=$PWW alpine "$SPORE" --spore "$SD/s" plan >/dev/null 2>&1
+    PWP=$(alpine "$SPORE" --spore "$SD/s" plan 2>&1)
+    has 'a sealed password is planned'  "$PWP" 'firstboot  user-gui-password'
+    has 'and brings age with it'        "$PWP" 'pkg        age'
+    PWS=$(grep -rl chpasswd "$PWW/content" 2>/dev/null | head -1)
+    has 'decrypts on the target'        "$(cat "$PWS")" 'age --decrypt'
+    has 'applies the hash encrypted'    "$(cat "$PWS")" 'chpasswd -e'
+    if grep -rq '[$]6[$]' "$PWW" 2>/dev/null
+    then t_fail 'the hash never enters the plan' "found under $PWW"
+    else t_ok 'the hash never enters the plan'; fi
+    # Rotating the secret must re-run the action; the stamp follows the script,
+    # so the ciphertext's checksum is embedded in it.
+    PWSHA1=$(grep '^# secret:' "$PWS")
+    openssl passwd -6 different > "$SD/pwhash2" 2>/dev/null
+    "$SPORE" --spore "$SD/s" seal gui.password "$SD/pwhash2" >/dev/null
+    PWW2=$(mktemp -d)
+    SPORE_WORK=$PWW2 alpine "$SPORE" --spore "$SD/s" plan >/dev/null 2>&1
+    PWSHA2=$(grep -h '^# secret:' "$(grep -rl chpasswd "$PWW2/content" | head -1)")
+    if [ "$PWSHA1" != "$PWSHA2" ]
+    then t_ok 'rotating the password changes the action'
+    else t_fail 'rotating the password changes the action' "both: $PWSHA1"; fi
+    rm -rf "$PWW" "$PWW2"
+
     # naming a secret the spore does not carry is reported, not ignored
     printf 'SSH_HOST_KEY_SECRETS="ssh_host_rsa_key"\n' >> "$SD/s/modules/ssh.conf"
     SMISS=$(alpine "$SPORE" --spore "$SD/s" plan 2>&1)
