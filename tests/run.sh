@@ -17,6 +17,7 @@ export SPORE_COLOR=never
 
 t_ok()   { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 t_fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; [ $# -ge 2 ] && printf '        %s\n' "$2"; return 0; }
+t_skip() { printf '  skip  %s\n' "$1"; }
 
 check()      { if [ "$2" = "$3" ];                    then t_ok "$1"; else t_fail "$1" "expected [$3] got [$2]"; fi; }
 has()        { if printf '%s\n' "$2" | grep -qF -- "$3"; then t_ok "$1"; else t_fail "$1" "missing: $3"; fi; }
@@ -678,6 +679,112 @@ PR2=$(env SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=no SPORE_FACT_PERSIST=rootf
           "$SPORE" --spore "$EX" --root "$R3" persist 2>&1)
 has 'rootfs backend exports the spore' "$PR2" 'nothing to commit'
 check 'exported spore is readable' "$([ -f "$R3/var/lib/spore/spore/spore.conf" ] && echo yes || echo no)" yes
+
+# ------------------------------------------------------------ bootstrap -----
+# The workstation side. Everything here exists because it used to be done by
+# hand, and each step had its own way of failing quietly.
+section 'spore new: a machine directory, ready to edit'
+NB=$(mktemp -d /tmp/spore-boot.XXXXXX)
+printf 'ssh-ed25519 AAAAC3TestKeyForBootstrap tester@workstation\n' > "$NB/id.pub"
+NEWOUT=$(SPORE_PUBKEY="$NB/id.pub" USER=tester SUDO_USER='' "$SPORE" new galadriel "$NB/m" 2>&1)
+NBS=$NB/m/spore
+
+check 'spore.conf names the host'      "$(grep '^HOST=' "$NBS/spore.conf")" 'HOST=galadriel'
+check 'net.conf agrees with it'        "$(grep '^NET_HOSTNAME=' "$NBS/modules/net.conf")" \
+                                       'NET_HOSTNAME=galadriel'
+# The identity travels beside the spore, not inside it — and the relative path
+# is what makes one spore.conf correct both here and on the target.
+check 'identity is beside the spore'   "$(grep '^SECRETS_IDENTITY=' "$NBS/spore.conf")" \
+                                       'SECRETS_IDENTITY=../identity'
+check 'the account is the caller'      "$(grep '^USERS=' "$NBS/modules/users.conf")" 'USERS="tester"'
+check 'and may use doas'               "$(grep '^USERS_DOAS=' "$NBS/modules/users.conf")" \
+                                       'USERS_DOAS="tester"'
+# Without a real key here nothing can reach the machine, so the caller's own is
+# installed rather than the example's placeholder left in place.
+check 'the caller key is installed' \
+    "$(cat "$NBS/keys/tester.authorized_keys" 2>/dev/null)" \
+    'ssh-ed25519 AAAAC3TestKeyForBootstrap tester@workstation'
+hasnt 'the placeholder key is gone' \
+    "$(ls "$NBS/keys")" 'gui.authorized_keys'
+has 'it says which key it took'        "$NEWOUT" "key from $NB/id.pub"
+
+if command -v age-keygen >/dev/null 2>&1; then
+    check 'an identity is generated'   "$([ -s "$NB/m/identity" ] && echo yes || echo no)" yes
+    check 'and is not world-readable'  "$(file_mode "$NB/m/identity")" 600
+    check 'with recipients to seal to' \
+        "$([ -s "$NBS/secrets/recipients" ] && echo yes || echo no)" yes
+else
+    t_skip 'age not installed — no keypair assertions'
+fi
+
+section 'spore new refuses rather than guesses'
+if NOUT=$("$SPORE" new galadriel "$NB/m" 2>&1); then
+    t_fail 'refuses an existing directory' "succeeded: $NOUT"
+else has 'refuses an existing directory' "$NOUT" 'already exists'; fi
+if NOUT=$("$SPORE" new 'bad name' "$NB/x" 2>&1); then
+    t_fail 'refuses an unusable hostname' "succeeded: $NOUT"
+else has 'refuses an unusable hostname' "$NOUT" 'not a usable hostname'; fi
+
+section 'spore install: checked here, not discovered after it boots'
+# A machine with no key is a machine nobody can reach. That has to surface on
+# the workstation, where the disk is still in your hand — and it only does if
+# the spore is planned the way the target will plan it, since on a workstation
+# ssh is skipped for want of OpenRC and never gets to refuse.
+NK=$NB/nokey; cp -r "$NB/m" "$NK"; rm -f "$NK/spore/keys"/*.authorized_keys
+if IOUT=$("$SPORE" install "$NK" "$NB/m" 2>&1); then
+    t_fail 'refuses a spore nothing could log into' "succeeded: $IOUT"
+else
+    has 'refuses a spore nothing could log into' "$IOUT" 'Nothing could log in'
+    has 'and does not install it anyway'         "$IOUT" 'refusing to install'
+fi
+
+# Copying onto a directory that is not a mount point fills this machine's disk
+# instead of the removable one, and is discovered when the target fails to boot.
+mkdir -p "$NB/notmounted"
+if IOUT=$("$SPORE" install "$NB/m" "$NB/notmounted" 2>&1); then
+    t_fail 'refuses a target that is not mounted' "succeeded: $IOUT"
+else has 'refuses a target that is not mounted' "$IOUT" 'is not a mount point'; fi
+if IOUT=$("$SPORE" install "$NB/m" "$NB/absent" 2>&1); then
+    t_fail 'refuses a target that does not exist' "succeeded: $IOUT"
+else has 'refuses a target that does not exist' "$IOUT" 'is the disk mounted?'; fi
+if IOUT=$("$SPORE" install "$NB" "$NB/notmounted" 2>&1); then
+    t_fail 'refuses a directory that is not a machine' "succeeded: $IOUT"
+else has 'refuses a directory that is not a machine' "$IOUT" 'no spore/spore.conf'; fi
+
+section 'spore install: onto a real filesystem'
+MP=$NB/disk; mkdir -p "$MP"
+if mount -t tmpfs tmpfs "$MP" 2>/dev/null; then MP_MOUNTED=1; else MP_MOUNTED=0; fi
+if [ "$MP_MOUNTED" = 0 ]; then
+    t_skip 'cannot mount a tmpfs here — install target assertions'
+else
+    DRY=$("$SPORE" -n install "$NB/m" "$MP" 2>&1)
+    has   'dry run says so'            "$DRY" 'dry run'
+    check 'and writes nothing'         "$(ls -A "$MP")" ''
+
+    IOUT=$("$SPORE" install "$NB/m" "$MP" 2>&1)
+    has   'reports the host installed' "$IOUT" 'galadriel'
+    check 'the spore is there'         "$([ -f "$MP/spore/spore.conf" ] && echo yes || echo no)" yes
+    if [ -f "$NB/m/identity" ]; then
+        check 'the identity travels with it' \
+            "$([ -f "$MP/identity" ] && echo yes || echo no)" yes
+        check 'and stays unreadable there' "$(file_mode "$MP/identity")" 600
+    else
+        t_skip 'no identity to install (age not present)'
+    fi
+    # Built here, from this tool: a copied one silently boots the target on an
+    # older spore than the one just edited.
+    check 'a seed is built for it' \
+        "$([ -s "$MP/spore-seed.apkovl.tar.gz" ] && echo yes || echo no)" yes
+    has 'and the seed carries the tool' \
+        "$(tar -tzf "$MP/spore-seed.apkovl.tar.gz")" './usr/local/bin/spore'
+
+    # Re-installing must replace the spore, not nest a copy inside it.
+    "$SPORE" install "$NB/m" "$MP" >/dev/null 2>&1
+    check 'a second install replaces, not nests' \
+        "$([ -e "$MP/spore/spore" ] && echo nested || echo clean)" clean
+    umount "$MP" 2>/dev/null || true
+fi
+rm -rf "$NB"
 
 rm -rf "$R" "$R2" "$R3" "$R4" "$R5" "$BD" "$LOG" "$LOG2" "$PLOG" 2>/dev/null || true
 

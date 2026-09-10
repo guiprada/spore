@@ -16,7 +16,7 @@ fi
 SPORE_LIB=$SPORE_PREFIX/lib
 SPORE_MODULES=$SPORE_PREFIX/modules
 
-for _f in core conf facts plan render blob secret module exec_live exec_print persist seed; do
+for _f in core conf facts plan render blob secret module exec_live exec_print persist seed bootstrap; do
     . "$SPORE_LIB/$_f.sh"
 done
 
@@ -29,6 +29,9 @@ spore — declarative configuration for Alpine Linux
 usage: spore [options] <command>
 
 commands:
+  new NAME [DIR]    prepare a machine: spore, identity, your key
+  install DIR TGT   write a machine onto a mounted data partition
+
   init [DIR]     scaffold a new spore
   plan           show the action list this spore produces (no changes)
   apply          converge this host to the spore
@@ -350,7 +353,20 @@ INIT
     printf 'created %s\n' "$ci_dir"
 }
 
+cmd_new() {
+    [ $# -ge 1 ] || die "usage: spore new NAME [DIR]"
+    new_machine "$@"
+}
+
+cmd_install() {
+    [ $# -eq 2 ] || die "usage: spore install DIR TARGET"
+    spore_workspace
+    install_machine "$@"
+}
+
 case $SPORE_CMD in
+    new)     cmd_new "$@" ;;
+    install) cmd_install "$@" ;;
     init)    cmd_init "$@" ;;
     plan)    cmd_plan ;;
     apply)   cmd_apply ;;

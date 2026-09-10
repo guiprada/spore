@@ -22,6 +22,9 @@ Every command is the tool pointed at a spore:
 `-s` always names the bundle, never this repository.
 
 ```sh
+spore new NAME DIR   # prepare a machine, on a workstation
+spore install DIR /media/$USER/DATA    # write it to a data partition
+
 spore apply          # converge this host to the spore
 spore persist        # make it survive a reboot
 spore status         # declared vs actual
@@ -335,31 +338,54 @@ recognised identifier, is refused at plan time rather than written into fstab.
 
 ## Zero-touch first boot
 
-Build the overlay once — it is generic, carries no configuration, and needs no
-spore to build:
+Two commands on a workstation, from a clone of this repo. Neither needs Alpine.
 
 ```sh
-git clone https://github.com/guiprada/spore && cd spore
-./bin/spore seed
+./bin/spore new galadriel ~/machines/galadriel
+$EDITOR ~/machines/galadriel/spore/modules/*.conf
+./bin/spore install ~/machines/galadriel /media/$USER/DATA
 ```
 
-Then put two things on the data partition:
+Boot a stock Alpine with that disk attached and it becomes `galadriel`. The
+initramfs finds the overlay by scanning block devices — the boot medium is never
+written to — and the hook scans the same way for a `spore/` directory, applies
+it, and commits. Progress goes to `/var/log/spore-seed.log`.
+
+`new` builds the directory: the example spore renamed to the host, an age
+keypair with its recipients file, and **your own public key** taken from
+`~/.ssh/` (or `$SPORE_PUBKEY`) — because with root login and password auth both
+off, which is the default, a machine with no key in its spore is a machine
+nobody can reach.
+
+`install` writes it, and refuses rather than guesses:
+
+- **It plans the spore the way the target will**, forcing OpenRC, root, and a
+  password-less root account. On a workstation `ssh`, `users` and `dufs` are all
+  skipped for want of OpenRC or root, so their plan-time refusals — *nothing
+  could log in*, *that is an unauthenticated root shell on the network* — never
+  fire. Forcing the target's shape is what makes them fire here, while the disk
+  is still in your hand.
+- **It checks the target is a mount point**, by comparing its device number
+  against its parent's. Copying onto an unmounted directory fills the
+  workstation's own disk instead of the removable one, and you find out when the
+  target fails to boot.
+- **It builds the seed overlay fresh**, rather than copying one. The overlay
+  carries the tool itself, so a stale one boots the target on an older spore than
+  the one you just edited.
+- **It replaces an existing spore on the disk**, rather than copying a second one
+  inside it — but only after confirming what is there is a spore.
+
+The pieces are still ordinary files, and doing it by hand still works:
 
 ```
-<data>/spore-seed.apkovl.tar.gz     generic, never edited
-<data>/spore/                       plain text, yours
+<data>/spore-seed.apkovl.tar.gz     generic, never edited  (spore seed)
+<data>/spore/                       plain text, yours      (examples/example.spore)
+<data>/identity                     age private key, 0600
 ```
 
-```sh
-cp spore-seed.apkovl.tar.gz /mnt/data/
-cp -r examples/example.spore /mnt/data/spore
-$EDITOR /mnt/data/spore/spore.conf
-```
-
-Boot a stock Alpine with that disk attached. The initramfs finds the overlay by
-scanning block devices — the boot medium is never written to — and the hook
-scans the same way for a `spore/` directory, applies it, and commits. Progress
-goes to `/var/log/spore-seed.log`.
+On vfat there is no ownership to enforce, so the identity that decrypts every
+secret in the spore is readable by anyone holding the disk. `install` says so
+when it cannot set the mode.
 
 Nothing about this needs a working Alpine to prepare: the overlay is built from a
 clone on any machine, and the thing you edit stays plain text on disk rather than
@@ -377,11 +403,12 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-208 checks, no Alpine and no container required: plan assertions, a synthetic-root
+237 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering
-invariant, both persist backends, and the secrets path end to end with real age
+invariant, both persist backends, `new`/`install` including every refusal, and
+the secrets path end to end with real age
 keys — byte-exact round-trip of a private key, no plaintext in the plan, and a
 `diff` that withholds content. Storage is covered against a pre-existing fstab,
 so the test proves the root filesystem entry survives. `dash -n` covers syntax; `shellcheck -s sh`
