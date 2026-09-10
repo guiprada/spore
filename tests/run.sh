@@ -936,7 +936,18 @@ check 'declining still keeps the answers' \
 check 'and the identity with them' \
     "$([ -f "$WZH/spores/homehost/identity" ] && echo yes || echo no)" yes
 has 'and it says what is left to do' "$(cat "$WZH/out")" 'not on a disk yet'
-rm -rf "$WZH" "$WZ"
+rm -rf "$WZH"
+
+# A mistyped device path costs a retry, not the answers to fifteen questions.
+WZR=$(mktemp -d /tmp/spore-wizretry.XXXXXX)
+printf '%s\n' 'retryhost' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' \
+    'y' '/dev/definitely-not-here' '' |
+    env HOME="$WZR" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZR/out" 2>&1 || true
+has 'a bad device path is told, not fatal' "$(cat "$WZR/out")" 'is not a block device'
+has 'and it asks again'                    "$(cat "$WZR/out")" 'blank to skip'
+check 'the answers survive the typo' \
+    "$([ -f "$WZR/spores/retryhost/spore/spore.conf" ] && echo yes || echo no)" yes
+rm -rf "$WZR" "$WZ"
 
 section 'the mirror is derived on the target, never hardcoded here'
 # A spore that baked in v3.20 would quietly install the wrong release on a 3.22

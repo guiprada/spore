@@ -390,13 +390,34 @@ wz_disk() {
         wz_say '  (lsblk is not installed — you will have to know the path)'
     wz_say ''
     wz_say 'The removable one. Everything on it is destroyed.'
-    wd_dev=$(wz_ask 'Device' '')
-    [ -n "$wd_dev" ] || { wz_say 'nothing named; skipping'; return 1; }
-    [ -b "$wd_dev" ] || { warn "$wd_dev is not a block device"; return 1; }
+    # Asked again on a typo rather than abandoning the step. Getting a device
+    # path slightly wrong is the most ordinary mistake here, and it should cost
+    # a retry, not the answers to fifteen questions.
+    while :; do
+        wd_dev=$(wz_ask 'Device (blank to skip)' '')
+        [ -n "$wd_dev" ] || return 1
+        if [ ! -b "$wd_dev" ]; then
+            warn "$wd_dev is not a block device — pick one from the list above."
+            continue
+        fi
+        # A partition where a disk belongs would be repartitioned as if it were
+        # one, which is not what anybody means by it.
+        if [ "$(lsblk -dno TYPE "$wd_dev" 2>/dev/null)" = part ]; then
+            warn "$wd_dev is a partition. Name the whole disk instead — the one
+         without the trailing number."
+            continue
+        fi
+        break
+    done
 
     wz_say ''
-    wd_iso=$(wz_ask 'Alpine ISO' "$(wz_find_iso)")
-    [ -f "$wd_iso" ] || { warn "no such file: $wd_iso"; return 1; }
+    wd_found=$(wz_find_iso)
+    while :; do
+        wd_iso=$(wz_ask 'Alpine ISO (blank to skip)' "$wd_found")
+        [ -n "$wd_iso" ] || return 1
+        [ -f "$wd_iso" ] && break
+        warn "no such file: $wd_iso"
+    done
 
     # media does its own listing and makes the path be typed back, so the
     # confirmation lives there rather than being asked twice.
