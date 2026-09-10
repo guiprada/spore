@@ -590,6 +590,20 @@ else
     else t_fail 'rotating the password changes the action' "both: $PWSHA1"; fi
     rm -rf "$PWW" "$PWW2"
 
+    # A relative identity resolves against the spore, so it can sit beside one
+    # mounted at a path nothing could have hardcoded.
+    RD=$(mktemp -d)
+    cp -r "$SD/s" "$RD/spore"
+    cp "$SD/identity" "$RD/identity"
+    sed -i 's|^SECRETS_IDENTITY=.*|SECRETS_IDENTITY=../identity|' "$RD/spore/spore.conf"
+    RR=$(mktemp -d)
+    if alpine "$SPORE" --spore "$RD/spore" --root "$RR" apply >/dev/null 2>&1
+    then t_ok 'a relative identity resolves against the spore'
+    else t_fail 'a relative identity resolves against the spore'; fi
+    has 'and its secrets still decrypt' \
+        "$(cat "$RR/etc/dufs/config.yaml" 2>/dev/null)" 'admin:hunter2@/:rw'
+    rm -rf "$RD" "$RR"
+
     # naming a secret the spore does not carry is reported, not ignored
     printf 'SSH_HOST_KEY_SECRETS="ssh_host_rsa_key"\n' >> "$SD/s/modules/ssh.conf"
     SMISS=$(alpine "$SPORE" --spore "$SD/s" plan 2>&1)

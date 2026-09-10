@@ -14,12 +14,20 @@
 secret_path()   { printf '%s/secrets/%s.age' "$SPORE_DIR" "$1"; }
 secret_exists() { [ -f "$(secret_path "$1")" ]; }
 
+# A relative path resolves against the spore, not the working directory. The
+# identity cannot live inside the spore — it is what unlocks everything the spore
+# carries — but it does need to sit beside it, and a seed-booted machine mounts
+# the spore at a path nobody can predict.
 secret_identity() {
     if [ -n "${SPORE_IDENTITY:-}" ]; then
-        printf '%s' "$SPORE_IDENTITY"
+        si_p=$SPORE_IDENTITY
     else
-        conf_get "$SPORE_DIR/spore.conf" SECRETS_IDENTITY /etc/spore/identity
+        si_p=$(conf_get "$SPORE_DIR/spore.conf" SECRETS_IDENTITY /etc/spore/identity)
     fi
+    case $si_p in
+        /*) printf '%s' "$si_p" ;;
+        *)  printf '%s/%s' "$SPORE_DIR" "$si_p" ;;
+    esac
 }
 
 secret_can_decrypt() {

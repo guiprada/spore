@@ -121,6 +121,22 @@ alongside the public `secrets/recipients`. Both are safe to commit. The private
 identity lives on the host and is the one thing a spore cannot carry — it is what
 unlocks everything the spore does carry.
 
+Create the keypair first — `seal` encrypts *to* the recipients:
+
+```sh
+age-keygen -o identity                        # private; never inside the spore
+mkdir -p myhost.spore/secrets
+age-keygen -y identity > myhost.spore/secrets/recipients
+```
+
+`SECRETS_IDENTITY` may be relative, and resolves against the spore rather than
+the working directory — so the identity can sit beside a spore that a
+seed-booted machine mounts at a path nothing could have hardcoded:
+
+```
+SECRETS_IDENTITY=../identity
+```
+
 ```sh
 spore seal dufs-auth                  # reads the value from stdin
 spore seal ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key
@@ -345,7 +361,7 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-206 checks, no Alpine and no container required: plan assertions, a synthetic-root
+208 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering
