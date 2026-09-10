@@ -177,6 +177,14 @@ One caveat: the initramfs takes the *first* apkovl it finds, so with two such
 devices plugged in the choice is arbitrary. `apkovl=<device>:<path>` on the
 kernel command line pins it.
 
+Prefer `apply --persist` over applying and persisting as separate steps: the gap
+between "it works" and "it survives" is where an unexpected reboot costs you the
+work. `persist` syncs after committing and then reads the archive back, because
+`lbu` returns once the write is *issued* — on removable media a page-cached
+apkovl can be lost to a power cut, leaving a truncated file that only fails at
+the next boot. Committing on every apply also means `lbu` accumulates numbered
+backups to fall back on; a single commit leaves you nothing.
+
 On a diskless host `apply` warns loudly that nothing survives a reboot until you
 `persist`, and `doctor` warns if `lbu.conf` names no destination at all — which
 would otherwise fail at `persist` time looking like a bug in spore rather than a

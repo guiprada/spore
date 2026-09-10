@@ -27,6 +27,12 @@ persist_commit() {
                 run lbu include "$pc_p"
             done < "$SPORE_WORK/persist.final"
             run lbu commit
+            # lbu returns once the write is issued, not once it has reached the
+            # medium. On removable media a page-cached apkovl can survive a
+            # clean shutdown and be lost to a power cut, leaving a truncated
+            # archive that only fails at the next boot.
+            run sync
+            persist_verify
             say "committed to apkovl"
             ;;
         rootfs)
@@ -73,6 +79,24 @@ lbu_warnings() {
          partition is fine — the boot medium can stay read-only, since the
          initramfs finds the apkovl by scanning devices), or run setup-alpine
          and answer its 'store configs' question."
+    fi
+}
+
+# A commit that cannot be read back is worse than no commit: it looks like
+# success and fails at boot, when the machine is least able to tell you why.
+persist_verify() {
+    synthetic && return 0
+    [ "$SPORE_NOEXEC" = 1 ] && return 0
+    pv_dir=$(fact_lbu_dest)
+    [ "$pv_dir" != unset ] && [ -d "$pv_dir" ] || return 0
+    pv_f=$pv_dir/$(hostname 2>/dev/null).apkovl.tar.gz
+    [ -f "$pv_f" ] || return 0
+    if tar -tzf "$pv_f" >/dev/null 2>&1; then
+        say "verified $pv_f ($(wc -c < "$pv_f") bytes)"
+    else
+        die "$pv_f was written but is not a readable archive.
+         Do not reboot until this is resolved: the machine restores from this
+         file and will come back without its configuration."
     fi
 }
 
