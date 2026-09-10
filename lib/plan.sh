@@ -21,9 +21,12 @@
 #   persist   <path>
 
 # Execution order, applied as separate passes so ordering never depends on the
-# order modules happened to emit in. `persist` is absent on purpose: it is a
+# order modules happened to emit in. Services come last: the accounts they run
+# as, the capabilities they need, the volumes they serve and the keys they
+# present are all firstboot work, and starting a service before that exists
+# fails in ways that look like the service is broken. `persist` is absent on purpose: it is a
 # declaration consumed by the `persist` verb, not work done at apply time.
-SPORE_ACTION_ORDER='bootstrap pkg blob dir file secret svc firstboot'
+SPORE_ACTION_ORDER='bootstrap pkg blob dir file secret firstboot svc'
 
 plan_reset() { : > "$SPORE_PLAN"; }
 

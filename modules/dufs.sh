@@ -141,9 +141,14 @@ depend() {
     after firewall
 }"
 
-    # The package does not necessarily create the account the service runs as.
-    plan_firstboot dufs-user \
-        "id '$dufs_user' >/dev/null 2>&1 || adduser -S -D -H -s /sbin/nologin '$dufs_user'"
+    # The package does not necessarily create the account the service runs as,
+    # and busybox adduser -S does not create a matching group — the account lands
+    # in nogroup and supervise-daemon then fails looking up the group, not the
+    # user. Create both, and repair an account that predates this.
+    plan_firstboot dufs-user "grep -q '^$dufs_user:' /etc/group || addgroup -S '$dufs_user'
+id -u '$dufs_user' >/dev/null 2>&1 ||
+    adduser -S -D -H -s /sbin/nologin -G '$dufs_user' -g '$dufs_user' '$dufs_user'
+addgroup '$dufs_user' '$dufs_user' 2>/dev/null || true"
 
     # chown is tolerant because vfat/exfat/ntfs cannot carry Unix ownership.
     plan_firstboot dufs-serve-owner \

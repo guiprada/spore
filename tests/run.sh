@@ -122,6 +122,18 @@ else
     t_fail 'bootstrap scripts run before any apk add' "first sh=$FIRST_SH first apk=$FIRST_APK"
 fi
 
+# Services start last. The accounts they run as, the capabilities they need and
+# the volumes they serve are all firstboot work; starting first fails in ways
+# that look like the service itself is broken.
+LAST_SH=$(grep -n '^sh ' "$LOG" | tail -1 | cut -d: -f1)
+FIRST_RC=$(grep -n '^rc-update' "$LOG" | head -1 | cut -d: -f1)
+if [ -n "$LAST_SH" ] && [ -n "$FIRST_RC" ] && [ "$LAST_SH" -lt "$FIRST_RC" ]; then
+    t_ok 'every firstboot script runs before any service is touched'
+else
+    t_fail 'every firstboot script runs before any service is touched' \
+        "last sh=$LAST_SH first rc-update=$FIRST_RC"
+fi
+
 section 'firewall policy is generated from other modules ports'
 AW=$(cat "$R/etc/awall/optional/spore.json")
 has 'opens ssh port'  "$AW" '"spore-tcp-22": { "proto": "tcp", "port": [22] }'
