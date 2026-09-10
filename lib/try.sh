@@ -52,27 +52,52 @@ try_ovmf() {
 # on the same numbering, so the spore under test is the one that runs.
 try_guest_net() {
     tg_target=$1
-    tg_addr=''
+    tg_addr='' tg_gw='' tg_dns=''
 
     if [ -b "$tg_target" ] && [ "$(id -u)" = 0 ]; then
         tg_p2=$(media_part "$tg_target" 2)
         if [ -b "$tg_p2" ]; then
             mkdir -p "$SPORE_WORK/peek"
             if mount -o ro "$tg_p2" "$SPORE_WORK/peek" 2>/dev/null; then
-                tg_addr=$(conf_get "$SPORE_WORK/peek/spore/modules/net.conf" NET_ADDRESS '')
+                tg_c=$SPORE_WORK/peek/spore/modules/net.conf
+                tg_addr=$(conf_get "$tg_c" NET_ADDRESS '')
+                tg_gw=$(conf_get "$tg_c" NET_GATEWAY '')
+                # The first is the one that has to answer; the rest are spares
+                # this VM has no way to be either.
+                tg_dns=$(conf_get "$tg_c" NET_DNS '')
+                tg_dns=${tg_dns%% *}
                 umount "$SPORE_WORK/peek" 2>/dev/null || true
             fi
         fi
     fi
 
     case $tg_addr in
-        [0-9]*.[0-9]*.[0-9]*.[0-9]*)
-            # A /24 around the declared address, with the gateway at .1 — enough
-            # for the guest to route out and for the address to be its own.
-            tg_net=${tg_addr%.*}
-            printf 'user,id=n0,net=%s.0/24,host=%s.1' "$tg_net" "$tg_net" ;;
-        *) printf 'user,id=n0' ;;
+        [0-9]*.[0-9]*.[0-9]*.[0-9]*) : ;;
+        *) SPORE_TRY_NETDEV='user,id=n0'; return 0 ;;
     esac
+
+    # A /24 around the declared address, so the guest's own address is its own
+    # and its gateway is where the spore says it is.
+    tg_net=${tg_addr%.*}
+    case $tg_gw in
+        "$tg_net".*) tg_host=$tg_gw ;;
+        *)           tg_host=$tg_net.1 ;;
+    esac
+    tg_opts="user,id=n0,net=$tg_net.0/24,host=$tg_host"
+
+    # And DNS where the spore's resolv.conf will look for it. Without this the
+    # guest asks an address nothing in the VM answers, apk reports "temporary
+    # error (try again later)", and that reads as a flaky mirror rather than as
+    # a resolver that does not exist here.
+    case $tg_dns in
+        "$tg_host")
+            SPORE_TRY_DNS_CLASH=$tg_dns ;;
+        "$tg_net".*)
+            tg_opts="$tg_opts,dns=$tg_dns" ;;
+        ?*)
+            SPORE_TRY_DNS_OUTSIDE=$tg_dns ;;
+    esac
+    SPORE_TRY_NETDEV=$tg_opts
 }
 
 # try_boot <device|image> [write]
@@ -142,7 +167,20 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
         set -- "$@" -snapshot
     fi
 
-    set -- "$@" -netdev "$(try_guest_net "$tb_target")" -device virtio-net,netdev=n0
+    SPORE_TRY_NETDEV='user,id=n0' SPORE_TRY_DNS_CLASH='' SPORE_TRY_DNS_OUTSIDE=''
+    try_guest_net "$tb_target"
+    if [ -n "$SPORE_TRY_DNS_CLASH" ]; then
+        warn "this spore's DNS server and its gateway are the same address
+         ($SPORE_TRY_DNS_CLASH), and the VM cannot be both. Name resolution will
+         fail in here — apk will say \"temporary error (try again later)\" —
+         while working perfectly on the real network. Add a second resolver to
+         NET_DNS to rehearse this properly."
+    elif [ -n "$SPORE_TRY_DNS_OUTSIDE" ]; then
+        warn "this spore resolves through $SPORE_TRY_DNS_OUTSIDE, which is outside
+         the network this VM can answer on. Name resolution will fail in here and
+         not on the real network."
+    fi
+    set -- "$@" -netdev "$SPORE_TRY_NETDEV" -device virtio-net,netdev=n0
 
     # Somewhere to look. Without a display this would run blind, and running
     # blind is what made all of this expensive in the first place.

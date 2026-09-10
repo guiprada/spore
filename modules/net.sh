@@ -89,7 +89,7 @@ SPORE_RESOLV_EOF"
     # Non-fatal: not every host has OpenRC driving the interface, and on one
     # already up and reachable a failed restart is not a reason to abandon the
     # apply — the next apk add will say so far more clearly.
-    plan_bootstrap net-up "$net_early
+    plan_netup net-up "$net_early
 if [ -x /etc/init.d/networking ]; then
     rc-service networking restart || rc-service networking start || true
 fi"

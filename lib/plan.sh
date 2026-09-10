@@ -26,7 +26,14 @@
 # present are all firstboot work, and starting a service before that exists
 # fails in ways that look like the service is broken. `persist` is absent on purpose: it is a
 # declaration consumed by the `persist` verb, not work done at apply time.
-SPORE_ACTION_ORDER='bootstrap pkg blob dir file secret firstboot svc'
+# netup before bootstrap, and both before packages. Bringing the interface up is
+# not just another bootstrap step: bootstrap actions run in the order modules
+# were listed, so `repos` ahead of `net` in MODULES put `apk update` before the
+# machine had an address. That fails as a DNS error, which reads as a bad mirror
+# rather than as a machine with no network — and it depends on the order of a
+# line in a config file, which is no way to decide whether a box can reach the
+# internet.
+SPORE_ACTION_ORDER='netup bootstrap pkg blob dir file secret firstboot svc'
 
 plan_reset() { : > "$SPORE_PLAN"; }
 
@@ -85,6 +92,14 @@ plan_bootstrap() {
     pbs_id=$1 pbs_script=$2
     pbs_sha=$(printf '%s\n' "$pbs_script" | content_put)
     _emit bootstrap "$pbs_id" "$pbs_sha"
+}
+
+# Same shape as a bootstrap action, but in the phase before it: whatever has to
+# be true before anything reaches the network.
+plan_netup() {
+    pnu_id=$1 pnu_script=$2
+    pnu_sha=$(printf '%s\n' "$pnu_script" | content_put)
+    _emit netup "$pnu_id" "$pnu_sha"
 }
 
 # plan_blob <name> — resolved against blobs.conf for the target arch at plan time,

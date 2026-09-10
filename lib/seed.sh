@@ -14,7 +14,8 @@ seed_build() {
     sb_out=$1
     sb_stage=$SPORE_WORK/seed
     rm -rf "$sb_stage"
-    mkdir -p "$sb_stage/etc/local.d" "$sb_stage/etc/runlevels/default" \
+    mkdir -p "$sb_stage/etc/init.d" "$sb_stage/etc/local.d" \
+             "$sb_stage/etc/runlevels/default" \
              "$sb_stage/etc/apk/protected_paths.d" \
              "$sb_stage/usr/local/bin" "$sb_stage/usr/local/lib/spore"
 
@@ -28,7 +29,7 @@ seed_build() {
     # lbu tracks /etc by default; the tool lives outside it.
     printf '+usr/local\n' > "$sb_stage/etc/apk/protected_paths.d/spore.list"
 
-    cat > "$sb_stage/etc/local.d/spore.start" <<'START'
+    cat > "$sb_stage/usr/local/lib/spore/seed-run" <<'START'
 #!/bin/sh
 # Managed by spore. Finds a spore on attached media and converges this machine.
 exec >>/var/log/spore-seed.log 2>&1
@@ -97,10 +98,38 @@ else
     exit 1
 fi
 START
-    chmod 755 "$sb_stage/etc/local.d/spore.start"
+    chmod 755 "$sb_stage/usr/local/lib/spore/seed-run"
 
-    # local.d only runs if the `local` service is in the default runlevel.
-    ln -sf /etc/init.d/local "$sb_stage/etc/runlevels/default/local"
+    # Its own service, rather than a hook in /etc/local.d. local.d runs only if
+    # the `local` service is present and in the runlevel, which is an assumption
+    # about the image that cannot be checked from here — and when it does not
+    # hold, nothing runs and nothing is written, so there is not even a log to
+    # say so. A service we ship ourselves depends on nothing but OpenRC.
+    cat > "$sb_stage/etc/init.d/spore-seed" <<'UNIT'
+#!/sbin/openrc-run
+description="Find a spore on attached media and converge this machine"
+
+depend() {
+    # After the filesystems it will look through, and after the network it will
+    # need to fetch packages — but needing neither, since a machine with no
+    # network still has a spore worth applying as far as it can get.
+    after localmount net
+}
+
+start() {
+    ebegin "spore: looking for a spore to germinate"
+    /usr/local/lib/spore/seed-run
+    eend $? "spore: see spore-seed.log beside the spore, and /var/log"
+}
+UNIT
+    chmod 755 "$sb_stage/etc/init.d/spore-seed"
+    ln -sf /etc/init.d/spore-seed "$sb_stage/etc/runlevels/default/spore-seed"
+
+    # A one-line breadcrumb in local.d as well, in case that is where somebody
+    # looks. It only reports; the service does the work.
+    printf '#!/bin/sh\n# The work is done by the spore-seed service, not here.\n# rc-service spore-seed start\n' \
+        > "$sb_stage/etc/local.d/spore.start"
+    chmod 644 "$sb_stage/etc/local.d/spore.start"
 
     # The overlay is unpacked by the initramfs as root, which restores whatever
     # ownership the archive records. Built by an ordinary user — which is the

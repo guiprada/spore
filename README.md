@@ -102,6 +102,7 @@ Alpine box — and it is the shape the staging executor will need.
 
 | action | live | staging (`build`, planned) |
 |---|---|---|
+| `netup` | bring the interface up, before anything reaches the network | n/a |
 | `bootstrap` | run before any package (enable a repo, point the apk cache) | run in the staging chroot |
 | `pkg` | `apk add` | append to `etc/apk/world` |
 | `blob` | fetch, verify sha256, install | fetch into boot-media cache |
@@ -111,7 +112,12 @@ Alpine box — and it is the shape the staging executor will need.
 | `firstboot` | run now | emit to `/etc/local.d/` |
 | `persist` | (declaration) | already in the overlay |
 
-Two phase distinctions matter. `bootstrap` runs *before* packages, because enabling
+Three phase distinctions matter. `netup` runs before everything, because a
+machine that provisions itself has to have an address before it can fetch a
+single package — and bootstrap actions run in the order modules were listed, so
+`repos` ahead of `net` in `MODULES` would otherwise put `apk update` first and
+fail as a DNS error. Reachability must not depend on the order of a line in a
+config file. `bootstrap` runs *before* packages, because enabling
 the community repository has to precede the `apk add` that depends on it.
 `firstboot` runs *after* everything, and holds work that genuinely cannot be
 planned statically — generating an ssh host key, or a TLS certificate — which is
@@ -587,7 +593,7 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-329 checks, no Alpine and no container required: plan assertions, a synthetic-root
+335 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering

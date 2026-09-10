@@ -283,7 +283,7 @@ section 'a machine brings its own network up before it fetches anything'
 # diskless Alpine has no /etc/network/interfaces at all. Writing it only in the
 # file pass is four phases too late: the run is already dead, at a failure that
 # reads like a broken mirror rather than like a machine with no address.
-has 'the interface is configured in the bootstrap pass' "$PLAN" 'bootstrap  net-up'
+has 'the interface is configured first of all' "$PLAN" 'netup      net-up'
 NS=$(mktemp -d /tmp/spore-netstatic.XXXXXX)/s; cp -r "$EX" "$NS"
 cat > "$NS/modules/net.conf" <<'NETC'
 NET_HOSTNAME=coisas
@@ -315,6 +315,17 @@ has 'rc-update add sshd'       "$CMDS" 'rc-update add sshd default'
 has 'rc-update add dufs'       "$CMDS" 'rc-update add dufs default'
 has 'apk add dufs'             "$CMDS" 'apk add --no-progress dufs'
 has 'apk add libcap for :443'  "$CMDS" 'apk add --no-progress libcap'
+
+# The network has to be up before ANY of that: bootstrap actions run in the
+# order modules were listed, so `repos` ahead of `net` in MODULES put apk update
+# before the machine had an address. That failed as a DNS error, which reads as a
+# bad mirror rather than a machine with no network — and it made reachability
+# depend on the order of a line in a config file.
+PHASES=$(cd "$ROOT" && sh -c '. ./lib/plan.sh 2>/dev/null; printf "%s" "$SPORE_ACTION_ORDER"')
+case $PHASES in
+    'netup bootstrap pkg'*) t_ok 'the network is brought up before every other phase' ;;
+    *) t_fail 'the network is brought up before every other phase' "order is [$PHASES]" ;;
+esac
 
 # The ordering invariant: enabling community must precede every apk add, or
 # `apk add dufs` fails on a stock Alpine.
@@ -777,8 +788,12 @@ has   'builds without a spore'     "$SEEDOUT" 'wrote'
 check 'the overlay exists'         "$([ -s "$SEEDF" ] && echo yes || echo no)" yes
 
 SEEDLIST=$(tar -tzf "$SEEDF" | sed 's|^\./||')
-has 'carries the first-boot hook'  "$SEEDLIST" 'etc/local.d/spore.start'
-has 'enables the local service'    "$SEEDLIST" 'etc/runlevels/default/local'
+has 'carries the first-boot hook'  "$SEEDLIST" 'usr/local/lib/spore/seed-run'
+# Its own service rather than a local.d hook: local.d runs only if the `local`
+# service happens to be present and enabled, and when it is not, nothing runs
+# and nothing is written — not even a log to say so.
+has 'as a service of its own'      "$SEEDLIST" 'etc/init.d/spore-seed'
+has 'enabled in the default runlevel' "$SEEDLIST" 'etc/runlevels/default/spore-seed'
 has 'carries the tool'             "$SEEDLIST" 'usr/local/bin/spore'
 has 'keeps /usr/local across lbu'  "$SEEDLIST" 'etc/apk/protected_paths.d/spore.list'
 # The point of the rework: no configuration inside the overlay.
@@ -790,7 +805,14 @@ hasnt 'bakes no repository list'   "$SEEDLIST" 'etc/apk/repositories'
 SEEDOWN=$(tar -tvzf "$SEEDF" | awk '{ print $2 }' | sort -u | tr '\n' ' ')
 check 'everything is owned by root' "$SEEDOWN" '0/0 '
 
-SEEDSTART=$(tar -xzOf "$SEEDF" ./etc/local.d/spore.start)
+SEEDSTART=$(tar -xzOf "$SEEDF" ./usr/local/lib/spore/seed-run)
+SEEDUNIT=$(tar -xzOf "$SEEDF" ./etc/init.d/spore-seed)
+has 'the unit is an openrc script'    "$SEEDUNIT" '#!/sbin/openrc-run'
+has 'and runs the seed'               "$SEEDUNIT" '/usr/local/lib/spore/seed-run'
+# after, not need: a machine with no network still has a spore worth applying as
+# far as it can get, and a hard dependency would stop it before it tried.
+has 'ordered after mounts and network' "$SEEDUNIT" 'after localmount net'
+hasnt 'without depending on them'      "$SEEDUNIT" 'need localmount'
 has 'hook discovers a spore on media' "$SEEDSTART" '/media/*/spore'
 has 'hook scans block devices too'    "$SEEDSTART" '/dev/sd'
 # A VM guest is one of the two things this is for, and every hypervisor hands it
@@ -889,7 +911,7 @@ else
 fi
 has 'keymap set through setup-keymap'   "$WZP" 'firstboot  system-keymap'
 has 'timezone through setup-timezone'   "$WZP" 'firstboot  system-timezone'
-has 'the network comes up before apk'   "$WZP" 'bootstrap  net-up'
+has 'the network comes up before apk'   "$WZP" 'netup      net-up'
 # setup-alpine asks for both of these, and for good reason: the default CDN can
 # be far away, and a box with no battery-backed clock boots in 1970, where every
 # certificate looks not-yet-valid.

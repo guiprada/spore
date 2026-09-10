@@ -13,6 +13,7 @@ exec_print() {
             if (f[2] == "blob")      return f[3] " -> " f[6]
             if (f[2] == "firstboot") return f[3]
             if (f[2] == "bootstrap") return f[3]
+            if (f[2] == "netup")     return f[3]
             if (f[2] == "persist")   return f[3]
             return f[3]
         }

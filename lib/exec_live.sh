@@ -13,6 +13,7 @@ exec_plan() {
             [ -n "$ep_act" ] || continue
             SPORE_ACTION="$ep_act $f1 (module $ep_mod)"
             case $ep_act in
+                netup)     el_script    netup "$f1" "$f2" ;;
                 bootstrap) el_script    bootstrap "$f1" "$f2" ;;
                 pkg)       el_pkg       "$f1" ;;
                 blob)      el_blob      "$f1" "$f2" "$f3" "$f4" "$f5" "$f6" ;;
