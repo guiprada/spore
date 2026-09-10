@@ -22,9 +22,9 @@ Every command is the tool pointed at a spore:
 `-s` always names the bundle, never this repository.
 
 ```sh
-spore setup          # guided: asks, then writes a machine directory
+spore setup                            # asks, then offers to write the stick
 spore media /dev/sdX alpine.iso        # partition and write a boot medium
-spore install DIR /mnt/data /mnt/esp   # put the machine on it
+spore install DIR /dev/sdX             # put the machine on it
 
 spore apply          # converge this host to the spore
 spore persist        # make it survive a reboot
@@ -385,14 +385,23 @@ recognised identifier, is refused at plan time rather than written into fstab.
 ## Making the boot medium
 
 ```sh
-spore setup                                 # answers a machine's questions
-sudo spore media /dev/sdX alpine-standard-*.iso
-sudo mkdir -p /mnt/data /mnt/esp
-sudo mount /dev/sdX2 /mnt/data
-sudo mount /dev/sdX1 /mnt/esp
-spore install ~/machines/<name> /mnt/data /mnt/esp
-sudo umount /mnt/data /mnt/esp
+spore setup          # asks, writes the machine, offers to write the stick
 ```
+
+That is the whole thing. `setup` ends by asking whether to write a USB stick now;
+say yes and it runs `media` and `install` for you, mounting and unmounting on its
+own. Say no and it prints the two commands to run later:
+
+```sh
+sudo spore media /dev/sdX alpine-standard-*.iso
+sudo spore install ~/machines/<name> /dev/sdX
+```
+
+`install` takes the whole device and finds its own partitions. Three commands by
+hand is three chances to name the wrong path, and forgetting the `umount` is how
+a stick gets pulled while the write is still in the page cache. Mounted
+directories still work — `spore install DIR /mnt/data /mnt/esp` — for a disk that
+is already mounted or is not laid out this way.
 
 Naming the boot partition as well puts a copy of the seed overlay there. The
 initramfs has to mount a filesystem before it can find an apkovl on it, and what
@@ -534,7 +543,7 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-296 checks, no Alpine and no container required: plan assertions, a synthetic-root
+299 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering

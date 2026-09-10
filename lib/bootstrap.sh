@@ -209,10 +209,41 @@ install_machine() {
     im_dir=$1
     im_target=$2
     im_boot=${3:-}
+    im_mounted_here=no
 
     [ -d "$im_dir" ] || die "no such directory: $im_dir"
     [ -f "$im_dir/spore/spore.conf" ] ||
         die "$im_dir does not look like a machine directory (no spore/spore.conf)"
+
+    # A whole device rather than a mounted directory: mount it ourselves. Making
+    # people run mount, install and umount by hand is three chances to name the
+    # wrong path, and forgetting the umount is how a stick gets pulled while the
+    # write is still in the page cache.
+    if [ -b "$im_target" ]; then
+        [ -z "$im_boot" ] ||
+            die "when the target is a device its boot partition is found on it,
+        so there is no third argument to give."
+        [ "$(id -u)" = 0 ] || die "mounting $im_target needs root: run this with sudo"
+        im_p1=$(media_part "$im_target" 1)
+        im_p2=$(media_part "$im_target" 2)
+        [ -b "$im_p2" ] ||
+            die "$im_p2 does not exist, so this is not a spore medium yet.
+        Make one first:  spore media $im_target alpine-standard-*.iso"
+        mkdir -p "$SPORE_WORK/mnt/data" "$SPORE_WORK/mnt/esp"
+        run mount "$im_p2" "$SPORE_WORK/mnt/data"
+        SPORE_UNMOUNT="$SPORE_WORK/mnt/data"
+        im_target=$SPORE_WORK/mnt/data
+        if [ -b "$im_p1" ] && mount "$im_p1" "$SPORE_WORK/mnt/esp" 2>/dev/null; then
+            SPORE_UNMOUNT="$SPORE_WORK/mnt/esp $SPORE_UNMOUNT"
+            im_boot=$SPORE_WORK/mnt/esp
+        else
+            warn "could not mount $im_p1, so the seed goes only on the data
+         partition. If the machine boots without running spore, that filesystem
+         is one the initramfs cannot read."
+        fi
+        im_mounted_here=yes
+    fi
+
     [ -d "$im_target" ] || die "$im_target does not exist — is the disk mounted?"
 
     # The spore first: what it says is wrong with it is worth hearing whether or
@@ -302,7 +333,12 @@ install_machine() {
          running spore, the initramfs could not read this filesystem — name the
          boot partition as a third argument and the seed goes there too."
     fi
-    printf 'Unmount the disk, attach it to a stock Alpine, and boot. The first boot\n'
-    printf 'finds the spore, applies it and commits; progress goes to\n'
-    printf 'spore-seed.log beside the spore.\n'
+    if [ "$im_mounted_here" = yes ]; then
+        spore_cleanup            # unmount now, so the disk is safe to pull
+        printf 'Unplugged safely — attach it to a stock Alpine and boot.\n'
+    else
+        printf 'Unmount the disk, attach it to a stock Alpine, and boot.\n'
+    fi
+    printf 'The first boot finds the spore, applies it and commits; progress goes\n'
+    printf 'to spore-seed.log beside the spore.\n'
 }

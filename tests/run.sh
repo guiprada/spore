@@ -927,6 +927,34 @@ case $MROOT in
     *) t_skip 'no /dev-backed root here — in-use assertion' ;;
 esac
 
+section 'install takes the device, so nobody types mount and umount'
+# Three commands by hand is three chances to name the wrong path, and forgetting
+# the umount is how a stick gets pulled while the write is still in page cache.
+MDEV=$(awk '$1 ~ /^\/dev\// { print $1; exit }' /proc/mounts 2>/dev/null)
+DEVB=''
+for d in /dev/vdb /dev/vdc /dev/sdb /dev/loop0; do
+    [ -b "$d" ] && [ "$d" != "$MDEV" ] && { DEVB=$d; break; }
+done
+if [ -z "$DEVB" ]; then
+    t_skip 'no spare block device here — device-form assertions'
+else
+    NBD=$(mktemp -d /tmp/spore-devform.XXXXXX)
+    printf 'ssh-ed25519 AAAADeviceFormTest t@t\n' > "$NBD/id.pub"
+    SPORE_PUBKEY="$NBD/id.pub" USER=tester "$SPORE" new devhost "$NBD/m" >/dev/null 2>&1
+    # A device that was never prepared says so, and names the command that would.
+    if IOUT=$("$SPORE" install "$NBD/m" "$DEVB" 2>&1); then
+        t_fail 'an unprepared device is refused' 'succeeded'
+    else
+        has 'an unprepared device is refused' "$IOUT" 'not a spore medium yet'
+        has 'and names how to make one'       "$IOUT" 'spore media'
+    fi
+    # Its boot partition is on it; a third argument would be a contradiction.
+    if IOUT=$("$SPORE" install "$NBD/m" "$DEVB" /tmp 2>&1); then
+        t_fail 'a device plus a boot argument is refused' 'succeeded'
+    else has 'a device plus a boot argument is refused' "$IOUT" 'no third argument'; fi
+    rm -rf "$NBD"
+fi
+
 section 'spore new: a machine directory, ready to edit'
 NB=$(mktemp -d /tmp/spore-boot.XXXXXX)
 printf 'ssh-ed25519 AAAAC3TestKeyForBootstrap tester@workstation\n' > "$NB/id.pub"

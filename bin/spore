@@ -33,7 +33,7 @@ commands:
   setup [DIR]       guided: asks, then writes a machine directory
   media DEV ISO     partition and write a boot medium (ERASES DEV)
   new NAME [DIR]    the same directory, without the questions
-  install DIR DATA [BOOT]
+  install DIR DEV|DATA [BOOT]
                     write a machine onto a mounted data partition; naming the
                     boot partition too puts the seed where the initramfs can
                     certainly read it

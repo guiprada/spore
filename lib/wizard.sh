@@ -262,12 +262,23 @@ CONF
     # --- what now ------------------------------------------------------------
     wz_head "Created $wz_dir"
     printf '\n' >&2
-    cat >&2 <<SUMMARY
+    cat >&2 <<SUMMARY2
   $wz_host, $wz_mode on $wz_iface$([ "$wz_mode" = static ] && printf ' (%s)' "$wz_addr")
   account $wz_user$([ "$wz_doas" = yes ] && printf ' with doas')$([ -n "$wz_key" ] && printf ', key installed' || printf ', %sno key%s' "$_c_yellow" "$_c_reset")
   ssh $wz_ssh$([ "$wz_ssh" = yes ] && printf ' on port %s' "$wz_port")
   keymap $wz_keymap, timezone $wz_tz, ntp $wz_ntp
   mirror ${wz_mirror:-whatever the image came with}
+SUMMARY2
+
+    if wz_disk "$wz_dir"; then
+        if [ -z "$wz_key" ]; then
+            warn "no key was installed, so ssh is off and this machine will only
+         be reachable at its console."
+        fi
+        return 0
+    fi
+
+    cat >&2 <<SUMMARY
 
 Next, make the boot medium — this erases the disk you name:
 
@@ -275,11 +286,7 @@ Next, make the boot medium — this erases the disk you name:
 
 then write this machine to it:
 
-  sudo mkdir -p /mnt/data /mnt/esp
-  sudo mount /dev/sdX2 /mnt/data
-  sudo mount /dev/sdX1 /mnt/esp
-  spore install $wz_dir /mnt/data /mnt/esp
-  sudo umount /mnt/data /mnt/esp
+  sudo spore install $wz_dir /dev/sdX
 
 Anything you change in $wz_dir/spore afterwards needs another
 \`spore install\` to reach the disk. That is the whole loop.
@@ -290,4 +297,67 @@ SUMMARY
          reachable at its console. Put a public key at
          $SPORE_DIR/keys/$wz_user.authorized_keys and set SSH_ENABLED=yes."
     fi
+}
+
+# The newest Alpine ISO lying around, so the common case is one Enter.
+wz_find_iso() {
+    wf_best=''
+    for wf_d in "$(bootstrap_home)/Downloads" "$(bootstrap_home)" .; do
+        [ -d "$wf_d" ] || continue
+        for wf_i in "$wf_d"/alpine-*.iso; do
+            [ -f "$wf_i" ] || continue
+            if [ -z "$wf_best" ] || [ "$wf_i" -nt "$wf_best" ]; then
+                wf_best=$wf_i
+            fi
+        done
+        if [ -n "$wf_best" ]; then
+            printf '%s' "$wf_best"
+            return 0
+        fi
+    done
+    return 0
+}
+
+# Everything from here needs root. The answers were gathered and the directory
+# written as the ordinary user on purpose — a machine directory owned by root is
+# one you cannot edit afterwards, and editing it afterwards is the whole loop.
+wz_disk() {
+    wd_dir=$1
+
+    wz_head 'The disk'
+    wz_say 'The machine is ready to write. This can be done now, or later with'
+    wz_say 'the two commands printed at the end.'
+    [ "$(wz_yn 'Write a USB stick now?' n)" = yes ] || return 1
+
+    wd_sudo=''
+    if [ "$(id -u)" != 0 ]; then
+        command -v sudo >/dev/null 2>&1 ||
+            { warn "sudo is not installed, so the disk cannot be written from here."; return 1; }
+        wd_sudo=sudo
+    fi
+
+    wz_say ''
+    lsblk -dno PATH,SIZE,TRAN,MODEL 2>/dev/null | sed 's/^/  /' >&2 ||
+        wz_say '  (lsblk is not installed — you will have to know the path)'
+    wz_say ''
+    wz_say 'The removable one. Everything on it is destroyed.'
+    wd_dev=$(wz_ask 'Device' '')
+    [ -n "$wd_dev" ] || { wz_say 'nothing named; skipping'; return 1; }
+    [ -b "$wd_dev" ] || { warn "$wd_dev is not a block device"; return 1; }
+
+    wz_say ''
+    wd_iso=$(wz_ask 'Alpine ISO' "$(wz_find_iso)")
+    [ -f "$wd_iso" ] || { warn "no such file: $wd_iso"; return 1; }
+
+    # media does its own listing and makes the path be typed back, so the
+    # confirmation lives there rather than being asked twice.
+    wz_say ''
+    "$wd_sudo" "$SPORE_PREFIX/bin/spore" media "$wd_dev" "$wd_iso" ||
+        { warn 'the medium was not written; nothing else was done'; return 1; }
+
+    wz_say ''
+    "$wd_sudo" "$SPORE_PREFIX/bin/spore" install "$wd_dir" "$wd_dev" ||
+        { warn "the medium is made but this machine is not on it yet. Fix what it
+         said, then:  sudo spore install $wd_dir $wd_dev"; return 1; }
+    return 0
 }

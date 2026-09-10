@@ -59,6 +59,13 @@ spore_workspace() {
 }
 
 spore_cleanup() {
+    # Anything this run mounted itself, it unmounts — including on the way out
+    # of a failure. Leaving a removable disk mounted after an error is how a
+    # stick gets pulled mid-write.
+    for sc_m in ${SPORE_UNMOUNT:-}; do
+        umount "$sc_m" 2>/dev/null || true
+    done
+    SPORE_UNMOUNT=''
     if [ "${SPORE_WORK_OWNED:-0}" = 1 ] && [ -n "${SPORE_WORK:-}" ]; then
         rm -rf "$SPORE_WORK"
     fi

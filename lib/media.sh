@@ -13,6 +13,14 @@
 # Unix ownership, so the identity that decrypts every secret in the spore cannot
 # be mode 0600 there. It would be readable by anyone holding the stick.
 
+# nvme and mmc number their partitions p1/p2; sd and vd do not.
+media_part() {
+    case $1 in
+        *[0-9]) printf '%sp%s' "$1" "$2" ;;
+        *)      printf '%s%s'  "$1" "$2" ;;
+    esac
+}
+
 media_need() {
     for mn_c in "$@"; do
         command -v "$mn_c" >/dev/null 2>&1 || die "$mn_c is not installed.
@@ -68,11 +76,8 @@ $(printf '%s\n' "$mw_used" | sed 's/^/           /')
     run partprobe "$mw_dev"
     command -v udevadm >/dev/null 2>&1 && run udevadm settle
 
-    # nvme and mmc number partitions p1/p2; sd and vd do not.
-    case $mw_dev in
-        *[0-9]) mw_p1=${mw_dev}p1 mw_p2=${mw_dev}p2 ;;
-        *)      mw_p1=${mw_dev}1  mw_p2=${mw_dev}2  ;;
-    esac
+    mw_p1=$(media_part "$mw_dev" 1)
+    mw_p2=$(media_part "$mw_dev" 2)
     [ -b "$mw_p1" ] || die "$mw_p1 did not appear after partitioning"
 
     say "formatting"
