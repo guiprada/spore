@@ -999,6 +999,27 @@ else
     "$SPORE" install "$NB/m" "$MP" >/dev/null 2>&1
     check 'a second install replaces, not nests' \
         "$([ -e "$MP/spore/spore" ] && echo nested || echo clean)" clean
+
+    # A named boot partition gets the same seed. The initramfs has to mount a
+    # filesystem before it can find an apkovl on it, and a FAT boot partition is
+    # the one it can certainly read.
+    BP=$NB/boot; mkdir -p "$BP"
+    if mount -t tmpfs tmpfs "$BP" 2>/dev/null; then
+        "$SPORE" install "$NB/m" "$MP" "$BP" >/dev/null 2>&1
+        check 'the seed also lands on the boot partition' \
+            "$([ -s "$BP/spore-seed.apkovl.tar.gz" ] && echo yes || echo no)" yes
+        check 'and both copies are the same build' \
+            "$(cmp -s "$BP/spore-seed.apkovl.tar.gz" "$MP/spore-seed.apkovl.tar.gz" \
+               && echo same || echo differ)" same
+        umount "$BP" 2>/dev/null || true
+    else
+        t_skip 'cannot mount a second tmpfs — boot-partition seed assertions'
+    fi
+    # An unmounted boot directory is the same mistake as an unmounted target.
+    mkdir -p "$NB/notaboot"
+    if IOUT=$("$SPORE" install "$NB/m" "$MP" "$NB/notaboot" 2>&1); then
+        t_fail 'refuses a boot partition that is not mounted' 'succeeded'
+    else has 'refuses a boot partition that is not mounted' "$IOUT" 'not a mount point'; fi
     umount "$MP" 2>/dev/null || true
 fi
 rm -rf "$NB"

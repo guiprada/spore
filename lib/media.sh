@@ -110,8 +110,11 @@ $(printf '%s\n' "$mw_used" | sed 's/^/           /')
     printf '\n%s is ready.\n\n' "$mw_dev" >&2
     printf '  %-14s ALPINE   the system, read-only from here on\n' "$mw_p1" >&2
     printf '  %-14s DATA     your machine goes here\n\n' "$mw_p2" >&2
-    printf 'Now write the machine to it:\n\n' >&2
+    printf 'Now write the machine to it. Mount both — naming the boot partition\n' >&2
+    printf 'puts the seed where the initramfs can certainly read it:\n\n' >&2
+    printf '  sudo mkdir -p /mnt/data /mnt/esp\n' >&2
     printf '  sudo mount %s /mnt/data\n' "$mw_p2" >&2
-    printf '  spore install <dir> /mnt/data\n' >&2
-    printf '  sudo umount /mnt/data\n' >&2
+    printf '  sudo mount %s /mnt/esp\n' "$mw_p1" >&2
+    printf '  spore install <dir> /mnt/data /mnt/esp\n' >&2
+    printf '  sudo umount /mnt/data /mnt/esp\n' >&2
 }

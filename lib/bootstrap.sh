@@ -204,10 +204,11 @@ INFO
     fi
 }
 
-# install_machine <dir> <target>
+# install_machine <dir> <target> [boot]
 install_machine() {
     im_dir=$1
     im_target=$2
+    im_boot=${3:-}
 
     [ -d "$im_dir" ] || die "no such directory: $im_dir"
     [ -f "$im_dir/spore/spore.conf" ] ||
@@ -264,6 +265,24 @@ install_machine() {
     else
         seed_build "$im_seed"
     fi
+
+    # A copy on the boot partition too, when one is named. The initramfs has to
+    # mount a filesystem before it can find an apkovl on it, and what it can
+    # mount depends on how that ISO's initramfs was built — a FAT boot partition
+    # it can certainly read, an ext4 data partition only probably. Both copies
+    # come out of the same build in the same run, so whichever the initramfs
+    # reaches first is the same overlay and they cannot drift apart.
+    if [ -n "$im_boot" ]; then
+        [ -d "$im_boot" ] || die "$im_boot does not exist — is the boot partition mounted?"
+        bootstrap_mountpoint "$im_boot" ||
+            die "$im_boot is not a mount point.
+        Copying there would write to this machine's disk, not the removable one."
+        if [ "$SPORE_DRYRUN" = 1 ]; then
+            say "would copy the seed to $im_boot"
+        else
+            run cp "$im_seed" "$im_boot/spore-seed.apkovl.tar.gz"
+        fi
+    fi
     run sync
 
     if [ "$SPORE_DRYRUN" = 1 ]; then
@@ -275,8 +294,15 @@ install_machine() {
     printf '  spore/                      %s\n' "$(conf_get "$im_dir/spore/spore.conf" HOST '?')"
     printf '  identity                    %s\n' \
         "$([ -f "$im_dir/identity" ] && printf 'copied' || printf 'none in %s' "$im_dir")"
-    printf '  spore-seed.apkovl.tar.gz    built from this tool\n\n'
+    printf '  spore-seed.apkovl.tar.gz    built from this tool\n'
+    [ -n "$im_boot" ] && printf '  and the same seed on            %s\n' "$im_boot"
+    printf '\n'
+    if [ -z "$im_boot" ]; then
+        say "the seed is only on this partition. If the machine boots without
+         running spore, the initramfs could not read this filesystem — name the
+         boot partition as a third argument and the seed goes there too."
+    fi
     printf 'Unmount the disk, attach it to a stock Alpine, and boot. The first boot\n'
     printf 'finds the spore, applies it and commits; progress goes to\n'
-    printf '/var/log/spore-seed.log on the target.\n'
+    printf 'spore-seed.log beside the spore.\n'
 }

@@ -24,7 +24,7 @@ Every command is the tool pointed at a spore:
 ```sh
 spore setup          # guided: asks, then writes a machine directory
 spore media /dev/sdX alpine.iso        # partition and write a boot medium
-spore install DIR /mnt/data            # put the machine on it
+spore install DIR /mnt/data /mnt/esp   # put the machine on it
 
 spore apply          # converge this host to the spore
 spore persist        # make it survive a reboot
@@ -387,10 +387,19 @@ recognised identifier, is refused at plan time rather than written into fstab.
 ```sh
 spore setup                                 # answers a machine's questions
 sudo spore media /dev/sdX alpine-standard-*.iso
+sudo mkdir -p /mnt/data /mnt/esp
 sudo mount /dev/sdX2 /mnt/data
-spore install ~/machines/<name> /mnt/data
-sudo umount /mnt/data
+sudo mount /dev/sdX1 /mnt/esp
+spore install ~/machines/<name> /mnt/data /mnt/esp
+sudo umount /mnt/data /mnt/esp
 ```
+
+Naming the boot partition as well puts a copy of the seed overlay there. The
+initramfs has to mount a filesystem before it can find an apkovl on it, and what
+it can mount depends on how that ISO's initramfs was built — a FAT boot partition
+it can certainly read, an ext4 data partition only probably. Both copies come out
+of the same build in the same run, so whichever it reaches first is the same
+overlay and they cannot drift apart.
 
 `setup` asks for hostname, keyboard layout, timezone, network, account, key and
 ssh, then writes a spore carrying only the modules you answered for — no volumes
@@ -524,7 +533,7 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-285 checks, no Alpine and no container required: plan assertions, a synthetic-root
+288 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering

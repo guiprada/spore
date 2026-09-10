@@ -33,7 +33,10 @@ commands:
   setup [DIR]       guided: asks, then writes a machine directory
   media DEV ISO     partition and write a boot medium (ERASES DEV)
   new NAME [DIR]    the same directory, without the questions
-  install DIR TGT   write a machine onto a mounted data partition
+  install DIR DATA [BOOT]
+                    write a machine onto a mounted data partition; naming the
+                    boot partition too puts the seed where the initramfs can
+                    certainly read it
 
   init [DIR]     scaffold a new spore
   plan           show the action list this spore produces (no changes)
@@ -362,7 +365,7 @@ cmd_new() {
 }
 
 cmd_install() {
-    [ $# -eq 2 ] || die "usage: spore install DIR TARGET"
+    [ $# -ge 2 ] && [ $# -le 3 ] || die "usage: spore install DIR DATA [BOOT]"
     spore_workspace
     install_machine "$@"
 }

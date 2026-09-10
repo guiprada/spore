@@ -255,11 +255,13 @@ Next, make the boot medium — this erases the disk you name:
 
   spore media /dev/sdX alpine-standard-*.iso
 
-then write this machine to its data partition:
+then write this machine to it:
 
+  sudo mkdir -p /mnt/data /mnt/esp
   sudo mount /dev/sdX2 /mnt/data
-  spore install $wz_dir /mnt/data
-  sudo umount /mnt/data
+  sudo mount /dev/sdX1 /mnt/esp
+  spore install $wz_dir /mnt/data /mnt/esp
+  sudo umount /mnt/data /mnt/esp
 
 Anything you change in $wz_dir/spore afterwards needs another
 \`spore install\` to reach the disk. That is the whole loop.
