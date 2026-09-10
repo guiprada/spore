@@ -34,6 +34,18 @@ seed_build() {
 exec >>/var/log/spore-seed.log 2>&1
 printf '\n=== spore seed: %s ===\n' "$(date 2>/dev/null)"
 
+# /var/log is on the RAM root, so a reboot takes this log with it — and the
+# reboot is exactly what you do when the machine did not come up right. Copy it
+# beside the spore on the way out, on every path, so the evidence outlives the
+# boot that produced it.
+seed_data=''
+save_log() {
+    [ -n "$seed_data" ] || return 0
+    cp /var/log/spore-seed.log "$seed_data/spore-seed.log" 2>/dev/null || return 0
+    sync 2>/dev/null || true
+}
+trap save_log EXIT
+
 if [ -f /etc/spore/.seeded ]; then
     echo "already converged; nothing to do"
     exit 0
@@ -65,6 +77,8 @@ if [ -z "$found" ]; then
     echo "Unpack one as <filesystem>/spore/ — it needs a spore.conf at its root."
     exit 1
 fi
+
+seed_data=$(dirname "$found")
 
 echo "applying $found"
 if /usr/local/bin/spore -s "$found" apply --persist; then

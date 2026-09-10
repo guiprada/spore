@@ -56,12 +56,41 @@ iface $net_iface inet dhcp"
     plan_file /etc/network/interfaces 0644 "$net_body"
 
     net_dns=$(mconf NET_DNS '')
+    net_resolv=''
     if [ -n "$net_dns" ]; then
-        net_resolv=''
         for net_s in $net_dns; do
             net_resolv="$net_resolv
 nameserver $net_s"
         done
-        plan_file /etc/resolv.conf 0644 "# Managed by spore.$net_resolv"
+        net_resolv="# Managed by spore.$net_resolv"
+        plan_file /etc/resolv.conf 0644 "$net_resolv"
     fi
+
+    # And again, early. The file pass is four phases too late to be the only
+    # place this happens: the first thing apply does on a fresh box is
+    # `apk update`, and a stock diskless Alpine has no /etc/network/interfaces
+    # at all — so there is no network to do it over, and the run dies in the
+    # bootstrap pass at something that reads like a broken mirror rather than
+    # like a machine with no address. Anything that provisions itself has to
+    # bring its own network up before it can fetch a single package.
+    #
+    # Byte-identical to the file actions above, so those find it already
+    # correct and `status` stays honest.
+    net_early="mkdir -p /etc/network
+cat > /etc/network/interfaces <<'SPORE_IFACE_EOF'
+$net_body
+SPORE_IFACE_EOF"
+    if [ -n "$net_resolv" ]; then
+        net_early="$net_early
+cat > /etc/resolv.conf <<'SPORE_RESOLV_EOF'
+$net_resolv
+SPORE_RESOLV_EOF"
+    fi
+    # Non-fatal: not every host has OpenRC driving the interface, and on one
+    # already up and reachable a failed restart is not a reason to abandon the
+    # apply — the next apk add will say so far more clearly.
+    plan_bootstrap net-up "$net_early
+if [ -x /etc/init.d/networking ]; then
+    rc-service networking restart || rc-service networking start || true
+fi"
 }

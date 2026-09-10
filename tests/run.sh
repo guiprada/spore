@@ -260,6 +260,35 @@ has 'a keyed account is a usable login' "$(alpine "$SPORE" --spore "$UK" plan 2>
 rm -rf "$UK" "$UKR" "$UKW"
 has 'hostname written'                "$(cat "$R/etc/hostname")"        'changeme'
 
+section 'a machine brings its own network up before it fetches anything'
+# The first thing apply does on a fresh box is `apk update`, and a stock
+# diskless Alpine has no /etc/network/interfaces at all. Writing it only in the
+# file pass is four phases too late: the run is already dead, at a failure that
+# reads like a broken mirror rather than like a machine with no address.
+has 'the interface is configured in the bootstrap pass' "$PLAN" 'bootstrap  net-up'
+NS=$(mktemp -d /tmp/spore-netstatic.XXXXXX)/s; cp -r "$EX" "$NS"
+cat > "$NS/modules/net.conf" <<'NETC'
+NET_HOSTNAME=coisas
+NET_IFACE=eth0
+NET_MODE=static
+NET_ADDRESS=192.168.1.50
+NET_NETMASK=255.255.255.0
+NET_GATEWAY=192.168.1.1
+NET_DNS="192.168.1.1 1.1.1.1"
+NETC
+NSR=$(mktemp -d /tmp/spore-netstaticroot.XXXXXX)
+alpine "$SPORE" --spore "$NS" --root "$NSR" apply >/dev/null 2>&1
+NSI=$(cat "$NSR/etc/network/interfaces")
+has 'a static address is written'  "$NSI" 'address 192.168.1.50'
+has 'with its gateway'             "$NSI" 'gateway 192.168.1.1'
+has 'and resolvers'                "$(cat "$NSR/etc/resolv.conf")" 'nameserver 1.1.1.1'
+# An unset address would otherwise produce an interfaces file that claims static
+# and names nowhere, which fails at boot rather than here.
+sed -i 's/^NET_ADDRESS=.*/NET_ADDRESS=/' "$NS/modules/net.conf"
+has 'static with no address is refused, not written' \
+    "$(alpine "$SPORE" --spore "$NS" plan 2>&1)" 'NET_ADDRESS is unset'
+rm -rf "$NS" "$NSR"
+
 section 'external commands the executor would have run'
 CMDS=$(cat "$LOG")
 has 'apk add openssh'          "$CMDS" 'apk add --no-progress openssh'
@@ -750,6 +779,11 @@ has 'hook applies and persists'       "$SEEDSTART" 'apply --persist'
 has 'hook is idempotent'              "$SEEDSTART" '/etc/spore/.seeded'
 has 'hook retries after failure'      "$SEEDSTART" 'will retry on next boot'
 has 'hook says what is missing'       "$SEEDSTART" 'no spore found'
+# /var/log is on the RAM root, so a reboot takes the log — and rebooting is
+# exactly what you do when the machine did not come up right. The evidence has
+# to outlive the boot that produced it.
+has 'the log is saved beside the spore' "$SEEDSTART" 'trap save_log EXIT'
+has 'on every exit path, not just success' "$SEEDSTART" 'cp /var/log/spore-seed.log'
 
 # The real property: unpacked onto a blank machine, the embedded tool runs a
 # spore that was never inside the overlay.
