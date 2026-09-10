@@ -99,6 +99,8 @@ has   'init script supervises'          "$DI" 'supervisor="supervise-daemon"'
 has   'init script reads the config'    "$DI" 'command_args="-c /etc/dufs/config.yaml"'
 has   'init script drops privilege'     "$DI" 'command_user="dufs:dufs"'
 has   'init script waits for mounts'    "$DI" 'need net localmount'
+# shellcheck disable=SC2016  # matching literal text in the generated unit
+has   'init script prepares its log'    "$DI" 'checkpath -f -m 0644 -o "$command_user" "$output_log"'
 check 'init script is executable'       "$(file_mode "$R/etc/init.d/dufs")" 755
 has 'doas rule uses persist'          "$(cat "$R/etc/doas.d/gui.conf")" 'permit persist gui as root'
 has 'hostname written'                "$(cat "$R/etc/hostname")"        'changeme'

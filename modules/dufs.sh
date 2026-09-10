@@ -139,6 +139,13 @@ error_log=\"/var/log/dufs.log\"
 depend() {
     need net localmount
     after firewall
+}
+
+start_pre() {
+    # supervise-daemon opens the log as command_user, and /var/log is root-owned,
+    # so the daemon fails to start before it ever runs. start_pre runs as root:
+    # create the file with the right owner first.
+    checkpath -f -m 0644 -o \"\$command_user\" \"\$output_log\"
 }"
 
     # The package does not necessarily create the account the service runs as,
