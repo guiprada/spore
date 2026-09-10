@@ -56,7 +56,8 @@ media_write() {
     mw_dev=$1
     mw_iso=$2
 
-    [ "$(id -u)" = 0 ] || die "spore media needs root: run it with sudo"
+    [ "$(id -u)" = 0 ] || die "partitioning $mw_dev needs root:
+             sudo $SPORE_SELF media $mw_dev $mw_iso"
     [ -b "$mw_dev" ] || die "$mw_dev is not a block device"
     media_has_medium "$mw_dev" || die "$mw_dev has no medium in it.
          The device node exists but reports size 0 — an empty card-reader slot,
@@ -133,11 +134,9 @@ $(printf '%s\n' "$mw_used" | sed 's/^/           /')
     printf '\n%s is ready.\n\n' "$mw_dev" >&2
     printf '  %-14s ALPINE   the system, read-only from here on\n' "$mw_p1" >&2
     printf '  %-14s DATA     your machine goes here\n\n' "$mw_p2" >&2
-    printf 'Now write the machine to it. Mount both — naming the boot partition\n' >&2
-    printf 'puts the seed where the initramfs can certainly read it:\n\n' >&2
-    printf '  sudo mkdir -p /mnt/data /mnt/esp\n' >&2
-    printf '  sudo mount %s /mnt/data\n' "$mw_p2" >&2
-    printf '  sudo mount %s /mnt/esp\n' "$mw_p1" >&2
-    printf '  spore install <dir> /mnt/data /mnt/esp\n' >&2
-    printf '  sudo umount /mnt/data /mnt/esp\n' >&2
+    printf 'Now write the machine to it — the device, not the partitions; it\n' >&2
+    printf 'finds and mounts those itself:\n\n' >&2
+    printf '  sudo %s install <dir> %s\n\n' "$SPORE_SELF" "$mw_dev" >&2
+    printf 'Then boot it here before carrying it anywhere:\n\n' >&2
+    printf '  sudo %s try %s\n' "$SPORE_SELF" "$mw_dev" >&2
 }

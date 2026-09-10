@@ -75,7 +75,9 @@ try_boot() {
          On Debian or Ubuntu: apt install qemu-system-x86 ovmf"
 
     if [ -b "$tb_target" ]; then
-        [ "$(id -u)" = 0 ] || die "booting a block device needs root: run this with sudo"
+        [ "$(id -u)" = 0 ] || die "opening $tb_target as a raw disk needs root:
+             sudo $SPORE_SELF try $*
+         An image file does not — only a real device."
         media_has_medium "$tb_target" || die "$tb_target has no medium in it"
         if tb_used=$(media_in_use "$tb_target"); then
             die "$tb_target is mounted:

@@ -223,7 +223,8 @@ install_machine() {
         [ -z "$im_boot" ] ||
             die "when the target is a device its boot partition is found on it,
         so there is no third argument to give."
-        [ "$(id -u)" = 0 ] || die "mounting $im_target needs root: run this with sudo"
+        [ "$(id -u)" = 0 ] || die "mounting $im_target needs root:
+             sudo $SPORE_SELF install $im_dir $im_target"
         im_p1=$(media_part "$im_target" 1)
         im_p2=$(media_part "$im_target" 2)
         [ -b "$im_p2" ] ||
