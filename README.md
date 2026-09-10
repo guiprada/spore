@@ -388,9 +388,25 @@ recognised identifier, is refused at plan time rather than written into fstab.
 spore setup          # asks, writes the machine, offers to write the stick
 ```
 
-That is the whole thing. `setup` ends by asking whether to write a USB stick now;
-say yes and it runs `media` and `install` for you, mounting and unmounting on its
-own. Say no and it prints the two commands to run later:
+That is the whole thing. `setup` asks its questions and then writes the machine
+onto the stick — running `media` and `install` for you, mounting and unmounting
+on its own. **There is no second copy on the workstation.** The spore on the disk
+is the machine; keeping a copy beside it only raises the question of which one is
+real, and the whole premise is that the thing is portable data that lives where it
+runs from.
+
+To change a machine later, mount its data partition and edit the file:
+
+```sh
+sudo mount /dev/sdX2 /mnt
+$EDITOR /mnt/spore/modules/net.conf
+```
+
+then `spore apply --persist` on the machine itself.
+
+Say no to the stick — because you have not made one yet — and the answers are
+saved to `~/machines/<host>` rather than lost, with the two commands to write it
+later:
 
 ```sh
 sudo spore media /dev/sdX alpine-standard-*.iso
@@ -543,7 +559,7 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-307 checks, no Alpine and no container required: plan assertions, a synthetic-root
+310 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering

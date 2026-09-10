@@ -924,13 +924,18 @@ check 'and its contents survive' \
     "$([ -f "$WZE/notamachine/data" ] && echo yes || echo no)" yes
 rm -rf "$WZE"
 
-# With no argument it lands under ~/machines, named for the host, and says so.
+# A machine belongs on the disk it boots from; the directory is the fallback for
+# when there is no disk in your hand, and the answers must survive declining it.
 WZH=$(mktemp -d /tmp/spore-wizhome.XXXXXX)
 printf '%s\n' 'homehost' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' \
     'tester' 'n' '' 'n' |
-    env HOME="$WZH" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup >/dev/null 2>&1 || true
-check 'with no argument it goes under ~/machines' \
+    env HOME="$WZH" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZH/out" 2>&1 || true
+has 'the disk is offered, not a directory' "$(cat "$WZH/out")" 'Write a USB stick now'
+check 'declining still keeps the answers' \
     "$([ -f "$WZH/machines/homehost/spore/spore.conf" ] && echo yes || echo no)" yes
+check 'and the identity with them' \
+    "$([ -f "$WZH/machines/homehost/identity" ] && echo yes || echo no)" yes
+has 'and it says what is left to do' "$(cat "$WZH/out")" 'not on a disk yet'
 rm -rf "$WZH" "$WZ"
 
 section 'the mirror is derived on the target, never hardcoded here'

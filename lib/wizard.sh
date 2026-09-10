@@ -83,38 +83,10 @@ INTRO
     done
     # Not asked. The hostname already determines it, and a path typed at a
     # prompt is one more thing to get wrong for no decision gained — pass one as
-    # an argument if you want it somewhere specific.
-    if [ -z "$wz_dir" ]; then
-        wz_home=$(bootstrap_home)
-        if [ -n "$wz_home" ]; then
-            wz_dir=$wz_home/machines/$wz_host
-        else
-            wz_dir=./$wz_host
-        fi
-    fi
-    wz_say ''
-    wz_say "  → $wz_dir"
-
-    if [ -e "$wz_dir" ]; then
-        # Only ever offered for something that is already a machine directory.
-        # Answering yes to a prompt is not consent to delete an arbitrary path.
-        [ -f "$wz_dir/spore/spore.conf" ] ||
-            die "$wz_dir already exists and is not a machine directory.
-        Name somewhere else:  spore setup <directory>"
-
-        wz_say ''
-        wz_say "There is already a machine there. Starting again replaces it —"
-        if [ -f "$wz_dir/identity" ]; then
-            wz_say "including its identity, so every password and host key sealed"
-            wz_say "into it becomes undecryptable."
-        fi
-        [ "$(wz_yn 'Replace it?' n)" = yes ] ||
-            die "left $wz_dir alone.
-        To change one thing, edit the file rather than starting again:
-            \$EDITOR $wz_dir/spore/modules/<module>.conf
-            sudo spore install $wz_dir /dev/sdX"
-        rm -rf "$wz_dir"
-    fi
+    # A directory named on the command line is a destination, so it is checked
+    # now rather than after fifteen questions. Without one the machine goes onto
+    # the disk, and there is nothing on this workstation to collide with.
+    [ -z "$wz_dir" ] || wz_claim_dir "$wz_dir"
 
     # --- console -------------------------------------------------------------
     wz_head 'Console'
@@ -189,11 +161,15 @@ INTRO
     [ "$wz_ssh" = yes ] && wz_port=$(wz_ask 'ssh port' 22)
 
     # --- write ---------------------------------------------------------------
-    mkdir -p "$wz_dir/spore/modules" "$wz_dir/spore/keys" \
-             "$wz_dir/spore/secrets" "$wz_dir/spore/files" ||
-        die "cannot create $wz_dir"
-    wz_dir=$(CDPATH='' cd -- "$wz_dir" && pwd)
-    SPORE_DIR=$wz_dir/spore
+    # Built in a staging area first, so where it ends up is still an open
+    # question at this point: onto a disk, or into a directory if there is no
+    # disk to hand. Answering fifteen questions and then losing them to a
+    # failed mount would be its own kind of insult.
+    wz_stage=$SPORE_WORK/machine
+    mkdir -p "$wz_stage/spore/modules" "$wz_stage/spore/keys" \
+             "$wz_stage/spore/secrets" "$wz_stage/spore/files" ||
+        die "cannot create $wz_stage"
+    SPORE_DIR=$wz_stage/spore
 
     cat > "$SPORE_DIR/spore.conf" <<CONF
 FORMAT=1
@@ -265,11 +241,11 @@ CONF
     # --- keys and passwords --------------------------------------------------
     wz_keyed=no
     if command -v age-keygen >/dev/null 2>&1 && command -v "$SPORE_AGE" >/dev/null 2>&1; then
-        (umask 077; age-keygen -o "$wz_dir/identity" 2>/dev/null) &&
-            age-keygen -y "$wz_dir/identity" > "$SPORE_DIR/secrets/recipients" 2>/dev/null &&
+        (umask 077; age-keygen -o "$wz_stage/identity" 2>/dev/null) &&
+            age-keygen -y "$wz_stage/identity" > "$SPORE_DIR/secrets/recipients" 2>/dev/null &&
             wz_keyed=yes
-        chmod 600 "$wz_dir/identity" 2>/dev/null || true
-        [ "$wz_keyed" = yes ] || rm -f "$SPORE_DIR/secrets/recipients" "$wz_dir/identity"
+        chmod 600 "$wz_stage/identity" 2>/dev/null || true
+        [ "$wz_keyed" = yes ] || rm -f "$SPORE_DIR/secrets/recipients" "$wz_stage/identity"
     fi
 
     if [ "$wz_keyed" = yes ] && [ -t 0 ]; then
@@ -287,49 +263,86 @@ CONF
         wz_seal_password root
     elif [ "$wz_keyed" = no ]; then
         warn "age is not installed, so this spore cannot carry secrets and no
-         passwords were set. Install age, then:
-             age-keygen -o $wz_dir/identity
-             age-keygen -y $wz_dir/identity > $SPORE_DIR/secrets/recipients"
+         passwords were set. Install age and start again."
     fi
 
     # --- what now ------------------------------------------------------------
-    wz_head "Created $wz_dir"
+    wz_head "$wz_host is ready"
     printf '\n' >&2
-    cat >&2 <<SUMMARY2
-  $wz_host, $wz_mode on $wz_iface$([ "$wz_mode" = static ] && printf ' (%s)' "$wz_addr")
+    cat >&2 <<SUMMARY
+  $wz_mode on $wz_iface$([ "$wz_mode" = static ] && printf ' (%s)' "$wz_addr")
   account $wz_user$([ "$wz_doas" = yes ] && printf ' with doas')$([ -n "$wz_key" ] && printf ', key installed' || printf ', %sno key%s' "$_c_yellow" "$_c_reset")
   ssh $wz_ssh$([ "$wz_ssh" = yes ] && printf ' on port %s' "$wz_port")
   keymap $wz_keymap, timezone $wz_tz, ntp $wz_ntp
   mirror ${wz_mirror:-whatever the image came with}
-SUMMARY2
+SUMMARY
 
-    if wz_disk "$wz_dir"; then
-        if [ -z "$wz_key" ]; then
-            warn "no key was installed, so ssh is off and this machine will only
-         be reachable at its console."
-        fi
+    # A machine goes on a disk. Keeping a second copy on the workstation only
+    # raises the question of which one is real — the spore is the portable thing,
+    # so it lives where it runs from. A directory is the fallback for when there
+    # is no disk in your hand yet, and for anyone who asked for one by name.
+    if [ -z "$wz_dir" ] && wz_disk "$wz_stage" "$wz_host"; then
+        [ -n "$wz_key" ] || warn "nothing can log in over the network: ssh is off
+         because no key was installed."
         return 0
     fi
 
+    wz_land "$wz_stage" "$wz_host"
+}
+
+# Move the staged machine into a directory and say what is left to do.
+wz_land() {
+    wl_stage=$1
+    wl_host=$2
+
+    if [ -z "$wz_dir" ]; then
+        wl_home=$(bootstrap_home)
+        wz_dir=${wl_home:+$wl_home/machines}
+        wz_dir=${wz_dir:-.}/$wl_host
+        wz_claim_dir "$wz_dir"
+    fi
+    mkdir -p "$(dirname "$wz_dir")" || die "cannot create $(dirname "$wz_dir")"
+    mv "$wl_stage" "$wz_dir" || die "cannot write $wz_dir"
+    wz_dir=$(CDPATH='' cd -- "$wz_dir" && pwd)
+
     cat >&2 <<SUMMARY
 
-Next, make the boot medium — this erases the disk you name:
+Saved to $wz_dir — it is not on a disk yet.
 
-  spore media /dev/sdX alpine-standard-*.iso
-
-then write this machine to it:
-
+  sudo spore media /dev/sdX alpine-standard-*.iso
   sudo spore install $wz_dir /dev/sdX
-
-Anything you change in $wz_dir/spore afterwards needs another
-\`spore install\` to reach the disk. That is the whole loop.
 SUMMARY
 
     if [ -z "$wz_key" ]; then
         warn "no key was installed, so ssh is off and this machine will only be
          reachable at its console. Put a public key at
-         $SPORE_DIR/keys/$wz_user.authorized_keys and set SSH_ENABLED=yes."
+         $wz_dir/spore/keys/$wz_user.authorized_keys and set SSH_ENABLED=yes."
     fi
+}
+
+# Claim a directory as the destination, replacing a machine already there only
+# when told to. Answering yes to a prompt is not consent to delete an arbitrary
+# path, so anything that is not already a machine is refused outright.
+wz_claim_dir() {
+    wc_d=$1
+    [ -e "$wc_d" ] || return 0
+
+    [ -f "$wc_d/spore/spore.conf" ] ||
+        die "$wc_d already exists and is not a machine directory.
+        Name somewhere else:  spore setup <directory>"
+
+    wz_say ''
+    wz_say "There is already a machine at $wc_d. Starting again replaces it —"
+    if [ -f "$wc_d/identity" ]; then
+        wz_say 'including its identity, so every password and host key sealed'
+        wz_say 'into it becomes undecryptable.'
+    fi
+    [ "$(wz_yn 'Replace it?' n)" = yes ] ||
+        die "left $wc_d alone.
+        To change one thing, edit the file rather than starting again:
+            \$EDITOR $wc_d/spore/modules/<module>.conf
+            sudo spore install $wc_d /dev/sdX"
+    rm -rf "$wc_d"
 }
 
 # The newest Alpine ISO lying around, so the common case is one Enter.
@@ -356,11 +369,12 @@ wz_find_iso() {
 # one you cannot edit afterwards, and editing it afterwards is the whole loop.
 wz_disk() {
     wd_dir=$1
+    wd_host=$2
 
     wz_head 'The disk'
-    wz_say 'The machine is ready to write. This can be done now, or later with'
-    wz_say 'the two commands printed at the end.'
-    [ "$(wz_yn 'Write a USB stick now?' n)" = yes ] || return 1
+    wz_say 'A machine lives on the disk it boots from — that is where this one'
+    wz_say 'goes. Answer no and it is saved here instead, to write later.'
+    [ "$(wz_yn 'Write a USB stick now?' y)" = yes ] || return 1
 
     wd_sudo=''
     if [ "$(id -u)" != 0 ]; then
@@ -390,7 +404,19 @@ wz_disk() {
 
     wz_say ''
     "$wd_sudo" "$SPORE_PREFIX/bin/spore" install "$wd_dir" "$wd_dev" ||
-        { warn "the medium is made but this machine is not on it yet. Fix what it
-         said, then:  sudo spore install $wd_dir $wd_dev"; return 1; }
+        { warn 'the medium is made, but this machine is not on it yet.'; return 1; }
+
+    cat >&2 <<DONE
+
+$wd_host is on $wd_dev. Boot it.
+
+To change it later, mount the data partition and edit the files there —
+the spore on the disk is the machine, there is no other copy:
+
+  sudo mount ${wd_dev}2 /mnt
+  \$EDITOR /mnt/spore/modules/net.conf
+
+then on the machine itself:  spore apply --persist
+DONE
     return 0
 }
