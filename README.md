@@ -5,6 +5,22 @@ Declarative, installation-less configuration for Alpine Linux.
 A **spore** is a small, readable, git-able bundle. A machine is what a blank
 Alpine becomes when it germinates one.
 
+Two things share the name, and it is worth separating them once:
+
+| | what it is | where it comes from |
+|---|---|---|
+| **the tool** | this program — `bin/spore`, `lib/`, `modules/` | cloned from here, identical everywhere, never edited |
+| **a spore** | one machine's configuration — `spore.conf`, `modules/*.conf`, `keys/`, `secrets/` | yours, one per machine, the thing you edit |
+
+Every command is the tool pointed at a spore:
+
+```sh
+~/spore-tool/bin/spore -s ~/coisas/spore plan
+                       └─ tool          └─ the spore it acts on
+```
+
+`-s` always names the bundle, never this repository.
+
 ```sh
 spore apply          # converge this host to the spore
 spore persist        # make it survive a reboot
