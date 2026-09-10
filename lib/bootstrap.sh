@@ -90,9 +90,13 @@ bootstrap_mountpoint() {
 # Plan the spore the way the target will, not the way this workstation would.
 # On a workstation `ssh` and `dufs` are skipped for want of OpenRC and `users`
 # for want of root — which is precisely the set whose plan-time refusals are
-# worth hearing here, while the disk is still in your hand. Root is assumed to
-# have no password because on a stock Alpine it has none, which is the
-# assumption that makes the ssh module strictest.
+# worth hearing here, while the disk is still in your hand.
+#
+# Root is assumed to have no password because on a stock Alpine it has none.
+# That is not pessimism: a spore that seals root.password sets it in the
+# firstboot pass, and the ssh module counts that separately from the fact — so
+# this says "the machine boots without one", which is true, and not "it will
+# never have one", which would refuse a configuration that works.
 bootstrap_check() {
     bc_spore=$1
     bc_out=$SPORE_WORK/check.out

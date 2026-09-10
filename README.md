@@ -169,6 +169,14 @@ console-free build possible:
 openssl passwd -6 | spore -s myhost.spore seal gui.password
 ```
 
+`root.password` works the same way and is the one that matters for reachability:
+root is never listed in `USERS` because it already exists, and a stock Alpine
+boots it with no password at all.
+
+```sh
+openssl passwd -6 | spore -s myhost.spore seal root.password
+```
+
 It is decrypted on the target at first boot and applied with `chpasswd -e`, so
 the hash never enters the plan — only the path to the ciphertext does. The
 firstboot stamp is the hash of its script, so the ciphertext's own checksum is
@@ -277,6 +285,41 @@ Firewall **activation is opt-in** (`FW_ACTIVATE=no` by default). Applying
 firewall rules to a remote box is exactly the operation that can lock you out of
 it, so the policy is written and enabled but not activated until you say so.
 
+### Closed by default
+
+`SSH_ENABLED=no`, `SSH_PERMIT_ROOT_LOGIN=no`, `SSH_PASSWORD_AUTH=no`, and
+`PermitEmptyPasswords no` unconditionally. doas is off unless an account is
+listed in `USERS_DOAS`, and passwordless doas only if you ask for it by name.
+
+Two configurations are **refused at plan time**, not built and left for the
+network to reveal:
+
+- nothing could log in — root login off, password auth off, and no account in
+  the spore carries a key;
+- a password-less root exposed — `PermitRootLogin yes` with
+  `PasswordAuthentication yes` while root has no password.
+
+That second one is a question about *when*, not *whether*. A machine booting
+with no root password is perfectly normal — a stock Alpine does exactly that.
+What it must not do is be reachable in that state. So the spore can set root's
+password itself:
+
+```sh
+openssl passwd -6 | spore -s ~/machines/galadriel/spore seal root.password
+```
+
+Sealed, it is applied in the **firstboot** pass, and every firstboot action runs
+before any service is enabled — so the password is in place before sshd exists.
+The ssh module counts a sealed `root.password` as a password root will have,
+which is what turns that refusal into a working configuration. The same applies
+to any account: `<user>.password` sealed the same way completes unattended
+provisioning, so `doas permit persist` has something to prompt for and nobody
+has to visit the console.
+
+Both refusals are checked from the workstation too — see `spore install` above,
+which forces the target's shape so they fire while the disk is still in your
+hand.
+
 ### Adding one
 
 Modules emit actions; they never act.
@@ -360,11 +403,13 @@ nobody can reach.
 `install` writes it, and refuses rather than guesses:
 
 - **It plans the spore the way the target will**, forcing OpenRC, root, and a
-  password-less root account. On a workstation `ssh`, `users` and `dufs` are all
-  skipped for want of OpenRC or root, so their plan-time refusals — *nothing
-  could log in*, *that is an unauthenticated root shell on the network* — never
-  fire. Forcing the target's shape is what makes them fire here, while the disk
-  is still in your hand.
+  root account that boots with no password — which is what a stock Alpine does.
+  On a workstation `ssh`, `users` and `dufs` are all skipped for want of OpenRC
+  or root, so their plan-time refusals — *nothing could log in*, *that is an
+  unauthenticated root shell on the network* — never fire. Forcing the target's
+  shape is what makes them fire here, while the disk is still in your hand. A
+  sealed `root.password` is counted separately, so a spore that sets one is not
+  refused for the state it starts in.
 - **It checks the target is a mount point**, by comparing its device number
   against its parent's. Copying onto an unmounted directory fills the
   workstation's own disk instead of the removable one, and you find out when the
@@ -403,11 +448,12 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-237 checks, no Alpine and no container required: plan assertions, a synthetic-root
+242 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering
-invariant, both persist backends, `new`/`install` including every refusal, and
+invariant, both persist backends, `new`/`install` including every refusal, a
+root password sealed into the spore landing before sshd is enabled, and
 the secrets path end to end with real age
 keys — byte-exact round-trip of a private key, no plaintext in the plan, and a
 `diff` that withholds content. Storage is covered against a pre-existing fstab,

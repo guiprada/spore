@@ -17,17 +17,28 @@ ssh_plan() {
     ssh_pw=$(mconf SSH_PASSWORD_AUTH no)
     ssh_keys=$(mconf SSH_AUTHORIZED_KEYS '')
 
+    # Whether root will have a password by the time sshd starts, which is not the
+    # same question as whether it has one now. Booting without a root password is
+    # normal and fine; what is not fine is being reachable in that state. A spore
+    # that seals root.password sets it in the firstboot pass, and every firstboot
+    # action runs before any service is enabled — so the password is in place
+    # first, and this may count it.
+    ssh_root_pw=$(fact_root_password)
+    if [ "${SPORE_ROOT_PASSWORD:-no}" = yes ]; then ssh_root_pw='set'; fi
+
     # Refuse configurations that are dangerous or useless, rather than building
     # them and letting you find out from the network. The v12 wizard did this by
     # greying out the option; a declarative tool has to do it at plan time.
     if mconf_bool SSH_ENABLED no; then
         # Would this expose a password-less root to the network?
-        if [ "$ssh_root" = yes ] && [ "$ssh_pw" = yes ] &&
-           [ "$(fact_root_password)" = empty ]; then
+        if [ "$ssh_root" = yes ] && [ "$ssh_pw" = yes ] && [ "$ssh_root_pw" = empty ]; then
             die "ssh: refusing to enable.
          PermitRootLogin yes with PasswordAuthentication yes, and root has no
          password: that is an unauthenticated root shell on the network.
-         Set a root password, or leave SSH_PERMIT_ROOT_LOGIN at no."
+         Give root a password before sshd starts — seal one into the spore:
+             openssl passwd -6 | spore -s $SPORE_DIR seal root.password
+         which is applied in the firstboot pass, before any service is enabled.
+         Or leave SSH_PERMIT_ROOT_LOGIN at no."
         fi
 
         # Could anyone actually log in?
@@ -37,8 +48,7 @@ ssh_plan() {
            [ -f "$SPORE_DIR/$ssh_keys" ]; then
             ssh_can_login=yes
         fi
-        if [ "$ssh_root" = yes ] && [ "$ssh_pw" = yes ] &&
-           [ "$(fact_root_password)" = set ]; then
+        if [ "$ssh_root" = yes ] && [ "$ssh_pw" = yes ] && [ "$ssh_root_pw" = set ]; then
             ssh_can_login=yes
         fi
         if [ "$ssh_can_login" = no ]; then

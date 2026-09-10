@@ -133,6 +133,53 @@ else
 fi
 unset SPORE_FACT_ROOT_PASSWORD
 rm -rf "$UKD"
+
+section 'a root password the spore sets itself counts, and lands before sshd'
+# Booting with no root password is normal; being reachable in that state is not.
+# So the question ssh has to answer is not "does root have a password" but "will
+# it have one by the time sshd starts" — and a spore that seals one sets it in
+# the firstboot pass, which runs before any service is enabled.
+#
+# Planning never decrypts, so an empty ciphertext is enough to assert this.
+RP=$(mktemp -d /tmp/spore-rootpw.XXXXXX)/s; cp -r "$EX" "$RP"
+sed -i 's/^SSH_PERMIT_ROOT_LOGIN=.*/SSH_PERMIT_ROOT_LOGIN=yes/; s/^SSH_PASSWORD_AUTH=.*/SSH_PASSWORD_AUTH=yes/' \
+    "$RP/modules/ssh.conf"
+mkdir -p "$RP/secrets"; : > "$RP/secrets/root.password.age"
+export SPORE_FACT_ROOT_PASSWORD=empty
+if RPP=$(alpine "$SPORE" --spore "$RP" plan 2>&1); then
+    t_ok 'root login is no longer refused'
+else
+    t_fail 'root login is no longer refused' "$RPP"
+fi
+has 'the sealed root password is planned' "$RPP" 'firstboot  user-root-password'
+# The ordering is the whole argument, so assert it on the commands that would
+# actually run, not on the plan listing (which groups by module, not by phase).
+RPR=$(mktemp -d /tmp/spore-rootpwroot.XXXXXX)
+RPLOG=$(mktemp /tmp/spore-rootpwlog.XXXXXX)
+export SPORE_RUN_LOG="$RPLOG"
+alpine "$SPORE" --spore "$RP" --root "$RPR" apply >/dev/null 2>&1 || true
+unset SPORE_RUN_LOG
+RP_LASTSH=$(grep -n '^sh ' "$RPLOG" | tail -1 | cut -d: -f1)
+RP_SSHD=$(grep -n 'rc-update add sshd' "$RPLOG" | head -1 | cut -d: -f1)
+if [ -n "$RP_LASTSH" ] && [ -n "$RP_SSHD" ] && [ "$RP_LASTSH" -lt "$RP_SSHD" ]; then
+    t_ok 'and every firstboot script runs before sshd is enabled'
+else
+    t_fail 'and every firstboot script runs before sshd is enabled' \
+        "last script [$RP_LASTSH], sshd [$RP_SSHD]"
+fi
+rm -rf "$RPR" "$RPLOG"
+
+# Take the secret away and the refusal must come back: it is the sealed password
+# doing the work, not a weakened check.
+rm -f "$RP/secrets/root.password.age"
+if RPN=$(alpine "$SPORE" --spore "$RP" plan 2>&1); then
+    t_fail 'without it the refusal returns' 'plan succeeded'
+else
+    t_ok 'without it the refusal returns'
+    has 'and the refusal names the fix' "$RPN" 'seal root.password'
+fi
+unset SPORE_FACT_ROOT_PASSWORD
+rm -rf "$RP"
 sed -i 's/^USERS=.*/USERS=""/' "$UK/modules/users.conf"
 sed -i 's/^USERS_DOAS=.*/USERS_DOAS=""/' "$UK/modules/users.conf"
 sed -i 's/^SSH_ENABLED=.*/SSH_ENABLED=no/' "$UK/modules/ssh.conf"
