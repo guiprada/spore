@@ -290,38 +290,41 @@ recognised identifier, is refused at plan time rather than written into fstab.
 
 ## Zero-touch first boot
 
-`spore seed` builds a bootstrap apkovl that turns a stock Alpine into your
-machine with nothing typed:
+Build the overlay once — it is generic, carries no configuration, and needs no
+spore to build:
 
 ```sh
-spore -s myhost.spore seed
-cp coisas.apkovl.tar.gz /media/data/
+git clone https://github.com/guiprada/spore && cd spore
+./bin/spore seed
 ```
 
-The overlay carries the tool, the spore, a baked repository list and an
-`/etc/local.d` hook. On first boot Alpine's initramfs finds it by scanning block
-devices — the boot medium is never written to — and the hook runs
-`apply --persist`, converging the machine and committing the result. It stamps
-only on success, so a failed boot retries rather than leaving a half-built
-machine that looks finished.
-
-Repositories are baked as a *file* rather than left to a bootstrap script,
-because Alpine restores `/etc/apk/world` early in boot, well before `local.d`
-could enable a repository the restore depends on. Declare them in
-`modules/repos.conf`:
+Then put two things on the data partition:
 
 ```
-REPOS_MIRROR=https://dl-cdn.alpinelinux.org/alpine
-REPOS_RELEASE=v3.24
+<data>/spore-seed.apkovl.tar.gz     generic, never edited
+<data>/spore/                       plain text, yours
 ```
 
-Without them the seed still builds, and says plainly that the first boot will not
-be unattended.
+```sh
+cp spore-seed.apkovl.tar.gz /mnt/data/
+cp -r examples/example.spore /mnt/data/spore
+$EDITOR /mnt/data/spore/spore.conf
+```
 
-This is not `build`: nothing bakes the plan into the overlay, and the machine
-still converges itself a minute into its first boot by running the same `apply`
-path as everywhere else. `build` — where the box comes up already configured with
-nothing left to run — is still ahead.
+Boot a stock Alpine with that disk attached. The initramfs finds the overlay by
+scanning block devices — the boot medium is never written to — and the hook
+scans the same way for a `spore/` directory, applies it, and commits. Progress
+goes to `/var/log/spore-seed.log`.
+
+Nothing about this needs a working Alpine to prepare: the overlay is built from a
+clone on any machine, and the thing you edit stays plain text on disk rather than
+sealed inside a tarball. The hook stamps only on success, so a failed
+convergence retries on the next boot instead of leaving a half-built machine that
+reports itself finished.
+
+This is not `build`: the machine still converges itself a minute into its first
+boot by running the same `apply` path as everywhere else, rather than coming up
+already configured with nothing left to run.
 
 ## Tests
 

@@ -1,26 +1,23 @@
-# lib/seed.sh — a bootstrap apkovl for unattended first boot.
+# lib/seed.sh — a generic bootstrap overlay.
 #
-# Alpine's initramfs finds *.apkovl.tar.gz by scanning block devices, so an
-# overlay dropped on the data partition is picked up with the boot medium never
-# being written to. This builds one that carries the tool and the spore, plus a
-# local.d script that converges the machine on first boot and commits.
+# The overlay is host-independent and carries no configuration: only the tool and
+# a hook that, at first boot, finds a `spore/` directory on any attached
+# filesystem and applies it. That keeps the thing you edit as plain text sitting
+# next to the overlay on the data partition, rather than sealed inside a tarball
+# that can only be rebuilt from an already-working Alpine.
 #
-# It is deliberately not `build`: nothing here bakes the plan into the overlay.
-# The machine still converges itself, a minute into its first boot, by running
-# the same apply path as everywhere else. That avoids the ordering problem a
-# baked plan has — bootstrap actions must precede Alpine's package restore, and
-# local.d runs long after it — by baking configuration rather than scripts.
+# Alpine's initramfs finds *.apkovl.tar.gz by scanning block devices, so the
+# overlay lives on the data partition and the boot medium is never written to.
+# The hook does the same kind of scan for the spore.
 
 seed_build() {
     sb_out=$1
     sb_stage=$SPORE_WORK/seed
     rm -rf "$sb_stage"
     mkdir -p "$sb_stage/etc/local.d" "$sb_stage/etc/runlevels/default" \
-             "$sb_stage/etc/spore" "$sb_stage/etc/apk/protected_paths.d" \
+             "$sb_stage/etc/apk/protected_paths.d" \
              "$sb_stage/usr/local/bin" "$sb_stage/usr/local/lib/spore"
 
-    # The tool, relocated. The wrapper sets SPORE_PREFIX so bin/spore finds its
-    # libraries without depending on where it was invoked from.
     cp -r "$SPORE_PREFIX/bin" "$SPORE_PREFIX/lib" "$SPORE_PREFIX/modules" \
           "$sb_stage/usr/local/lib/spore/"
     chmod 755 "$sb_stage/usr/local/lib/spore/bin/spore"
@@ -28,42 +25,50 @@ seed_build() {
         > "$sb_stage/usr/local/bin/spore"
     chmod 755 "$sb_stage/usr/local/bin/spore"
 
-    # The spore itself travels inside the overlay, so the machine carries its own
-    # definition and needs nothing fetched to converge.
-    cp -r "$SPORE_DIR" "$sb_stage/etc/spore/spore"
-
-    # Repositories are baked as a file rather than left to a bootstrap script:
-    # Alpine restores packages from /etc/apk/world early in boot, long before
-    # local.d could enable a repository the restore depends on.
-    sb_mirror=$(conf_get "$SPORE_DIR/modules/repos.conf" REPOS_MIRROR '')
-    sb_release=$(conf_get "$SPORE_DIR/modules/repos.conf" REPOS_RELEASE '')
-    if [ -n "$sb_mirror" ] && [ -n "$sb_release" ]; then
-        printf '%s/%s/main\n%s/%s/community\n' \
-            "$sb_mirror" "$sb_release" "$sb_mirror" "$sb_release" \
-            > "$sb_stage/etc/apk/repositories"
-        say "baked repositories: $sb_mirror/$sb_release"
-    else
-        plan_note "seed: REPOS_MIRROR and REPOS_RELEASE are unset in modules/repos.conf,
-         so the overlay carries no repository list. The first boot will have only
-         whatever the boot medium provides, and installing anything from the
-         network will need setup-apkrepos by hand — which is not unattended."
-    fi
-
     # lbu tracks /etc by default; the tool lives outside it.
     printf '+usr/local\n' > "$sb_stage/etc/apk/protected_paths.d/spore.list"
 
     cat > "$sb_stage/etc/local.d/spore.start" <<'START'
 #!/bin/sh
-# Managed by spore. Converges this machine on first boot, then commits.
+# Managed by spore. Finds a spore on attached media and converges this machine.
 exec >>/var/log/spore-seed.log 2>&1
-printf '\n=== spore seed: %s ===\n' "$(date)"
+printf '\n=== spore seed: %s ===\n' "$(date 2>/dev/null)"
 
 if [ -f /etc/spore/.seeded ]; then
     echo "already converged; nothing to do"
     exit 0
 fi
 
-if /usr/local/bin/spore -s /etc/spore/spore apply --persist; then
+# Already-mounted media first, then anything mountable. The spore is a directory
+# named `spore` at the root of a filesystem — the same place you unpacked it to.
+found=
+for d in /media/*/spore /mnt/*/spore; do
+    [ -f "$d/spore.conf" ] && { found=$d; break; }
+done
+
+if [ -z "$found" ]; then
+    mkdir -p /mnt/spore-scan
+    for dev in /dev/sd[a-z][0-9]* /dev/nvme[0-9]n[0-9]p[0-9]* /dev/mmcblk[0-9]p[0-9]*; do
+        [ -b "$dev" ] || continue
+        mount "$dev" /mnt/spore-scan 2>/dev/null || continue
+        if [ -f /mnt/spore-scan/spore/spore.conf ]; then
+            found=/mnt/spore-scan/spore
+            echo "found a spore on $dev"
+            break
+        fi
+        umount /mnt/spore-scan 2>/dev/null
+    done
+fi
+
+if [ -z "$found" ]; then
+    echo "no spore found on any attached filesystem."
+    echo "Unpack one as <filesystem>/spore/ — it needs a spore.conf at its root."
+    exit 1
+fi
+
+echo "applying $found"
+if /usr/local/bin/spore -s "$found" apply --persist; then
+    mkdir -p /etc/spore
     date > /etc/spore/.seeded
     echo "converged and committed"
 else
@@ -79,5 +84,4 @@ START
     ln -sf /etc/init.d/local "$sb_stage/etc/runlevels/default/local"
 
     tar -czf "$sb_out" -C "$sb_stage" .
-    printf '%s\n' "$sb_out"
 }

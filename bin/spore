@@ -37,7 +37,7 @@ commands:
   persist        make the current state survive a reboot
   doctor         host facts and sanity checks
   modules        list available modules
-  seed [FILE]    build a bootstrap apkovl for unattended first boot
+  seed [FILE]    build a generic bootstrap apkovl (needs no spore)
   secrets        list the secrets this spore carries
   seal NAME [F]  encrypt F (or stdin) into the spore as NAME
 
@@ -260,18 +260,23 @@ cmd_doctor() {
 }
 
 cmd_seed() {
-    spore_load
     spore_workspace
-    cs_out=${1:-$SPORE_HOST.apkovl.tar.gz}
+    cs_out=${1:-spore-seed.apkovl.tar.gz}
     case $cs_out in
         */*) : ;;
         *) cs_out=$PWD/$cs_out ;;
     esac
-    seed_build "$cs_out" >/dev/null
-    printf 'wrote %s (%s bytes)\n' "$cs_out" "$(wc -c < "$cs_out" | tr -d ' ')"
-    plan_notes_show
-    printf '\nCopy it to the data partition. The initramfs finds it by scanning\n'
-    printf 'devices, so the boot medium is never written to.\n'
+    seed_build "$cs_out"
+    printf 'wrote %s (%s bytes)\n\n' "$cs_out" "$(wc -c < "$cs_out" | tr -d ' ')"
+    cat <<'NEXT'
+It carries no configuration — put both of these on the data partition:
+
+    <data>/spore-seed.apkovl.tar.gz     this file, generic, never edited
+    <data>/spore/                       a spore directory, plain text, yours
+
+Start from examples/example.spore, edit it, and boot. The first boot finds the
+spore, applies it, and commits. Progress goes to /var/log/spore-seed.log.
+NEXT
 }
 
 cmd_secrets() {
