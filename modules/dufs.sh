@@ -160,7 +160,6 @@ addgroup '$dufs_user' '$dufs_user' 2>/dev/null || true"
     # chown is tolerant because vfat/exfat/ntfs cannot carry Unix ownership.
     plan_firstboot dufs-serve-owner \
         "chown -R '$dufs_user:$dufs_user' '$dufs_serve' 2>/dev/null || true"
-    plan_persist /var/log/dufs.log
 
     if mconf_bool DUFS_ENABLED yes; then
         plan_svc dufs default on
