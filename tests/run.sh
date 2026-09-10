@@ -848,8 +848,9 @@ section 'spore setup: the guided path'
 WZ=$(mktemp -d /tmp/spore-wiz.XXXXXX)
 printf 'ssh-ed25519 AAAAC3WizardTestKey tester@workstation\n' > "$WZ/id.pub"
 printf '%s\n' \
-    'wizhost' 'br br-abnt2' 'America/Sao_Paulo' 'eth0' 'static' \
+    'wizhost' 'br br-abnt2' 'America/Sao_Paulo' 'chrony' 'eth0' 'static' \
     '192.168.1.50' '255.255.255.0' '192.168.1.1' '192.168.1.1 1.1.1.1' \
+    'https://mirror.ufpr.br/alpine' \
     'tester' 'y' "$WZ/id.pub" 'y' '2222' |
     SPORE_PUBKEY="$WZ/id.pub" "$SPORE" setup "$WZ/m" >/dev/null 2>&1
 WZS=$WZ/m/spore
@@ -880,8 +881,34 @@ fi
 has 'keymap set through setup-keymap'   "$WZP" 'firstboot  system-keymap'
 has 'timezone through setup-timezone'   "$WZP" 'firstboot  system-timezone'
 has 'the network comes up before apk'   "$WZP" 'bootstrap  net-up'
+# setup-alpine asks for both of these, and for good reason: the default CDN can
+# be far away, and a box with no battery-backed clock boots in 1970, where every
+# certificate looks not-yet-valid.
+check 'the mirror is recorded'          "$(grep '^REPOS_MIRROR=' "$WZS/modules/repos.conf")" \
+                                        'REPOS_MIRROR=https://mirror.ufpr.br/alpine'
+has 'and set before any package'        "$WZP" 'bootstrap  repos-mirror'
+check 'the ntp client'                  "$(grep '^SYSTEM_NTP=' "$WZS/modules/system.conf")" \
+                                        'SYSTEM_NTP=chrony'
+has 'time sync through setup-ntp'       "$WZP" 'firstboot  system-ntp'
 has 'and the apkovl has a destination'  "$WZP" 'file       /etc/lbu/lbu.conf'
 rm -rf "$WZ"
+
+section 'the mirror is derived on the target, never hardcoded here'
+# A spore that baked in v3.20 would quietly install the wrong release on a 3.22
+# image, so the branch is read off the machine at apply time.
+MR=$(mktemp -d /tmp/spore-mirror.XXXXXX)/s; cp -r "$EX" "$MR"
+printf 'REPOS_COMMUNITY=yes\nREPOS_MIRROR=https://mirror.ufpr.br/alpine\n' \
+    > "$MR/modules/repos.conf"
+MRP=$(alpine "$SPORE" --spore "$MR" plan 2>&1)
+has  'the mirror is a bootstrap action'  "$MRP" 'bootstrap  repos-mirror'
+has  'alongside enabling community'      "$MRP" 'bootstrap  repos-community'
+hasnt 'and no Alpine version is baked in' "$MRP" 'v3.2'
+# A mirror that is not a URL is refused rather than written into apk's config.
+printf 'REPOS_MIRROR=mirror.ufpr.br\n' > "$MR/modules/repos.conf"
+if MRX=$(alpine "$SPORE" --spore "$MR" plan 2>&1); then
+    t_fail 'refuses a mirror that is not a URL' 'plan succeeded'
+else has 'refuses a mirror that is not a URL' "$MRX" 'http:// or https:// URL'; fi
+rm -rf "$MR"
 
 section 'spore media refuses a disk it should not erase'
 if MOUT=$("$SPORE" media /dev/null /etc/hostname 2>&1); then

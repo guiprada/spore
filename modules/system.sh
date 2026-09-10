@@ -27,6 +27,22 @@ fi
 setup-keymap $sy_keymap"
     fi
 
+    # A diskless box with no battery-backed clock comes up in 1970, and a clock
+    # that far out makes every HTTPS certificate look not-yet-valid. setup-alpine
+    # asks for this for the same reason.
+    sy_ntp=$(mconf SYSTEM_NTP '')
+    if [ -n "$sy_ntp" ] && [ "$sy_ntp" != none ]; then
+        case $sy_ntp in
+            chrony|busybox|openntpd) : ;;
+            *) die "system: SYSTEM_NTP is chrony, busybox, openntpd or none — not '$sy_ntp'" ;;
+        esac
+        plan_firstboot system-ntp "if ! command -v setup-ntp >/dev/null 2>&1; then
+    echo 'spore: setup-ntp is missing (alpine-conf); cannot set up time sync' >&2
+    exit 1
+fi
+setup-ntp $sy_ntp"
+    fi
+
     sy_tz=$(mconf SYSTEM_TIMEZONE '')
     if [ -n "$sy_tz" ]; then
         case $sy_tz in

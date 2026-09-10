@@ -92,6 +92,10 @@ INTRO
     wz_say ''
     wz_say 'Timezone as a zone name — America/Sao_Paulo, Europe/Lisbon, UTC.'
     wz_tz=$(wz_ask 'Timezone' 'UTC')
+    wz_say ''
+    wz_say 'Time sync. A machine with no battery-backed clock boots in 1970, and'
+    wz_say 'a clock that far out makes every certificate look not-yet-valid.'
+    wz_ntp=$(wz_ask 'NTP client: chrony, busybox, openntpd or none' 'chrony')
 
     # --- network -------------------------------------------------------------
     wz_head 'Network'
@@ -107,6 +111,11 @@ INTRO
             ;;
         *) wz_mode=dhcp ;;
     esac
+    wz_say ''
+    wz_say 'Package mirror. Blank keeps whatever the image came with, which is'
+    wz_say 'the global CDN — a nearer one is usually much faster.'
+    wz_say 'For example: https://mirror.ufpr.br/alpine'
+    wz_mirror=$(wz_ask 'Mirror URL' '')
 
     # --- account -------------------------------------------------------------
     wz_head 'Account'
@@ -162,12 +171,20 @@ MODULES="repos system net users ssh apkovl"
 SECRETS_IDENTITY=../identity
 CONF
 
-    printf 'REPOS_COMMUNITY=yes\n' > "$SPORE_DIR/modules/repos.conf"
+    {
+        printf 'REPOS_COMMUNITY=yes\n'
+        if [ -n "$wz_mirror" ]; then
+            printf 'REPOS_MIRROR=%s\n' "$wz_mirror"
+        else
+            printf '# REPOS_MIRROR=https://mirror.ufpr.br/alpine\n'
+        fi
+    } > "$SPORE_DIR/modules/repos.conf"
 
     {
         printf '# As setup-keymap takes them: "<layout> <variant>".\n'
         printf 'SYSTEM_KEYMAP=%s\n' "\"$wz_keymap\""
         printf 'SYSTEM_TIMEZONE=%s\n' "$wz_tz"
+        printf 'SYSTEM_NTP=%s\n' "$wz_ntp"
     } > "$SPORE_DIR/modules/system.conf"
 
     {
@@ -249,7 +266,8 @@ CONF
   $wz_host, $wz_mode on $wz_iface$([ "$wz_mode" = static ] && printf ' (%s)' "$wz_addr")
   account $wz_user$([ "$wz_doas" = yes ] && printf ' with doas')$([ -n "$wz_key" ] && printf ', key installed' || printf ', %sno key%s' "$_c_yellow" "$_c_reset")
   ssh $wz_ssh$([ "$wz_ssh" = yes ] && printf ' on port %s' "$wz_port")
-  keymap $wz_keymap, timezone $wz_tz
+  keymap $wz_keymap, timezone $wz_tz, ntp $wz_ntp
+  mirror ${wz_mirror:-whatever the image came with}
 
 Next, make the boot medium — this erases the disk you name:
 

@@ -253,11 +253,11 @@ package files are re-downloaded every boot.
 
 | module | does | needs |
 |---|---|---|
-| `repos` | enable community; point the apk cache at persistent media | root |
+| `repos` | enable community; set a mirror; point the apk cache at persistent media | root |
 | `ssh` | OpenSSH, keys, root/password policy | OpenRC |
 | `dufs` | `apk add dufs`, render `/etc/dufs/config.yaml`, TLS, setcap | OpenRC |
 | `users` | accounts, doas rules, persist `/home` | root |
-| `system` | keyboard layout and timezone, via Alpine's own setup-* tools | root |
+| `system` | keyboard layout, timezone and time sync, via Alpine's own setup-* tools | root |
 | `storage` | mount declared volumes under a serve root | root |
 | `apkovl` | where `lbu commit` writes — without it a diskless box forgets everything | diskless |
 | — | secrets are handled by the core, not a module | `age` on the target |
@@ -401,8 +401,9 @@ it can certainly read, an ext4 data partition only probably. Both copies come ou
 of the same build in the same run, so whichever it reaches first is the same
 overlay and they cannot drift apart.
 
-`setup` asks for hostname, keyboard layout, timezone, network, account, key and
-ssh, then writes a spore carrying only the modules you answered for — no volumes
+`setup` asks roughly what `setup-alpine` asks — hostname, keyboard layout,
+timezone, time sync, network, package mirror, account, key and ssh — then writes
+a spore carrying only the modules you answered for — no volumes
 and no file server you did not ask about. `media` erases the disk you name, so it
 prints it, refuses one this machine is mounted from, and makes you type the path
 back. Everything below is what those two do, for when you would rather do it by
@@ -533,7 +534,7 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-288 checks, no Alpine and no container required: plan assertions, a synthetic-root
+296 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering

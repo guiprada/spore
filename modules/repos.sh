@@ -10,6 +10,45 @@ repos_meta() {
 }
 
 repos_plan() {
+    # A mirror, if this spore names one. setup-alpine asks for this and it is
+    # not cosmetic: the default CDN can be slow or unreachable from where the
+    # machine actually lives, and a diskless box re-fetches on every boot.
+    #
+    # The branch is read off the target rather than carried here — a spore that
+    # hardcoded v3.20 would quietly install the wrong release on a 3.22 image.
+    repos_mirror=$(mconf REPOS_MIRROR '')
+    if [ -n "$repos_mirror" ]; then
+        case $repos_mirror in
+            http://*|https://*) : ;;
+            *) die "repos: REPOS_MIRROR must be an http:// or https:// URL" ;;
+        esac
+        repos_mirror=${repos_mirror%/}
+        # shellcheck disable=SC2016  # the target's shell expands these, not ours
+        plan_bootstrap repos-mirror "set -e
+f=/etc/apk/repositories
+branch=\$(sed -n 's|^[^#].*/alpine/\\(v[0-9.]*\\)/main.*|\\1|p' \"\$f\" 2>/dev/null | head -1)
+if [ -z \"\$branch\" ] && [ -f /etc/alpine-release ]; then
+    rel=\$(cat /etc/alpine-release)
+    case \$rel in
+        *_*) branch=edge ;;
+        *)   branch=v\$(printf '%s' \"\$rel\" | cut -d. -f1,2) ;;
+    esac
+fi
+if [ -z \"\$branch\" ]; then
+    echo 'spore: cannot tell which Alpine branch this is, so the mirror was not set' >&2
+    exit 1
+fi
+# Keep a local repository from the boot medium if there is one: it makes the
+# first install work even when the network does not.
+local_apks=\$(grep -m1 '^/media/.*/apks' \"\$f\" 2>/dev/null || true)
+{
+    [ -n \"\$local_apks\" ] && printf '%s\\n' \"\$local_apks\"
+    printf '%s/%s/main\\n' '$repos_mirror' \"\$branch\"
+    printf '%s/%s/community\\n' '$repos_mirror' \"\$branch\"
+} > \"\$f\"
+apk update"
+    fi
+
     # Three states have to be handled, not one. A configured box has the
     # community line present but commented; a freshly booted one often has no
     # community line at all, so there is nothing to uncomment and a naive sed
