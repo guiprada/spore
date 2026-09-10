@@ -60,7 +60,12 @@ done
 
 if [ -z "$found" ]; then
     mkdir -p /mnt/spore-scan
-    for dev in /dev/sd[a-z][0-9]* /dev/nvme[0-9]n[0-9]p[0-9]* /dev/mmcblk[0-9]p[0-9]*; do
+    # vd and xvd are not an afterthought: a VM guest is one of the two things
+    # this is for, and a virtio disk is what every hypervisor hands it. Scanning
+    # only sd/nvme/mmcblk found nothing there and reported it as "no spore on any
+    # attached filesystem", which is true and useless.
+    for dev in /dev/sd[a-z][0-9]* /dev/vd[a-z][0-9]* /dev/xvd[a-z][0-9]* \
+               /dev/nvme[0-9]n[0-9]p[0-9]* /dev/mmcblk[0-9]p[0-9]*; do
         [ -b "$dev" ] || continue
         mount "$dev" /mnt/spore-scan 2>/dev/null || continue
         if [ -f /mnt/spore-scan/spore/spore.conf ]; then

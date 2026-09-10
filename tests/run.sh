@@ -793,6 +793,11 @@ check 'everything is owned by root' "$SEEDOWN" '0/0 '
 SEEDSTART=$(tar -xzOf "$SEEDF" ./etc/local.d/spore.start)
 has 'hook discovers a spore on media' "$SEEDSTART" '/media/*/spore'
 has 'hook scans block devices too'    "$SEEDSTART" '/dev/sd'
+# A VM guest is one of the two things this is for, and every hypervisor hands it
+# a virtio disk. Scanning only sd/nvme/mmcblk found nothing there and called it
+# "no spore on any attached filesystem" — true, and useless.
+has 'including virtio disks'          "$SEEDSTART" '/dev/vd'
+has 'and xen ones'                    "$SEEDSTART" '/dev/xvd'
 has 'hook applies and persists'       "$SEEDSTART" 'apply --persist'
 has 'hook is idempotent'              "$SEEDSTART" '/etc/spore/.seeded'
 has 'hook retries after failure'      "$SEEDSTART" 'will retry on next boot'
@@ -1028,6 +1033,25 @@ else
         t_fail 'a missing qemu names its package' 'succeeded'
     else has 'a missing qemu names its package' "$TOUT" 'apt install qemu-system-x86'; fi
 fi
+# The medium is attached over USB, not virtio: a stick arrives as /dev/sda and a
+# virtio disk as /dev/vda, and the boot path scans device names. Rehearsing over
+# virtio would exercise a route the hardware never takes.
+TSTUB=$(mktemp -d /tmp/spore-trystub.XXXXXX)
+printf '#!/bin/sh\nexit 0\n' > "$TSTUB/qemu-system-x86_64"
+chmod 755 "$TSTUB/qemu-system-x86_64"
+: > "$TSTUB/CODE.fd"; : > "$TSTUB/VARS.fd"
+TCMD=$(PATH="$TSTUB:$PATH" SPORE_TRY_PRINT=1 SPORE_OVMF="$TSTUB/CODE.fd:$TSTUB/VARS.fd" \
+       "$SPORE" try /etc/hostname 2>/dev/null || true)
+has   'the medium is attached over USB' "$TCMD" 'usb-storage'
+hasnt 'not as a virtio disk'            "$TCMD" 'if=virtio'
+has   'writes go to a snapshot'         "$TCMD" '-snapshot'
+has   'and firmware is EFI, not BIOS'   "$TCMD" 'if=pflash'
+# `write` is the deliberate opposite, and must not silently keep the snapshot.
+TCMDW=$(PATH="$TSTUB:$PATH" SPORE_TRY_PRINT=1 SPORE_OVMF="$TSTUB/CODE.fd:$TSTUB/VARS.fd" \
+       "$SPORE" try /etc/hostname write 2>/dev/null || true)
+hasnt 'write really writes'             "$TCMDW" '-snapshot'
+rm -rf "$TSTUB"
+
 # An EFI-only medium in a BIOS guest finds nothing bootable and reads as a bad
 # stick, so OVMF is required rather than merely preferred.
 TFW=$(cd "$ROOT" && sh -c 'SPORE_COLOR=never . ./lib/core.sh; . ./lib/try.sh

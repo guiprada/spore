@@ -10,6 +10,17 @@
 # does the seed run, and does the spore apply.
 
 try_ovmf() {
+    # An explicit path wins, for a distribution that puts it somewhere none of
+    # these look. CODE:VARS for the split layout, or just CODE for a combined
+    # image.
+    if [ -n "${SPORE_OVMF:-}" ]; then
+        to_code=${SPORE_OVMF%%:*}
+        case $SPORE_OVMF in *:*) to_vars=${SPORE_OVMF#*:} ;; *) to_vars='' ;; esac
+        [ -f "$to_code" ] || die "SPORE_OVMF names $to_code, which does not exist"
+        printf '%s\t%s' "$to_code" "$to_vars"
+        return 0
+    fi
+
     # OVMF is required, not optional: the medium is EFI-only, so a BIOS guest
     # finds nothing bootable and fails in a way that looks like a bad stick.
     # Distributions disagree about both the path and whether it is split.
@@ -113,7 +124,14 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
         say 'no access to /dev/kvm — emulating, which is slower but works'
     fi
 
-    set -- "$@" -drive "file=$tb_target,format=raw,if=virtio,cache=none"
+    # Attached over USB rather than virtio, because that is what the target does.
+    # A virtio disk arrives as /dev/vda and a stick as /dev/sda, and the boot
+    # path cares: it scans device names. Testing over virtio would exercise a
+    # different route than the one that runs on hardware, which is the one bug a
+    # rehearsal must not introduce.
+    set -- "$@" -device qemu-xhci,id=xhci \
+        -drive "if=none,id=sporemedium,format=raw,file=$tb_target" \
+        -device usb-storage,bus=xhci.0,drive=sporemedium
     # Writes land in a temporary file unless asked otherwise: a test boot that
     # can corrupt the medium it is testing is not much of a test.
     if [ "$tb_write" = write ]; then
@@ -139,6 +157,15 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
         "$([ "$tb_write" = write ] && printf ' (writing)' || printf ' (snapshot; the medium is not touched)')" \
         "$tb_where" >&2
     printf 'The seed logs to /var/log/spore-seed.log inside the guest.\n\n' >&2
+
+    # Printing the invocation rather than running it: for the tests, and for
+    # anyone who wants to take these arguments and add their own.
+    if [ -n "${SPORE_TRY_PRINT:-}" ]; then
+        printf 'qemu-system-x86_64'
+        for tb_a in "$@"; do printf ' %s' "$tb_a"; done
+        printf '\n'
+        return 0
+    fi
 
     qemu-system-x86_64 "$@"
 }
