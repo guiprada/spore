@@ -329,7 +329,7 @@ nothing left to run — is still ahead.
 ./tests/run.sh
 ```
 
-143 checks, no Alpine and no container required: plan assertions, a synthetic-root
+192 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering
