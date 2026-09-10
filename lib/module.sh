@@ -74,7 +74,7 @@ plan_build() {
     # local issuer certificate", which reads like a network fault rather than a
     # missing package.
     if [ -s "$SPORE_PLAN" ] && awk -F'\t' '$2 == "blob" { found = 1 } END { exit !found }' "$SPORE_PLAN"; then
-        plan_pkg ca-certificates
+        plan_pkg ca-certificates-bundle
     fi
 
     plan_validate

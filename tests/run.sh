@@ -412,9 +412,9 @@ PROBE
 sed -i 's/^MODULES=.*/MODULES="blobprobe"/' "$BT/spore.conf"
 BTP=$(alpine "$SPORE" --spore "$BT" plan 2>&1)
 has 'blob is planned'                  "$BTP" 'blob       tool -> /usr/local/bin/tool'
-has 'ca-certificates comes with it'    "$BTP" 'pkg        ca-certificates'
+has 'the trust bundle comes with it'   "$BTP" 'pkg        ca-certificates-bundle'
 # and is not dragged in when nothing fetches over HTTPS
-hasnt 'not added when no blob is planned' "$(alpine "$SPORE" --spore "$EX" plan 2>&1)" 'pkg        ca-certificates'
+hasnt 'not added when no blob is planned' "$(alpine "$SPORE" --spore "$EX" plan 2>&1)" 'pkg        ca-certificates-bundle'
 rm -f "$ROOT/modules/blobprobe.sh"; rm -rf "$BT"
 
 # -------------------------------------------------------------- secrets -----

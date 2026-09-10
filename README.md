@@ -32,16 +32,17 @@ freshly booted Alpine:
 ```sh
 setup-interfaces && rc-service networking start
 setup-apkrepos -c -f          # a mirror, and community, in one step
-apk add git ca-certificates   # ca-certificates is not optional — see below
+apk add git
 git clone https://github.com/guiprada/spore /root/spore
 cd /root/spore && ./tests/run.sh
 ```
 
-**`ca-certificates` is the step that catches people.** apk carries its own trust
-store, so packages install happily while git, curl and every blob fetch die with
-`unable to get local issuer certificate` — which reads like a network fault and
-sends you looking in the wrong place. `spore doctor` reports the store's state
-explicitly for that reason.
+**If HTTPS fails for git but not for apk, suspect the trust store.**
+`ca-certificates-bundle` ships in the Alpine base, so a clean install is usually
+fine. But apk carries its own store, so a *damaged* bundle lets packages install
+happily while git, curl and every blob fetch die with `unable to get local issuer
+certificate` — which reads like a network fault and sends you looking in the
+wrong place. `spore doctor` reports the store's state explicitly for that reason.
 
 If the store is present but *empty*, that is usually `update-ca-certificates`,
 which regenerates the bundle and can leave it with nothing in it. Reinstall the
