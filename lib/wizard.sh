@@ -407,6 +407,12 @@ wz_disk() {
          without the trailing number."
             continue
         fi
+        if ! media_has_medium "$wd_dev"; then
+            warn "$wd_dev has nothing in it — the node exists but reports size 0.
+         An empty card-reader slot looks exactly like this. The real one has a
+         size in the list above."
+            continue
+        fi
         break
     done
 

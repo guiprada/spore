@@ -1011,6 +1011,28 @@ else
     rm -rf "$NBD"
 fi
 
+section 'a device node with no medium is named as such'
+# An empty card-reader slot opens fine and reports size 0. sgdisk then fails
+# with "Error is 123", which is ENOMEDIUM and tells the reader nothing.
+if MEO=$("$SPORE" media /dev/null /etc/hostname 2>&1); then
+    t_fail 'a non-block device is still refused first' 'succeeded'
+else has 'a non-block device is still refused first' "$MEO" 'not a block device'; fi
+# media_has_medium is the check; drive it directly, since a real empty slot
+# cannot be conjured here.
+MEDCHK=$(cd "$ROOT" && sh -c '
+    SPORE_COLOR=never . ./lib/core.sh; . ./lib/media.sh
+    if media_has_medium /dev/definitely-not-a-device; then echo permissive; else echo blocked; fi')
+check 'an unknowable device is not blocked' "$MEDCHK" permissive
+MEDREAL=$(cd "$ROOT" && sh -c '
+    SPORE_COLOR=never . ./lib/core.sh; . ./lib/media.sh
+    d=$(awk "\$1 ~ /^\/dev\// { print \$1; exit }" /proc/mounts)
+    case $d in /dev/*) ;; *) echo skip; exit 0 ;; esac
+    if media_has_medium "$d"; then echo present; else echo absent; fi')
+case $MEDREAL in
+    skip) t_skip 'no /dev-backed mount here — medium-present assertion' ;;
+    *)    check 'a device with a medium passes' "$MEDREAL" present ;;
+esac
+
 section 'spore new: a machine directory, ready to edit'
 NB=$(mktemp -d /tmp/spore-boot.XXXXXX)
 printf 'ssh-ed25519 AAAAC3TestKeyForBootstrap tester@workstation\n' > "$NB/id.pub"

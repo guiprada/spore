@@ -21,6 +21,19 @@ media_part() {
     esac
 }
 
+# A device node with nothing in it — an empty card-reader slot, a stick that came
+# loose. It opens fine and reports size 0, and the tools that then fail say so as
+# "Error is 123", which is ENOMEDIUM and means nothing to anybody reading it.
+media_has_medium() {
+    mh_n=$(lsblk -dnbo SIZE "$1" 2>/dev/null | tr -d ' ')
+    if [ -z "$mh_n" ]; then
+        mh_s=/sys/class/block/${1##*/}/size
+        [ -f "$mh_s" ] || return 0        # cannot tell; do not stand in the way
+        mh_n=$(cat "$mh_s" 2>/dev/null || echo 0)
+    fi
+    [ "${mh_n:-0}" -gt 0 ] 2>/dev/null
+}
+
 media_need() {
     for mn_c in "$@"; do
         command -v "$mn_c" >/dev/null 2>&1 || die "$mn_c is not installed.
@@ -45,6 +58,11 @@ media_write() {
 
     [ "$(id -u)" = 0 ] || die "spore media needs root: run it with sudo"
     [ -b "$mw_dev" ] || die "$mw_dev is not a block device"
+    media_has_medium "$mw_dev" || die "$mw_dev has no medium in it.
+         The device node exists but reports size 0 — an empty card-reader slot,
+         or a stick that is not seated. (This is the ENOMEDIUM that sgdisk
+         reports as \"Error is 123\".)
+         \`lsblk\` shows the real one: it has a size."
     [ -f "$mw_iso" ] || die "no such file: $mw_iso"
 
     # Before anything else, including whether the tools are even installed: a
