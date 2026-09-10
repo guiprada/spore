@@ -257,6 +257,7 @@ package files are re-downloaded every boot.
 | `dufs` | `apk add dufs`, render `/etc/dufs/config.yaml`, TLS, setcap | OpenRC |
 | `users` | accounts, doas rules, persist `/home` | root |
 | `storage` | mount declared volumes under a serve root | root |
+| `apkovl` | where `lbu commit` writes — without it a diskless box forgets everything | diskless |
 | — | secrets are handled by the core, not a module | `age` on the target |
 | `net` | hostname (anywhere), interfaces and DNS | NET_ADMIN for the latter |
 | `firewall` | awall policy generated from every module's declared ports | NET_ADMIN, OpenRC |
@@ -379,6 +380,64 @@ Three things it will not let you get wrong:
 A volume whose name would escape the serve root, or whose spec is not a
 recognised identifier, is refused at plan time rather than written into fstab.
 
+## Making the boot medium
+
+One stick, two partitions: a read-only Alpine and a writable data area. The
+system is identical on every boot and cannot drift; everything that changes
+lives on the other partition.
+
+```
+p1  ESP    FAT32  label ALPINE   the Alpine ISO, extracted, never written again
+p2  data   ext4   label DATA     spore/, identity, the apkovl, the served data
+```
+
+**ext4 for the data partition, not vfat.** vfat carries no Unix ownership, so
+the identity that decrypts every secret in the spore cannot be mode 0600 — it is
+readable by anyone holding the stick. `spore install` warns when it cannot set
+the mode, which is the same thing said later and less usefully.
+
+On a workstation, with the stick at `/dev/sdX` — **check `lsblk` first, this
+erases the device**:
+
+```sh
+sudo umount /dev/sdX* 2>/dev/null
+sudo sgdisk --zap-all /dev/sdX                       # GPT and MBR both
+sudo sgdisk -n 1:0:+1G  -t 1:ef00 -c 1:ALPINE /dev/sdX
+sudo sgdisk -n 2:0:0    -t 2:8300 -c 2:DATA   /dev/sdX
+sudo partprobe /dev/sdX; sudo udevadm settle
+sudo mkfs.vfat -F 32 -n ALPINE /dev/sdX1
+sudo mkfs.ext4 -L DATA /dev/sdX2
+```
+
+Then the Alpine side — extract, do not `dd`. `dd` writes the hybrid ISO over the
+whole device, which leaves no room for a data partition and makes the desktop
+mount the raw device, so partition mounts then fail with `resource busy`:
+
+```sh
+sudo mount -o loop alpine-standard-*.iso /mnt/iso
+sudo mount /dev/sdX1 /mnt/esp
+sudo cp -a /mnt/iso/. /mnt/esp/
+sudo umount /mnt/iso /mnt/esp
+```
+
+And the spore side:
+
+```sh
+sudo mount /dev/sdX2 /mnt/data
+./bin/spore install ~/machines/coisas /mnt/data
+sudo umount /mnt/data
+```
+
+Boot it with UEFI. If the firmware will not offer the stick, it is almost always
+Secure Boot rather than the partitioning — check that before re-making anything.
+
+Two partitions is not the only arrangement. Alpine's initramfs scans every
+attached block device for the apkovl, so **two separate devices work as well**:
+a stick with the ISO written by `dd` exactly as Alpine documents, and a second
+stick, SD card or internal disk carrying the spore. That trades a USB port for
+never having to think about partitioning, and the ISO stick is then interchangeable
+between machines.
+
 ## Zero-touch first boot
 
 Two commands on a workstation, from a clone of this repo. Neither needs Alpine.
@@ -448,12 +507,13 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-242 checks, no Alpine and no container required: plan assertions, a synthetic-root
+253 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering
 invariant, both persist backends, `new`/`install` including every refusal, a
-root password sealed into the spore landing before sshd is enabled, and
+root password sealed into the spore landing before sshd is enabled, the apkovl
+destination being declared and created before the commit rather than after, and
 the secrets path end to end with real age
 keys — byte-exact round-trip of a private key, no plaintext in the plan, and a
 `diff` that withholds content. Storage is covered against a pre-existing fstab,

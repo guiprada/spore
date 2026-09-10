@@ -68,7 +68,7 @@ hasnt 'does not fetch dufs as a blob'  "$PLAN" 'blob       dufs'
 has  'plans sshd in default runlevel' "$PLAN" 'svc        sshd -> default [on]'
 has  'plans host keys as firstboot'   "$PLAN" 'firstboot  ssh-hostkeys'
 has  'enables community before installing' "$PLAN" 'bootstrap  repos-community'
-has  'points apk cache at real media' "$PLAN" 'bootstrap  repos-apkcache'
+has  'declares where the apkovl goes' "$PLAN" 'file       /etc/lbu/lbu.conf'
 has  'persists /home for user accounts' "$PLAN" 'persist    /home'
 has  'warns firewall not activated'   "$PLAN" 'NOT activated'
 hasnt 'carries no private key material' "$PLAN" 'ssh_host_'
@@ -133,6 +133,66 @@ else
 fi
 unset SPORE_FACT_ROOT_PASSWORD
 rm -rf "$UKD"
+
+section 'the apkovl has somewhere to go, or the machine forgets everything'
+# `lbu commit` writes wherever /etc/lbu/lbu.conf points, and a stock Alpine
+# points nowhere — setup-lbu is a console step a seed-booted machine never gets.
+# Committing into the void is the one loss nothing reports: apply succeeds, the
+# hook stamps itself done, and the machine comes back blank.
+AV=$(mktemp -d /tmp/spore-apkovl.XXXXXX)/s; cp -r "$EX" "$AV"
+export SPORE_FACT_LBU_DEST=unset
+AVP=$(alpine "$SPORE" --spore "$AV" plan 2>&1)
+has 'the destination is written to lbu.conf' "$AVP" 'file       /etc/lbu/lbu.conf'
+AVR=$(mktemp -d /tmp/spore-apkovlroot.XXXXXX)
+alpine "$SPORE" --spore "$AV" --root "$AVR" apply >/dev/null 2>&1
+has 'as an owned block, not a rewrite' "$(cat "$AVR/etc/lbu/lbu.conf")" \
+    'LBU_BACKUPDIR=/media/storage/data'
+has 'and the block is delimited'       "$(cat "$AVR/etc/lbu/lbu.conf")" '# BEGIN spore:lbu'
+
+# A spore that names no destination, on a host that names none either, is the
+# case that must not plan quietly.
+printf 'APKOVL_BACKUPDIR=\n' > "$AV/modules/apkovl.conf"
+if AVN=$(alpine "$SPORE" --spore "$AV" plan 2>&1); then
+    t_fail 'refuses to commit into the void' 'plan succeeded'
+else
+    has 'refuses to commit into the void' "$AVN" 'converges on every boot and keeps'
+fi
+# ...but a host already configured by hand is deferred to, not overridden.
+SPORE_FACT_LBU_DEST=/media/data
+AVH=$(alpine "$SPORE" --spore "$AV" plan 2>&1)
+has 'a hand-configured host is kept' "$AVH" "kept (/media/data)"
+# Both keys at once is refused: LBU_BACKUPDIR wins in lbu, so the other would
+# read as configured and never be written to.
+printf 'APKOVL_BACKUPDIR=/media/storage/data\nAPKOVL_MEDIA=data\n' > "$AV/modules/apkovl.conf"
+if AVB=$(alpine "$SPORE" --spore "$AV" plan 2>&1); then
+    t_fail 'refuses both keys at once' 'plan succeeded'
+else has 'refuses both keys at once' "$AVB" 'not both'; fi
+# APKOVL_MEDIA is a name under /media; a path there yields /media//media/data.
+printf 'APKOVL_MEDIA=/media/data\n' > "$AV/modules/apkovl.conf"
+if AVM=$(alpine "$SPORE" --spore "$AV" plan 2>&1); then
+    t_fail 'refuses a path in APKOVL_MEDIA' 'plan succeeded'
+else has 'refuses a path in APKOVL_MEDIA' "$AVM" 'a name under /media, not a path'; fi
+unset SPORE_FACT_LBU_DEST
+rm -rf "$AV" "$AVR"
+
+section 'the destination is created last, after volumes are mounted'
+# lbu writes into its destination but never creates it, and that directory
+# usually sits on a partition a firstboot action mounted a moment ago. Creating
+# it any earlier makes a directory that the mount then hides.
+AD=$(mktemp -d /tmp/spore-apkovldir.XXXXXX)
+ADLOG=$(mktemp /tmp/spore-apkovllog.XXXXXX)
+export SPORE_FACT_LBU_DEST=/media/storage/data SPORE_RUN_LOG="$ADLOG"
+alpine "$SPORE" --spore "$EX" --root "$AD" persist >/dev/null 2>&1
+unset SPORE_RUN_LOG SPORE_FACT_LBU_DEST
+has 'the destination is created' "$(cat "$ADLOG")" 'mkdir -p'
+AD_MK=$(grep -n 'mkdir -p' "$ADLOG" | tail -1 | cut -d: -f1)
+AD_CM=$(grep -n 'lbu commit' "$ADLOG" | head -1 | cut -d: -f1)
+if [ -n "$AD_MK" ] && [ -n "$AD_CM" ] && [ "$AD_MK" -lt "$AD_CM" ]; then
+    t_ok 'and created before the commit, not after'
+else
+    t_fail 'and created before the commit, not after' "mkdir [$AD_MK], commit [$AD_CM]"
+fi
+rm -rf "$AD" "$ADLOG"
 
 section 'a root password the spore sets itself counts, and lands before sshd'
 # Booting with no root password is normal; being reachable in that state is not.

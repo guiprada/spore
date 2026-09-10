@@ -26,6 +26,17 @@ persist_commit() {
                 case $pc_p in /etc|/etc/*) continue ;; esac
                 run lbu include "$pc_p"
             done < "$SPORE_WORK/persist.final"
+
+            # lbu writes into its destination but never creates it, and on a
+            # diskless box that directory usually sits on a partition a
+            # firstboot action mounted a moment ago. Doing it here, last, is the
+            # only point where the path is certainly the mounted filesystem
+            # rather than a directory about to be hidden under a mount.
+            pc_dest=$(fact_lbu_dest)
+            case $pc_dest in
+                /*) [ -d "$(rootpath "$pc_dest")" ] || run mkdir -p "$(rootpath "$pc_dest")" ;;
+            esac
+
             run lbu commit
             # lbu returns once the write is issued, not once it has reached the
             # medium. On removable media a page-cached apkovl can survive a
