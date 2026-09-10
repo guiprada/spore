@@ -81,8 +81,24 @@ INTRO
             *) break ;;
         esac
     done
-    [ -n "$wz_dir" ] || wz_dir=$(wz_ask 'Directory to create' "./$wz_host")
-    [ ! -e "$wz_dir" ] || die "$wz_dir already exists"
+    # Not asked. The hostname already determines it, and a path typed at a
+    # prompt is one more thing to get wrong for no decision gained — pass one as
+    # an argument if you want it somewhere specific.
+    if [ -z "$wz_dir" ]; then
+        wz_home=$(bootstrap_home)
+        if [ -n "$wz_home" ]; then
+            wz_dir=$wz_home/machines/$wz_host
+        else
+            wz_dir=./$wz_host
+        fi
+    fi
+    if [ -e "$wz_dir" ]; then
+        die "$wz_dir already exists.
+        That is where this machine would go. Remove it, or name somewhere else:
+            spore setup <directory>"
+    fi
+    wz_say ''
+    wz_say "  → $wz_dir"
 
     # --- console -------------------------------------------------------------
     wz_head 'Console'
@@ -160,6 +176,7 @@ INTRO
     mkdir -p "$wz_dir/spore/modules" "$wz_dir/spore/keys" \
              "$wz_dir/spore/secrets" "$wz_dir/spore/files" ||
         die "cannot create $wz_dir"
+    wz_dir=$(CDPATH='' cd -- "$wz_dir" && pwd)
     SPORE_DIR=$wz_dir/spore
 
     cat > "$SPORE_DIR/spore.conf" <<CONF

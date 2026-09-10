@@ -851,11 +851,15 @@ printf '%s\n' \
     'wizhost' 'br br-abnt2' 'America/Sao_Paulo' 'chrony' 'eth0' 'static' \
     '192.168.1.50' '255.255.255.0' '192.168.1.1' '192.168.1.1 1.1.1.1' \
     'https://mirror.ufpr.br/alpine' \
-    'tester' 'y' "$WZ/id.pub" 'y' '2222' |
-    SPORE_PUBKEY="$WZ/id.pub" "$SPORE" setup "$WZ/m" >/dev/null 2>&1
+    'tester' 'y' "$WZ/id.pub" 'y' '2222' 'n' |
+    SPORE_PUBKEY="$WZ/id.pub" "$SPORE" setup "$WZ/m" >"$WZ/out" 2>&1 || true
+WZOUT=$(cat "$WZ/out")
 WZS=$WZ/m/spore
 
 check 'the host is what was answered' "$(grep '^HOST=' "$WZS/spore.conf")" 'HOST=wizhost'
+# The directory is derived from the hostname, never asked: a path typed at a
+# prompt is one more thing to get wrong for no decision gained.
+hasnt 'the directory is not asked for' "$WZOUT" 'Directory to create'
 has   'only the modules asked about'  "$(grep '^MODULES=' "$WZS/spore.conf")" 'repos system net users ssh apkovl'
 hasnt 'no file server nobody asked for' "$(grep '^MODULES=' "$WZS/spore.conf")" 'dufs'
 hasnt 'and no volumes that do not exist' "$(grep '^MODULES=' "$WZS/spore.conf")" 'storage'
@@ -891,7 +895,14 @@ check 'the ntp client'                  "$(grep '^SYSTEM_NTP=' "$WZS/modules/sys
                                         'SYSTEM_NTP=chrony'
 has 'time sync through setup-ntp'       "$WZP" 'firstboot  system-ntp'
 has 'and the apkovl has a destination'  "$WZP" 'file       /etc/lbu/lbu.conf'
-rm -rf "$WZ"
+# With no argument it lands under ~/machines, named for the host, and says so.
+WZH=$(mktemp -d /tmp/spore-wizhome.XXXXXX)
+printf '%s\n' 'homehost' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' \
+    'tester' 'n' '' 'n' |
+    env HOME="$WZH" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup >/dev/null 2>&1 || true
+check 'with no argument it goes under ~/machines' \
+    "$([ -f "$WZH/machines/homehost/spore/spore.conf" ] && echo yes || echo no)" yes
+rm -rf "$WZH" "$WZ"
 
 section 'the mirror is derived on the target, never hardcoded here'
 # A spore that baked in v3.20 would quietly install the wrong release on a 3.22
