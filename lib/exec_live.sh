@@ -133,6 +133,26 @@ el_svc() {
                 say "would start service $es_name"
             else
                 run rc-service "$es_name" start
+                # OpenRC reports success once the process is launched. A daemon
+                # that exits a moment later still counts as a successful start,
+                # so trusting the exit code claims success on a dead service.
+                # Verify, with a brief grace period for slow starters.
+                es_up=no
+                for es_try in 1 2 3; do
+                    if rc-service "$es_name" status >/dev/null 2>&1; then
+                        es_up=yes
+                        break
+                    fi
+                    sleep 1
+                done
+                if [ "$es_up" != yes ]; then
+                    die "$es_name reported a successful start but is not running.
+         OpenRC returns success once the process is launched; a daemon that
+         exits immediately still counts. Check its log, and try running it in
+         the foreground to see why:
+             rc-service $es_name status
+             /etc/init.d/$es_name describe"
+                fi
                 changed "service $es_name started"
             fi
         fi
