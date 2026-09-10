@@ -197,12 +197,17 @@ package files are re-downloaded every boot.
 | `net` | hostname (anywhere), interfaces and DNS | NET_ADMIN for the latter |
 | `firewall` | awall policy generated from every module's declared ports | NET_ADMIN, OpenRC |
 
-**Prefer a package over a blob, always.** dufs is in Alpine community (`arch=all`),
-and its package ships an OpenRC service that already uses `supervise-daemon` and a
-dedicated `dufs:dufs` user. So the module installs the package and writes
-`/etc/dufs/config.yaml` — it does not generate a service. The blob mechanism stays
-for things that genuinely are not packaged; using it where a package exists means
-inheriting none of the distro's init script, user, or upgrades.
+**Prefer a package over a blob for the binary.** dufs is in Alpine community
+(`arch=all`), so it comes from apk. The blob mechanism stays for things that
+genuinely are not packaged.
+
+**But declare the service rather than inheriting it.** On Alpine 3.24 the dufs
+package ships no init script, so `rc-update add dufs` fails outright; whether one
+exists is a packaging detail that varies by branch. The module generates its own
+unit — `supervise-daemon`, a dedicated user, reading `/etc/dufs/config.yaml` via
+`-c` — so the same spore produces the same running service on every Alpine
+version. That is the whole premise, and it is worth more here than reusing
+whatever the distro happens to provide.
 
 Two quirks worth knowing, both learned the hard way rather than guessed:
 binding a port below 1024 as a non-root user needs

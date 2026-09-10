@@ -26,7 +26,16 @@ fi
 
 log()  { printf '%s\n' "$*" >&2; }
 say()  { printf '  %s\n' "$*" >&2; }
-die()  { printf '%serror:%s %s\n' "$_c_red" "$_c_reset" "$*" >&2; exit 1; }
+die() {
+    # Report progress before leaving: a run that aborts halfway is exactly when
+    # you most want to know how far it got.
+    if [ $((SPORE_N_CHANGED + SPORE_N_UNCHANGED)) -gt 0 ]; then
+        printf '\n  %s changed, %s already correct, then stopped\n' \
+            "$SPORE_N_CHANGED" "$SPORE_N_UNCHANGED" >&2
+    fi
+    printf '%serror:%s %s\n' "$_c_red" "$_c_reset" "$*" >&2
+    exit 1
+}
 warn() { printf '%swarning:%s %s\n' "$_c_yellow" "$_c_reset" "$*" >&2; }
 
 SPORE_N_CHANGED=0
@@ -93,7 +102,10 @@ run() {
     if [ "$SPORE_NOEXEC" = 1 ] || synthetic; then
         return 0
     fi
-    "$@"
+    if "$@"; then
+        return 0
+    fi
+    die "${SPORE_ACTION:+while $SPORE_ACTION: }command failed: $*"
 }
 
 fetch_url() {

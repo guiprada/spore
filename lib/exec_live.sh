@@ -11,6 +11,7 @@ exec_plan() {
         plan_lines_of_type "$ep_t" > "$SPORE_WORK/pass.tsv"
         while IFS="$SPORE_TAB" read -r ep_mod ep_act f1 f2 f3 f4 f5 f6; do
             [ -n "$ep_act" ] || continue
+            SPORE_ACTION="$ep_act $f1 (module $ep_mod)"
             case $ep_act in
                 bootstrap) el_script    bootstrap "$f1" "$f2" ;;
                 pkg)       el_pkg       "$f1" ;;

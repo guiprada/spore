@@ -61,7 +61,8 @@ PLAN=$(alpine "$SPORE" --spore "$EX" plan 2>&1)
 has  'plans openssh package'          "$PLAN" 'pkg        openssh'
 has  'installs dufs from a package'   "$PLAN" 'pkg        dufs'
 has  'configures dufs via config.yaml' "$PLAN" 'file       /etc/dufs/config.yaml'
-hasnt 'does not generate an init script' "$PLAN" '/etc/init.d/dufs'
+has  'declares its own init script'   "$PLAN" 'file       /etc/init.d/dufs (0755'
+has  'creates the account it runs as' "$PLAN" 'firstboot  dufs-user'
 hasnt 'does not fetch dufs as a blob'  "$PLAN" 'blob       dufs'
 has  'plans sshd in default runlevel' "$PLAN" 'svc        sshd -> default [on]'
 has  'plans host keys as firstboot'   "$PLAN" 'firstboot  ssh-hostkeys'
@@ -91,6 +92,14 @@ has 'empty passwords always refused'  "$(cat "$R/etc/ssh/sshd_config")" 'PermitE
 has 'dufs serve-path rendered'        "$(cat "$R/etc/dufs/config.yaml")" "serve-path: '/media/storage'"
 has 'dufs port rendered'              "$(cat "$R/etc/dufs/config.yaml")" 'port: 443'
 has 'dufs TLS wired up'               "$(cat "$R/etc/dufs/config.yaml")" 'tls-cert: /etc/dufs/tls/server.crt'
+
+DI=$(cat "$R/etc/init.d/dufs")
+has   'init script is openrc'           "$DI" '#!/sbin/openrc-run'
+has   'init script supervises'          "$DI" 'supervisor="supervise-daemon"'
+has   'init script reads the config'    "$DI" 'command_args="-c /etc/dufs/config.yaml"'
+has   'init script drops privilege'     "$DI" 'command_user="dufs:dufs"'
+has   'init script waits for mounts'    "$DI" 'need net localmount'
+check 'init script is executable'       "$(file_mode "$R/etc/init.d/dufs")" 755
 has 'doas rule uses persist'          "$(cat "$R/etc/doas.d/gui.conf")" 'permit persist gui as root'
 has 'hostname written'                "$(cat "$R/etc/hostname")"        'galadriel'
 

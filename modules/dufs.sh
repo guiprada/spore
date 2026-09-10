@@ -1,12 +1,16 @@
 # modules/dufs.sh — dufs file server.
 #
-# dufs is packaged in Alpine community (arch=all, binary /usr/bin/dufs), and the
-# package ships its own OpenRC service — already supervise-daemon, already
-# running as dufs:dufs, already depending on net+localmount. So this module
-# installs the package and configures it; it does not generate a service.
+# dufs is packaged in Alpine community (arch=all, binary /usr/bin/dufs), so the
+# binary comes from apk rather than a blob.
 #
-# Configuration is /etc/dufs/config.yaml, which is what the packaged init script
-# passes via -c. Flags in conf.d would be ignored.
+# The service is generated here rather than taken from the package. On Alpine
+# 3.24 the package ships no init script at all — `rc-update add dufs` fails with
+# "service does not exist" — and whether one appears is a packaging detail that
+# varies by branch. Declaring it makes the result the same on every version,
+# which is the point of a spore.
+#
+# The generated unit reads /etc/dufs/config.yaml via -c, matching what a packaged
+# unit does, so the configuration format is unaffected either way.
 
 dufs_meta() {
     MOD_DESC='dufs file server (community package)'
@@ -23,6 +27,8 @@ dufs_plan() {
     dufs_port=$(mconf DUFS_PORT 5000)
     dufs_cert=$(mconf DUFS_TLS_CERT '')
     dufs_key=$(mconf DUFS_TLS_KEY '')
+
+    dufs_user=$(mconf DUFS_USER dufs)
 
     plan_pkg dufs
     plan_dir "$dufs_serve" 0755
@@ -116,12 +122,33 @@ chmod 600 '$dufs_key' 2>/dev/null || true"
         plan_firstboot dufs-setcap "setcap 'cap_net_bind_service=+ep' /usr/bin/dufs"
     fi
 
-    # The packaged init checkpaths /var/lib/dufs itself; anywhere else is ours.
+    plan_file /etc/init.d/dufs 0755 "#!/sbin/openrc-run
+# Managed by spore.
+
+name=\$RC_SVCNAME
+description=\"dufs file server\"
+
+supervisor=\"supervise-daemon\"
+command=\"/usr/bin/dufs\"
+command_args=\"-c /etc/dufs/config.yaml\"
+command_user=\"$dufs_user:$dufs_user\"
+
+output_log=\"/var/log/dufs.log\"
+error_log=\"/var/log/dufs.log\"
+
+depend() {
+    need net localmount
+    after firewall
+}"
+
+    # The package does not necessarily create the account the service runs as.
+    plan_firstboot dufs-user \
+        "id '$dufs_user' >/dev/null 2>&1 || adduser -S -D -H -s /sbin/nologin '$dufs_user'"
+
     # chown is tolerant because vfat/exfat/ntfs cannot carry Unix ownership.
-    if [ "$dufs_serve" != /var/lib/dufs ]; then
-        plan_firstboot dufs-serve-owner \
-            "chown -R dufs:dufs '$dufs_serve' 2>/dev/null || true"
-    fi
+    plan_firstboot dufs-serve-owner \
+        "chown -R '$dufs_user:$dufs_user' '$dufs_serve' 2>/dev/null || true"
+    plan_persist /var/log/dufs.log
 
     if mconf_bool DUFS_ENABLED yes; then
         plan_svc dufs default on
