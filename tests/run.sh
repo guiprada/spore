@@ -32,9 +32,15 @@ alpine() {
 section() { printf '\n%s\n' "$1"; }
 
 # ---------------------------------------------------------------- syntax -----
-section 'syntax (dash -n, closest POSIX proxy to busybox ash)'
+# Prefer the real target shell. On Alpine that is busybox ash; elsewhere dash is
+# the closest POSIX stand-in. Hardcoding dash meant this section failed on every
+# file on the one platform it exists to check.
+for POSIX_SH in ash dash sh; do
+    command -v "$POSIX_SH" >/dev/null 2>&1 && break
+done
+section "syntax ($POSIX_SH -n)"
 for f in "$ROOT"/bin/spore "$ROOT"/lib/*.sh "$ROOT"/modules/*.sh "$ROOT"/tests/*.sh; do
-    if dash -n "$f" 2>/dev/null; then t_ok "parses $(basename "$f")"
+    if "$POSIX_SH" -n "$f" 2>/dev/null; then t_ok "parses $(basename "$f")"
     else t_fail "parses $(basename "$f")"; fi
 done
 

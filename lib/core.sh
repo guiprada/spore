@@ -97,6 +97,11 @@ run() {
 }
 
 fetch_url() {
+    # busybox wget has no file:// support, and a blob on mounted media is a
+    # legitimate thing to reference — copy directly rather than shelling out.
+    case $1 in
+        file://*) cp -- "${1#file://}" "$2"; return $? ;;
+    esac
     if command -v curl >/dev/null 2>&1; then
         curl -fsSL -o "$2" -- "$1"
     elif command -v wget >/dev/null 2>&1; then
