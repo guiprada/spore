@@ -295,9 +295,11 @@ wz_land() {
     wl_stage=$1
     wl_host=$2
 
+    # ~/spores, not ~/machines: a directory in someone's home should say which
+    # program put it there, and these are spores.
     if [ -z "$wz_dir" ]; then
         wl_home=$(bootstrap_home)
-        wz_dir=${wl_home:+$wl_home/machines}
+        wz_dir=${wl_home:+$wl_home/spores}
         wz_dir=${wz_dir:-.}/$wl_host
         wz_claim_dir "$wz_dir"
     fi

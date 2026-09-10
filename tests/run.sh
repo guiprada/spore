@@ -932,9 +932,9 @@ printf '%s\n' 'homehost' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' \
     env HOME="$WZH" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZH/out" 2>&1 || true
 has 'the disk is offered, not a directory' "$(cat "$WZH/out")" 'Write a USB stick now'
 check 'declining still keeps the answers' \
-    "$([ -f "$WZH/machines/homehost/spore/spore.conf" ] && echo yes || echo no)" yes
+    "$([ -f "$WZH/spores/homehost/spore/spore.conf" ] && echo yes || echo no)" yes
 check 'and the identity with them' \
-    "$([ -f "$WZH/machines/homehost/identity" ] && echo yes || echo no)" yes
+    "$([ -f "$WZH/spores/homehost/identity" ] && echo yes || echo no)" yes
 has 'and it says what is left to do' "$(cat "$WZH/out")" 'not on a disk yet'
 rm -rf "$WZH" "$WZ"
 

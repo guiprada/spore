@@ -308,7 +308,7 @@ What it must not do is be reachable in that state. So the spore can set root's
 password itself:
 
 ```sh
-openssl passwd -6 | spore -s ~/machines/galadriel/spore seal root.password
+openssl passwd -6 | spore -s ~/spores/galadriel/spore seal root.password
 ```
 
 Sealed, it is applied in the **firstboot** pass, and every firstboot action runs
@@ -405,12 +405,12 @@ $EDITOR /mnt/spore/modules/net.conf
 then `spore apply --persist` on the machine itself.
 
 Say no to the stick — because you have not made one yet — and the answers are
-saved to `~/machines/<host>` rather than lost, with the two commands to write it
+saved to `~/spores/<host>` rather than lost, with the two commands to write it
 later:
 
 ```sh
 sudo spore media /dev/sdX alpine-standard-*.iso
-sudo spore install ~/machines/<name> /dev/sdX
+sudo spore install ~/spores/<name> /dev/sdX
 ```
 
 `install` takes the whole device and finds its own partitions. Three commands by
@@ -476,7 +476,7 @@ And the spore side:
 
 ```sh
 sudo mount /dev/sdX2 /mnt/data
-./bin/spore install ~/machines/coisas /mnt/data
+./bin/spore install ~/spores/coisas /mnt/data
 sudo umount /mnt/data
 ```
 
@@ -495,9 +495,9 @@ between machines.
 Two commands on a workstation, from a clone of this repo. Neither needs Alpine.
 
 ```sh
-./bin/spore new galadriel ~/machines/galadriel
-$EDITOR ~/machines/galadriel/spore/modules/*.conf
-./bin/spore install ~/machines/galadriel /media/$USER/DATA
+./bin/spore new galadriel ~/spores/galadriel
+$EDITOR ~/spores/galadriel/spore/modules/*.conf
+./bin/spore install ~/spores/galadriel /media/$USER/DATA
 ```
 
 Boot a stock Alpine with that disk attached and it becomes `galadriel`. The
