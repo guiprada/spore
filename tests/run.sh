@@ -103,6 +103,23 @@ has   'init script waits for mounts'    "$DI" 'need net localmount'
 has   'init script prepares its log'    "$DI" 'checkpath -f -m 0644 -o "$command_user" "$output_log"'
 check 'init script is executable'       "$(file_mode "$R/etc/init.d/dufs")" 755
 has 'doas rule uses persist'          "$(cat "$R/etc/doas.d/gui.conf")" 'permit persist gui as root'
+
+section 'a user with no key cannot log in, and is told so'
+UK=$(mktemp -d)/s; cp -r "$EX" "$UK"
+UKP=$(alpine "$SPORE" --spore "$UK" plan 2>&1)
+has 'warns about a keyless user' "$UKP" 'has no way to log in over ssh'
+# With a key present, account creation and key install are one action.
+mkdir -p "$UK/keys"
+printf 'ssh-ed25519 AAAATEST tester\n' > "$UK/keys/gui.authorized_keys"
+UKR=$(mktemp -d)
+alpine "$SPORE" --spore "$UK" --root "$UKR" apply >/dev/null 2>&1
+UKW=$(mktemp -d)
+SPORE_WORK=$UKW alpine "$SPORE" --spore "$UK" plan >/dev/null 2>&1
+UKS=$(cat "$UKW"/content/* 2>/dev/null | grep -A6 'adduser -D')
+has 'installs the key with the account' "$UKS" '/home/gui/.ssh'
+has 'and the key content itself'        "$UKS" 'ssh-ed25519 AAAATEST'
+hasnt 'no longer warns once a key exists' "$(alpine "$SPORE" --spore "$UK" plan 2>&1)" 'has no way to log in'
+rm -rf "$UK" "$UKR" "$UKW"
 has 'hostname written'                "$(cat "$R/etc/hostname")"        'changeme'
 
 section 'external commands the executor would have run'
