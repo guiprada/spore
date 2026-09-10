@@ -10,12 +10,16 @@
 blob_lookup() {
     bl_conf=$SPORE_DIR/blobs.conf
     [ -f "$bl_conf" ] || return 1
-    awk -v n="$1" -v a="$2" '
+    # Success is decided in the shell, not by awk's exit status: `exit !found`
+    # is not portable across awk implementations, and getting it wrong here
+    # means an unknown architecture silently looks like a match.
+    bl_row=$(awk -v n="$1" -v a="$2" '
         /^[[:space:]]*#/ { next }
         NF == 0          { next }
-        $1 == n && $2 == a { print $3, $4, $5, $6, $7; found = 1; exit }
-        END { exit !found }
-    ' "$bl_conf"
+        $1 == n && $2 == a { print $3, $4, $5, $6, $7; exit }
+    ' "$bl_conf")
+    [ -n "$bl_row" ] || return 1
+    printf '%s\n' "$bl_row"
 }
 
 # Download, verify, then extract — in that order. A blob is never unpacked
