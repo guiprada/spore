@@ -101,7 +101,7 @@ has   'init script drops privilege'     "$DI" 'command_user="dufs:dufs"'
 has   'init script waits for mounts'    "$DI" 'need net localmount'
 check 'init script is executable'       "$(file_mode "$R/etc/init.d/dufs")" 755
 has 'doas rule uses persist'          "$(cat "$R/etc/doas.d/gui.conf")" 'permit persist gui as root'
-has 'hostname written'                "$(cat "$R/etc/hostname")"        'galadriel'
+has 'hostname written'                "$(cat "$R/etc/hostname")"        'changeme'
 
 section 'external commands the executor would have run'
 CMDS=$(cat "$LOG")

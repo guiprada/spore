@@ -86,7 +86,7 @@ Alpine box — and it is the shape the staging executor will need.
 | `blob` | fetch, verify sha256, install | fetch into boot-media cache |
 | `dir` / `file` | write under `/` | write under the staging tree |
 | `secret` | decrypt and substitute, `umask 077` | deferred to first boot |
-| `svc` | `rc-update add` | symlink into `etc/runlevels/` |
+| `svc` | `rc-update add`, then start if not running | symlink into `etc/runlevels/` |
 | `firstboot` | run now | emit to `/etc/local.d/` |
 | `persist` | (declaration) | already in the overlay |
 
@@ -300,7 +300,8 @@ runs when installed.
 
 The real behaviour of `apk`, `lbu`, `rc-update` and `awall` needs actual Alpine.
 The suite asserts those are invoked correctly; it cannot assert they do what they
-are supposed to. Verify on a real target before trusting a spore with a box you
+are supposed to. Starting and stopping services is the one path skipped entirely
+under a synthetic root, since it needs a real init to be meaningful. Verify on a real target before trusting a spore with a box you
 cannot physically reach — especially `awall activate`.
 
 ## Not yet

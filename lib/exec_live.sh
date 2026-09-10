@@ -103,26 +103,61 @@ el_secret() {
     changed "secret $esc_path"
 }
 
+# Declared state for a service is "running", not merely "enabled at boot".
+# Enabling only would let apply report success on a service that is not up, with
+# the failure surfacing at the next reboot instead. The running check needs a
+# real init, so it is skipped under a synthetic root — one of the few paths only
+# a real box exercises.
 el_svc() {
     es_name=$1 es_rl=$2 es_state=$3
     es_link=$(rootpath "/etc/runlevels/$es_rl/$es_name")
 
     if [ "$es_state" = on ]; then
-        if [ -e "$es_link" ] || [ -L "$es_link" ]; then unchanged "service $es_name ($es_rl)"; return 0; fi
-        if ! mutate; then say "would enable service $es_name ($es_rl)"; return 0; fi
-        run rc-update add "$es_name" "$es_rl"
-        if synthetic; then
-            mkdir -p "$(dirname "$es_link")"
-            ln -sf "/etc/init.d/$es_name" "$es_link"
+        if [ -e "$es_link" ] || [ -L "$es_link" ]; then
+            unchanged "service $es_name ($es_rl)"
+        elif ! mutate; then
+            say "would enable service $es_name ($es_rl)"
+        else
+            run rc-update add "$es_name" "$es_rl"
+            if synthetic; then
+                mkdir -p "$(dirname "$es_link")"
+                ln -sf "/etc/init.d/$es_name" "$es_link"
+            fi
+            changed "service $es_name ($es_rl)"
         fi
-        changed "service $es_name ($es_rl)"
-    else
-        if [ ! -e "$es_link" ] && [ ! -L "$es_link" ]; then unchanged "service $es_name disabled"; return 0; fi
-        if ! mutate; then say "would disable service $es_name ($es_rl)"; return 0; fi
-        run rc-update del "$es_name" "$es_rl"
-        if synthetic; then rm -f "$es_link"; fi
-        changed "service $es_name disabled"
+
+        if ! synthetic; then
+            if rc-service "$es_name" status >/dev/null 2>&1; then
+                unchanged "service $es_name running"
+            elif ! mutate; then
+                say "would start service $es_name"
+            else
+                run rc-service "$es_name" start
+                changed "service $es_name started"
+            fi
+        fi
+        return 0
     fi
+
+    if ! synthetic && rc-service "$es_name" status >/dev/null 2>&1; then
+        if mutate; then
+            run rc-service "$es_name" stop
+            changed "service $es_name stopped"
+        else
+            say "would stop service $es_name"
+        fi
+    fi
+    if [ ! -e "$es_link" ] && [ ! -L "$es_link" ]; then
+        unchanged "service $es_name disabled"
+        return 0
+    fi
+    if ! mutate; then
+        say "would disable service $es_name ($es_rl)"
+        return 0
+    fi
+    run rc-update del "$es_name" "$es_rl"
+    if synthetic; then rm -f "$es_link"; fi
+    changed "service $es_name disabled"
 }
 
 el_blob() {
