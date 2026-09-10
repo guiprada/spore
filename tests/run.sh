@@ -1011,6 +1011,32 @@ else
     rm -rf "$NBD"
 fi
 
+section 'try: boot it before carrying it anywhere'
+# The loop this project went without for too long. A VM cannot speak for the
+# target's hardware, but it answers the expensive question — does the seed run,
+# and does the spore apply — in seconds instead of a round trip.
+if TOUT=$("$SPORE" try 2>&1); then
+    t_fail 'try needs something to boot' 'succeeded'
+else has 'try needs something to boot' "$TOUT" 'usage: spore try'; fi
+if TOUT=$("$SPORE" try /nonexistent-device 2>&1); then
+    t_fail 'and it must exist' 'succeeded'
+else has 'and it must exist' "$TOUT" 'no such device or image'; fi
+if command -v qemu-system-x86_64 >/dev/null 2>&1; then
+    t_skip 'qemu is installed here — missing-qemu assertion'
+else
+    if TOUT=$("$SPORE" try /etc/hostname 2>&1); then
+        t_fail 'a missing qemu names its package' 'succeeded'
+    else has 'a missing qemu names its package' "$TOUT" 'apt install qemu-system-x86'; fi
+fi
+# An EFI-only medium in a BIOS guest finds nothing bootable and reads as a bad
+# stick, so OVMF is required rather than merely preferred.
+TFW=$(cd "$ROOT" && sh -c 'SPORE_COLOR=never . ./lib/core.sh; . ./lib/try.sh
+    if try_ovmf >/dev/null; then echo found; else echo absent; fi')
+case $TFW in
+    found|absent) t_ok 'firmware discovery answers either way' ;;
+    *)            t_fail 'firmware discovery answers either way' "$TFW" ;;
+esac
+
 section 'a device node with no medium is named as such'
 # An empty card-reader slot opens fine and reports size 0. sgdisk then fails
 # with "Error is 123", which is ENOMEDIUM and tells the reader nothing.

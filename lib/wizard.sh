@@ -439,6 +439,10 @@ wz_disk() {
 
 $wd_host is on $wd_dev. Boot it.
 
+Or boot it here first, in a VM, without touching the medium:
+
+  sudo spore try $wd_dev
+
 To change it later, mount the data partition and edit the files there —
 the spore on the disk is the machine, there is no other copy:
 

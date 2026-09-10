@@ -24,6 +24,7 @@ Every command is the tool pointed at a spore:
 ```sh
 spore setup                            # asks, then offers to write the stick
 spore media /dev/sdX alpine.iso        # partition and write a boot medium
+spore try /dev/sdX                     # boot it in a VM, medium untouched
 spore install DIR /dev/sdX             # put the machine on it
 
 spore apply          # converge this host to the spore
@@ -480,6 +481,33 @@ sudo mount /dev/sdX2 /mnt/data
 sudo umount /mnt/data
 ```
 
+### Boot it here first
+
+```sh
+sudo spore try /dev/sdX
+```
+
+A VM boots the same medium in seconds, with the console in front of you. It
+cannot speak for the target's hardware — its network card, its disks, its
+firmware — but it answers the question that is expensive every other way: does
+the seed run, and does the spore apply. Without `write` the guest's changes go to
+a temporary file and the medium is not touched; `sudo spore try /dev/sdX write`
+lets it commit its apkovl for real, which provisions the stick without ever
+plugging it into the target.
+
+Two things it handles that catch people out. OVMF is required and looked up
+across the paths distributions use, because the medium is EFI-only and a BIOS
+guest finds nothing bootable — which reads as a bad stick. And the guest's
+network is a NAT, so a spore configured for 192.168.1.50 would come up with no
+route and fail at the first `apk`; `try` reads the address off the medium and
+puts the NAT on the same numbering, so what runs is the spore you wrote.
+
+```sh
+apt install qemu-system-x86 ovmf
+```
+
+### On the target
+
 Boot it with UEFI. If the firmware will not offer the stick, it is almost always
 Secure Boot rather than the partitioning — check that before re-making anything.
 
@@ -559,7 +587,7 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-316 checks, no Alpine and no container required: plan assertions, a synthetic-root
+322 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering
