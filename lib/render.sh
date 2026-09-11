@@ -79,14 +79,52 @@ spore_ifaces() {
 # hardware at all, which is the shape of this failure exactly.
 spore_modules_here() { [ -d "/lib/modules/$(uname -r)" ]; }
 
-# What coldplug does, done directly. mdev -s creates device nodes but only
-# modprobes when its hotplug rules fire, and udevadm is not on a stock mdev
+# What coldplug does, for network cards only. mdev -s creates device nodes but
+# only modprobes when its hotplug rules fire, and udevadm is not on a stock mdev
 # image at all — so on the machine where this matters most, neither of the two
 # polite ways of asking does anything.
+#
+# Only network cards. This walked every modalias under /sys/devices and loaded
+# a driver for each, which is not coldplug — it is every driver for every device
+# on the box, at once, from a provisioning tool that wanted one ethernet port.
+# Loading a driver is not free and not always reversible, and a machine that
+# wedges here wedges before anything can write down why.
+#
+# Each one is also given a deadline, like everything else here that can block.
+# A single call that never returns takes the whole boot with it, and a boot that
+# hangs writes no log — which leaves nobody anything to go on but a power
+# switch and a guess.
+spore_bounded() {
+    sb_t=$1
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$sb_t" "$@"
+    else
+        "$@"
+    fi
+}
+
+spore_modprobe() {
+    [ -n "$1" ] || return 0
+    spore_bounded 10 modprobe -b -q -- "$1" >/dev/null 2>&1 || true
+}
+
 spore_coldplug() {
     command -v modprobe >/dev/null 2>&1 || return 0
-    find /sys/devices -name modalias -type f 2>/dev/null | while read -r ma; do
-        modprobe -b -q -- "$(cat "$ma" 2>/dev/null)" >/dev/null 2>&1 || true
+    # PCI class 0x02xxxx is "network controller", straight from the spec.
+    for d in /sys/bus/pci/devices/*; do
+        [ -f "$d/class" ] || continue
+        case $(cat "$d/class" 2>/dev/null) in
+            0x02*) spore_modprobe "$(cat "$d/modalias" 2>/dev/null)" ;;
+        esac
+    done
+    # USB adapters announce themselves per interface: 02 is CDC, e0 wireless,
+    # and ff vendor-specific, which is where most ethernet dongles live.
+    for d in /sys/bus/usb/devices/*; do
+        [ -f "$d/bInterfaceClass" ] || continue
+        case $(cat "$d/bInterfaceClass" 2>/dev/null) in
+            02|e0|ff) spore_modprobe "$(cat "$d/modalias" 2>/dev/null)" ;;
+        esac
     done
 }
 
@@ -137,17 +175,17 @@ spore_why_no_iface() {
 if ! spore_modules_here; then
     echo 'spore: no kernel modules yet; trying to mount the modloop'
     if command -v rc-service >/dev/null 2>&1; then
-        rc-service modloop start >/dev/null 2>&1 || true
+        spore_bounded 60 rc-service modloop start >/dev/null 2>&1 || true
     elif [ -x /etc/init.d/modloop ]; then
-        /etc/init.d/modloop start >/dev/null 2>&1 || true
+        spore_bounded 60 /etc/init.d/modloop start >/dev/null 2>&1 || true
     fi
 fi
 
 if command -v udevadm >/dev/null 2>&1; then
-    udevadm trigger --subsystem-match=net >/dev/null 2>&1 || true
-    udevadm settle --timeout=10 >/dev/null 2>&1 || true
+    spore_bounded 30 udevadm trigger --subsystem-match=net >/dev/null 2>&1 || true
+    spore_bounded 30 udevadm settle --timeout=10 >/dev/null 2>&1 || true
 elif command -v mdev >/dev/null 2>&1; then
-    mdev -s >/dev/null 2>&1 || true
+    spore_bounded 30 mdev -s >/dev/null 2>&1 || true
 fi
 spore_coldplug
 

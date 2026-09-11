@@ -315,6 +315,17 @@ rm -f "$NRSH"
 IFSRC=$(cat "$ROOT/lib/render.sh")
 has 'drivers are asked for first'    "$IFSRC" 'udevadm trigger --subsystem-match=net'
 has 'then coldplugged by modalias'   "$IFSRC" 'modprobe -b -q --'
+# Network cards only. This once walked every modalias under /sys/devices and
+# loaded a driver for each — every driver for every device on the box, at once,
+# from a tool that wanted one ethernet port.
+has 'coldplug is network cards only' "$IFSRC" '# PCI class 0x02xxxx is "network controller"'
+hasnt 'not every device on the box'  "$IFSRC" 'find /sys/devices -name modalias'
+# And nothing here may block for ever: a boot that hangs writes no log, which
+# leaves a power switch and a guess.
+has 'blocking calls have a deadline' "$IFSRC" 'spore_bounded'
+has 'modprobe among them'            "$IFSRC" 'spore_bounded 10 modprobe'
+has 'and the modloop mount'          "$IFSRC" 'spore_bounded 60 rc-service modloop start'
+has 'and ifup, which waits on dhcp'  "$NETSRC" 'spore_bounded 90 ifup -a'
 has 'and it waits for one to appear' "$IFSRC" 'waiting up to'
 has 'a missing interface is named'   "$IFSRC" 'this machine has no interface named'
 has 'along with the ones it has'     "$IFSRC" '/sys/class/net/'

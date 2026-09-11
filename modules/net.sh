@@ -126,10 +126,11 @@ if [ -z \"\$iface\" ]; then
     exit 0
 fi
 if command -v ifup >/dev/null 2>&1; then
-    ifdown -a 2>/dev/null || true
-    ifup -a || true
+    spore_bounded 30 ifdown -a 2>/dev/null || true
+    spore_bounded 90 ifup -a || true
 elif [ -x /etc/init.d/networking ]; then
-    rc-service networking restart || rc-service networking start || true
+    spore_bounded 90 rc-service networking restart ||
+        spore_bounded 90 rc-service networking start || true
 fi
 $(render_net_report)"
 }
