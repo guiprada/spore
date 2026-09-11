@@ -1099,6 +1099,14 @@ has   'and firmware is EFI, not BIOS'   "$TCMD" 'if=pflash'
 # of why this project spent so long guessing at what the machine was saying the
 # whole time.
 has   'the boot console is captured'    "$TCMD" '-serial file:'
+# An image file has no partitions to take a kernel off, so it falls back to the
+# medium's own bootloader — which is also what `bootloader` asks for explicitly.
+TCMDB=$(PATH="$TSTUB:$PATH" SPORE_TRY_PRINT=1 SPORE_OVMF="$TSTUB/CODE.fd:$TSTUB/VARS.fd" \
+       "$SPORE" try /etc/hostname bootloader 2>/dev/null || true)
+hasnt 'bootloader mode boots no kernel directly' "$TCMDB" '-kernel'
+if TCMDX=$("$SPORE" try /etc/hostname nonsense 2>&1); then
+    t_fail 'an unknown try option is refused' 'succeeded'
+else has 'an unknown try option is refused' "$TCMDX" "unknown option 'nonsense'"; fi
 # `write` is the deliberate opposite, and must not silently keep the snapshot.
 TCMDW=$(PATH="$TSTUB:$PATH" SPORE_TRY_PRINT=1 SPORE_OVMF="$TSTUB/CODE.fd:$TSTUB/VARS.fd" \
        "$SPORE" try /etc/hostname write 2>/dev/null || true)

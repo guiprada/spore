@@ -100,10 +100,48 @@ try_guest_net() {
     SPORE_TRY_NETDEV=$tg_opts
 }
 
-# try_boot <device|image> [write]
+# The kernel and initramfs off the medium, so the guest can be booted directly
+# with a command line we control. The image's own GRUB carries its configuration
+# inside bootx64.efi, where nothing on this side can reach it — no serial
+# console, so the boot goes dark the moment it starts, which is precisely the
+# part worth watching.
+try_extract_kernel() {
+    tk_target=$1
+    tk_p1=$(media_part "$tk_target" 1)
+    [ -b "$tk_p1" ] || return 1
+    mkdir -p "$SPORE_WORK/esp"
+    mount -o ro "$tk_p1" "$SPORE_WORK/esp" 2>/dev/null || return 1
+    SPORE_UNMOUNT="$SPORE_WORK/esp ${SPORE_UNMOUNT:-}"
+
+    tk_k='' tk_i=''
+    for tk_f in "$SPORE_WORK/esp"/boot/vmlinuz-* "$SPORE_WORK/esp"/boot/vmlinuz; do
+        [ -f "$tk_f" ] && { tk_k=$tk_f; break; }
+    done
+    for tk_f in "$SPORE_WORK/esp"/boot/initramfs-* "$SPORE_WORK/esp"/boot/initrd*; do
+        [ -f "$tk_f" ] && { tk_i=$tk_f; break; }
+    done
+    [ -n "$tk_k" ] && [ -n "$tk_i" ] || return 1
+
+    cp "$tk_k" "$SPORE_WORK/vmlinuz" && cp "$tk_i" "$SPORE_WORK/initramfs" || return 1
+    umount "$SPORE_WORK/esp" 2>/dev/null || true
+    SPORE_UNMOUNT=$(printf '%s' "${SPORE_UNMOUNT:-}" | sed "s|$SPORE_WORK/esp||")
+    return 0
+}
+
+# try_boot <device|image> [write|bootloader ...]
 try_boot() {
     tb_target=$1
-    tb_write=${2:-no}
+    shift 2>/dev/null || true
+    tb_write=no tb_direct=yes
+    for tb_a in "$@"; do
+        case $tb_a in
+            write)      tb_write='write' ;;
+            bootloader) tb_direct='no' ;;
+            '')         : ;;
+            *)          die "spore try: unknown option '$tb_a' (write, bootloader)" ;;
+        esac
+    done
+    set -- "$tb_target"
 
     [ -e "$tb_target" ] || die "no such device or image: $tb_target"
     command -v qemu-system-x86_64 >/dev/null 2>&1 ||
@@ -123,16 +161,33 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
         fi
     fi
 
-    tb_fw=$(try_ovmf) || die "OVMF is not installed, and the medium is EFI-only —
+    # Booting the kernel straight off the medium needs no firmware at all, and
+    # is the only way to put a serial console on the command line of an image
+    # whose bootloader keeps its configuration inside its own EFI binary.
+    tb_kernel=no
+    if [ "$tb_direct" = yes ] && [ -b "$tb_target" ] && try_extract_kernel "$tb_target"; then
+        tb_kernel=yes
+    elif [ "$tb_direct" = yes ]; then
+        say 'no kernel found on the medium; going through its own bootloader'
+    fi
+
+    tb_fw=''
+    if [ "$tb_kernel" = no ]; then
+        tb_fw=$(try_ovmf) || die "OVMF is not installed, and the medium is EFI-only —
          a BIOS guest would find nothing bootable and look like a bad stick.
          On Debian or Ubuntu: apt install ovmf"
+    fi
     tb_code=${tb_fw%"$SPORE_TAB"*}
     tb_vars=${tb_fw#*"$SPORE_TAB"}
 
     set -- -machine q35 -m 2048 -smp 2
 
-    # Firmware variables have to be writable, and must not be the system copy.
-    if [ -n "$tb_vars" ]; then
+    if [ "$tb_kernel" = yes ]; then
+        # The options Alpine's own boot entry uses, plus the console that entry
+        # cannot be told to add.
+        set -- "$@" -kernel "$SPORE_WORK/vmlinuz" -initrd "$SPORE_WORK/initramfs" \
+            -append 'modules=loop,squashfs,sd-mod,usb-storage quiet console=ttyS0,115200'
+    elif [ -n "$tb_vars" ]; then
         cp "$tb_vars" "$SPORE_WORK/OVMF_VARS.fd" || die "cannot stage OVMF variables"
         set -- "$@" \
             -drive "if=pflash,format=raw,readonly=on,file=$tb_code" \
@@ -198,7 +253,10 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
         tb_where='VNC on 127.0.0.1:5900'
     fi
 
-    printf '\nbooting %s%s — console in %s\n' "$tb_target" \
+    printf '\n%s\n' "$([ "$tb_kernel" = yes ] &&
+        printf 'booting the kernel off the medium directly, so the command line is ours' ||
+        printf 'booting through the medium own bootloader')" >&2
+    printf 'booting %s%s — console in %s\n' "$tb_target" \
         "$([ "$tb_write" = write ] && printf ' (writing)' || printf ' (snapshot; the medium is not touched)')" \
         "$tb_where" >&2
     printf 'The boot console is written to %s — that is the\n' "$tb_log" >&2

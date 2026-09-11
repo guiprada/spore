@@ -32,7 +32,10 @@ usage: spore [options] <command>
 commands:
   setup [DIR]       guided: asks, then writes a machine directory
   media DEV ISO     partition and write a boot medium (ERASES DEV)
-  try DEV [write]   boot it in a VM; without `write` the medium is untouched
+  try DEV [write] [bootloader]
+                    boot it in a VM. The kernel is taken off the medium and
+                    booted directly, so the console can be captured; add
+                    `bootloader` to go through the image's own instead
   inspect DEV       what is on a medium, and what its last boot logged
   new NAME [DIR]    the same directory, without the questions
   install DIR DEV|DATA [BOOT]
@@ -378,7 +381,7 @@ cmd_setup() {
 }
 
 cmd_try() {
-    [ $# -ge 1 ] && [ $# -le 2 ] || die "usage: spore try DEVICE|IMAGE [write]"
+    [ $# -ge 1 ] || die "usage: spore try DEVICE|IMAGE [write] [bootloader]"
     spore_workspace
     try_boot "$@"
 }
