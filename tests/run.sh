@@ -1068,6 +1068,10 @@ has   'the medium is attached over USB' "$TCMD" 'usb-storage'
 hasnt 'not as a virtio disk'            "$TCMD" 'if=virtio'
 has   'writes go to a snapshot'         "$TCMD" '-snapshot'
 has   'and firmware is EFI, not BIOS'   "$TCMD" 'if=pflash'
+# A console you can only photograph is a console you cannot paste, which is most
+# of why this project spent so long guessing at what the machine was saying the
+# whole time.
+has   'the boot console is captured'    "$TCMD" '-serial file:'
 # `write` is the deliberate opposite, and must not silently keep the snapshot.
 TCMDW=$(PATH="$TSTUB:$PATH" SPORE_TRY_PRINT=1 SPORE_OVMF="$TSTUB/CODE.fd:$TSTUB/VARS.fd" \
        "$SPORE" try /etc/hostname write 2>/dev/null || true)

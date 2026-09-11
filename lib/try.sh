@@ -182,6 +182,13 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
     fi
     set -- "$@" -netdev "$SPORE_TRY_NETDEV" -device virtio-net,netdev=n0
 
+    # The boot, as text. A console you can only photograph is a console you
+    # cannot paste, and that is most of why this project spent so long guessing:
+    # the machine was saying something the whole time.
+    tb_log=${SPORE_TRY_LOG:-$PWD/spore-boot.log}
+    : > "$tb_log" 2>/dev/null || tb_log=$SPORE_WORK/spore-boot.log
+    set -- "$@" -serial "file:$tb_log"
+
     # Somewhere to look. Without a display this would run blind, and running
     # blind is what made all of this expensive in the first place.
     if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
@@ -194,7 +201,8 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
     printf '\nbooting %s%s — console in %s\n' "$tb_target" \
         "$([ "$tb_write" = write ] && printf ' (writing)' || printf ' (snapshot; the medium is not touched)')" \
         "$tb_where" >&2
-    printf 'The seed logs to /var/log/spore-seed.log inside the guest.\n\n' >&2
+    printf 'The boot console is written to %s — that is the\n' "$tb_log" >&2
+    printf 'one to read when it comes up wrong.\n\n' >&2
 
     # Printing the invocation rather than running it: for the tests, and for
     # anyone who wants to take these arguments and add their own.

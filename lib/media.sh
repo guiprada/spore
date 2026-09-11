@@ -113,6 +113,41 @@ $(printf '%s\n' "$mw_used" | sed 's/^/           /')
     run umount "$mw_tmp/esp"
     run umount "$mw_tmp/iso"
 
+    # A serial console on the kernel command line. On real hardware it changes
+    # nothing — tty0 stays the primary — but it is the only way to get the boot
+    # out of a VM as text, and out of a headless box at all. Not having it cost
+    # this project several rounds of inferring from symptoms what one line of
+    # console output would have said outright.
+    if [ "$SPORE_DRYRUN" != 1 ]; then
+        mkdir -p "$mw_tmp/esp"
+        if mount "$mw_p1" "$mw_tmp/esp" 2>/dev/null; then
+            mw_patched=0
+            # Whatever the image uses, and wherever it keeps it: the kernel line
+            # is the one carrying modloop=.
+            find "$mw_tmp/esp" -maxdepth 4 -type f \
+                 \( -name 'grub.cfg' -o -name 'syslinux.cfg' -o -name '*.conf' \) \
+                 2>/dev/null > "$SPORE_WORK/bootcfgs" || true
+            while IFS= read -r mw_cfg; do
+                [ -n "$mw_cfg" ] || continue
+                grep -q 'modloop=' "$mw_cfg" 2>/dev/null || continue
+                if grep -q 'console=ttyS0' "$mw_cfg" 2>/dev/null; then continue; fi
+                if sed 's|\(modloop=[^ ]*\)|\1 console=tty0 console=ttyS0,115200|' \
+                       "$mw_cfg" > "$mw_cfg.spore" && mv "$mw_cfg.spore" "$mw_cfg"
+                then
+                    mw_patched=$((mw_patched + 1))
+                fi
+            done < "$SPORE_WORK/bootcfgs"
+            if [ "$mw_patched" -gt 0 ]; then
+                say "added a serial console to the boot options ($mw_patched file(s))"
+            else
+                warn "could not find a kernel command line to add a serial console to.
+         The boot will still work; it just cannot be captured as text, so
+         \`spore try\` will have nothing to show you when something goes wrong."
+            fi
+            umount "$mw_tmp/esp"
+        fi
+    fi
+
     # A customized ISO carries its own apkovl, and the initramfs takes the first
     # one it finds — so it would win over the seed and the machine would come up
     # as somebody else's, with the spore never running and nothing saying why.

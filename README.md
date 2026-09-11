@@ -495,7 +495,14 @@ sudo spore try /dev/sdX
 ```
 
 A VM boots the same medium in seconds, with the console in front of you. It
-cannot speak for the target's hardware — its network card, its disks, its
+writes the whole boot to `spore-boot.log` in the current directory, because a
+console you can only photograph is a console you cannot paste — and that is most
+of why this project spent so long inferring from symptoms what one line of
+console output says outright. `media` puts `console=ttyS0` on the kernel command
+line for the same reason; on real hardware it changes nothing, since tty0 stays
+primary, but it makes a headless box able to say what happened.
+
+It cannot speak for the target's hardware — its network card, its disks, its
 firmware — but it answers the question that is expensive every other way: does
 the seed run, and does the spore apply. Without `write` the guest's changes go to
 a temporary file and the medium is not touched; `sudo spore try /dev/sdX write`
@@ -612,7 +619,7 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-345 checks, no Alpine and no container required: plan assertions, a synthetic-root
+346 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering
