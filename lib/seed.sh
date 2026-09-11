@@ -49,11 +49,17 @@ printf '\n=== spore seed: %s ===\n' "$(date 2>/dev/null)"
 seed_data=''
 save_log() {
     [ -f /var/log/spore-seed.log ] || return 0
-    if [ -n "$seed_data" ] &&
-       cp /var/log/spore-seed.log "$seed_data/spore-seed.log" 2>/dev/null
-    then
-        sync 2>/dev/null || true
-        return 0
+    # The initramfs mounts the medium read-only, so every copy here failed
+    # silently — which is why there was never a log to read, in any of the boots
+    # that produced one. Remount long enough to write, then put it back.
+    if [ -n "$seed_data" ]; then
+        mount -o remount,rw "$seed_data" 2>/dev/null || true
+        if cp /var/log/spore-seed.log "$seed_data/spore-seed.log" 2>/dev/null; then
+            sync 2>/dev/null || true
+            mount -o remount,ro "$seed_data" 2>/dev/null || true
+            return 0
+        fi
+        mount -o remount,ro "$seed_data" 2>/dev/null || true
     fi
     # No spore was found — which is exactly when this log matters most, and
     # exactly when there is no known place to put it. Writing it only beside a
@@ -69,6 +75,7 @@ save_log() {
         [ -b "$d" ] || continue
         mount "$d" /mnt/spore-log 2>/dev/null || continue
         if [ -f /mnt/spore-log/spore-seed.apkovl.tar.gz ]; then
+            mount -o remount,rw /mnt/spore-log 2>/dev/null || true
             cp /var/log/spore-seed.log /mnt/spore-log/spore-seed.log 2>/dev/null
             sync 2>/dev/null || true
             umount /mnt/spore-log 2>/dev/null

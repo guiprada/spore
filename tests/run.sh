@@ -284,6 +284,13 @@ section 'a machine brings its own network up before it fetches anything'
 # file pass is four phases too late: the run is already dead, at a failure that
 # reads like a broken mirror rather than like a machine with no address.
 has 'the interface is configured first of all' "$PLAN" 'netup      net-up'
+# ifup, not `rc-service networking`: asking OpenRC for the service drags in its
+# dependency graph, which wants fsck, which will not start that early — and the
+# whole thing dies as "cannot start networking as fsck would not start", three
+# layers from the cause.
+NETSRC=$(cat "$ROOT/modules/net.sh")
+has 'brought up with ifup'          "$NETSRC" 'ifup -a'
+has 'and the service is a fallback' "$NETSRC" 'elif [ -x /etc/init.d/networking ]'
 NS=$(mktemp -d /tmp/spore-netstatic.XXXXXX)/s; cp -r "$EX" "$NS"
 cat > "$NS/modules/net.conf" <<'NETC'
 NET_HOSTNAME=coisas
@@ -841,6 +848,10 @@ has 'everything is said on the console too' "$SEEDSTART" 'tee -a /dev/console'
 has 'and the exit status survives the pipe' "$SEEDSTART" 'spore-seed.rc'
 # When nothing is found, say what was tried and why each one failed.
 has 'a failed scan names what it tried'     "$SEEDSTART" 'would not mount'
+# The initramfs mounts the medium read-only, so every copy failed silently —
+# which is why there was never a log to read in any boot that produced one.
+has 'the medium is remounted to write it'   "$SEEDSTART" 'remount,rw'
+has 'and put back read-only after'          "$SEEDSTART" 'remount,ro'
 
 # The real property: unpacked onto a blank machine, the embedded tool runs a
 # spore that was never inside the overlay.

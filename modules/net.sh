@@ -86,11 +86,18 @@ cat > /etc/resolv.conf <<'SPORE_RESOLV_EOF'
 $net_resolv
 SPORE_RESOLV_EOF"
     fi
-    # Non-fatal: not every host has OpenRC driving the interface, and on one
-    # already up and reachable a failed restart is not a reason to abandon the
-    # apply — the next apk add will say so far more clearly.
+    # ifup, not `rc-service networking`. Asking OpenRC to start the service
+    # drags in its whole dependency graph — which wants fsck, which will not
+    # start this early — and the whole thing fails with "cannot start networking
+    # as fsck would not start". The interface then never comes up and the first
+    # apk update dies of DNS, three layers away from the cause.
+    #
+    # ifup reads the same /etc/network/interfaces and does only the one thing.
     plan_netup net-up "$net_early
-if [ -x /etc/init.d/networking ]; then
+if command -v ifup >/dev/null 2>&1; then
+    ifdown -a 2>/dev/null || true
+    ifup -a || true
+elif [ -x /etc/init.d/networking ]; then
     rc-service networking restart || rc-service networking start || true
 fi"
 }
