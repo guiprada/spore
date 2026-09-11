@@ -140,6 +140,14 @@ inspect_medium() {
             grep -qE 'search.*(alpine-std|alpine-ext|[0-9]+\.[0-9]+\.[0-9]+ )' "$im2_c" 2>/dev/null &&
                 im2_isolabel=$((im2_isolabel + 1))
         done < "$SPORE_WORK/espcfgs"
+        # The seed writes its log beside whichever partition carrying the seed
+        # it could mount — the FAT one needs no module, so it is often the only
+        # one reachable when the failure is that nothing else could be read.
+        if [ -f "$SPORE_WORK/look1/spore-seed.log" ]; then
+            printf '\n  the log, from here:\n\n' >&2
+            sed 's/^/    /' "$SPORE_WORK/look1/spore-seed.log" >&2
+            printf '\n' >&2
+        fi
         printf '  boot configs: %s found, %s with a serial console' "$im2_cfgs" "$im2_serial" >&2
         [ "$im2_isolabel" -gt 0 ] && printf ', %s still searching for the ISO label' "$im2_isolabel" >&2
         printf '\n' >&2

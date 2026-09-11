@@ -829,6 +829,11 @@ has 'hook says what is missing'       "$SEEDSTART" 'no spore found'
 # to outlive the boot that produced it.
 has 'the log is saved beside the spore' "$SEEDSTART" 'trap save_log EXIT'
 has 'on every exit path, not just success' "$SEEDSTART" 'cp /var/log/spore-seed.log'
+# Writing it only beside a found spore meant the one failure worth reporting —
+# no spore found — could never report itself. Any filesystem carrying the seed
+# is ours, and the FAT one needs no module to mount.
+has 'and even when no spore was found'     "$SEEDSTART" 'spore-seed.apkovl.tar.gz'
+has 'by scanning for the seed itself'      "$SEEDSTART" '/mnt/spore-log'
 
 # The real property: unpacked onto a blank machine, the embedded tool runs a
 # spore that was never inside the overlay.

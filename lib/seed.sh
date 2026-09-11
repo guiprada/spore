@@ -41,9 +41,34 @@ printf '\n=== spore seed: %s ===\n' "$(date 2>/dev/null)"
 # boot that produced it.
 seed_data=''
 save_log() {
-    [ -n "$seed_data" ] || return 0
-    cp /var/log/spore-seed.log "$seed_data/spore-seed.log" 2>/dev/null || return 0
-    sync 2>/dev/null || true
+    [ -f /var/log/spore-seed.log ] || return 0
+    if [ -n "$seed_data" ] &&
+       cp /var/log/spore-seed.log "$seed_data/spore-seed.log" 2>/dev/null
+    then
+        sync 2>/dev/null || true
+        return 0
+    fi
+    # No spore was found — which is exactly when this log matters most, and
+    # exactly when there is no known place to put it. Writing it only beside a
+    # spore meant the one failure worth reporting could never report itself.
+    #
+    # Any filesystem carrying the seed is ours by construction: that is what
+    # `spore install` writes, to both partitions. The boot partition is FAT and
+    # needs no module to mount, so this works even when the data partition
+    # cannot be read at all.
+    mkdir -p /mnt/spore-log
+    for d in /dev/sd[a-z][0-9]* /dev/vd[a-z][0-9]* /dev/xvd[a-z][0-9]* \
+             /dev/nvme[0-9]n[0-9]p[0-9]* /dev/mmcblk[0-9]p[0-9]*; do
+        [ -b "$d" ] || continue
+        mount "$d" /mnt/spore-log 2>/dev/null || continue
+        if [ -f /mnt/spore-log/spore-seed.apkovl.tar.gz ]; then
+            cp /var/log/spore-seed.log /mnt/spore-log/spore-seed.log 2>/dev/null
+            sync 2>/dev/null || true
+            umount /mnt/spore-log 2>/dev/null
+            return 0
+        fi
+        umount /mnt/spore-log 2>/dev/null
+    done
 }
 trap save_log EXIT
 
