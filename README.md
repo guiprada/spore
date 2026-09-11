@@ -451,6 +451,14 @@ p1  ESP    FAT32  label ALPINE   the Alpine ISO, extracted, never written again
 p2  data   ext4   label DATA     spore/, identity, the apkovl, the served data
 ```
 
+**The image's boot config is rewritten to match the medium.** Alpine's
+`grub.cfg` finds its root with `search --label "alpine-std 3.24.1 x86_64"` — the
+ISO9660 volume label. A FAT label is eleven characters and holds no spaces, so
+once the image is extracted onto the ESP that search can never match, and grub
+reports `no such device` on every boot. `media` points it at the label the
+partition actually has, and adds a serial console to the kernel line while it is
+there.
+
 **ext4 for the data partition, not vfat.** vfat carries no Unix ownership, so
 the identity that decrypts every secret in the spore cannot be mode 0600 — it is
 readable by anyone holding the stick. `spore install` warns when it cannot set
@@ -619,7 +627,7 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-346 checks, no Alpine and no container required: plan assertions, a synthetic-root
+353 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering

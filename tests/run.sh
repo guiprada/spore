@@ -993,6 +993,33 @@ if MRX=$(alpine "$SPORE" --spore "$MR" plan 2>&1); then
 else has 'refuses a mirror that is not a URL' "$MRX" 'http:// or https:// URL'; fi
 rm -rf "$MR"
 
+section 'the image boot config is made to match the medium it is on'
+# Alpine's grub.cfg finds its root with the ISO9660 volume label — a string with
+# spaces, longer than the eleven characters a FAT label can hold. Extracted onto
+# a FAT partition it can never match, and grub says "no such device" on every
+# single boot.
+BPD=$(mktemp -d /tmp/spore-bootpatch.XXXXXX)
+cat > "$BPD/grub.cfg" <<'BPCFG'
+set timeout=1
+search --no-floppy --set=root -l 'alpine-std 3.24.1 x86_64'
+menuentry "Linux lts" {
+	linux /boot/vmlinuz-lts modules=loop,squashfs,sd-mod,usb-storage quiet
+	initrd /boot/initramfs-lts
+}
+BPCFG
+BPOUT=$(awk -v LBL=ALPINE -f "$ROOT/lib/bootpatch.awk" "$BPD/grub.cfg")
+has   'the search is pointed at our label' "$BPOUT" 'search --no-floppy --set=root --label ALPINE'
+hasnt 'and the ISO label is gone'          "$BPOUT" 'alpine-std'
+has   'a serial console is added'          "$BPOUT" 'console=ttyS0,115200'
+has   'with tty0 still first'              "$BPOUT" 'console=tty0 console=ttyS0'
+has   'the kernel options survive'         "$BPOUT" 'modules=loop,squashfs,sd-mod,usb-storage'
+has   'and initrd is untouched'            "$BPOUT" 'initrd /boot/initramfs-lts'
+# Running it twice must not stack consoles.
+BPTWICE=$(printf '%s\n' "$BPOUT" | awk -v LBL=ALPINE -f "$ROOT/lib/bootpatch.awk")
+check 'it is idempotent' \
+    "$(printf '%s\n' "$BPTWICE" | grep -c 'console=ttyS0')" 1
+rm -rf "$BPD"
+
 section 'spore media refuses a disk it should not erase'
 if MOUT=$("$SPORE" media /dev/null /etc/hostname 2>&1); then
     t_fail 'refuses a non-block device' 'succeeded'

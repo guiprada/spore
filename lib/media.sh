@@ -113,36 +113,42 @@ $(printf '%s\n' "$mw_used" | sed 's/^/           /')
     run umount "$mw_tmp/esp"
     run umount "$mw_tmp/iso"
 
-    # A serial console on the kernel command line. On real hardware it changes
-    # nothing — tty0 stays the primary — but it is the only way to get the boot
-    # out of a VM as text, and out of a headless box at all. Not having it cost
-    # this project several rounds of inferring from symptoms what one line of
-    # console output would have said outright.
+    # Two things have to be rewritten in the image's own boot configuration.
+    #
+    # The first is not optional. Alpine's grub.cfg finds its root with
+    # `search --label "alpine-std 3.24.1 x86_64"` — the ISO9660 volume label. A
+    # FAT label is eleven characters with no spaces, so that string cannot exist
+    # here, and the search fails on every boot: "no such device". Point it at the
+    # label this partition actually has.
+    #
+    # The second is a serial console, so the boot can be read as text — in a VM,
+    # and on a headless box at all. On hardware it changes nothing, since tty0
+    # stays first in the list.
     if [ "$SPORE_DRYRUN" != 1 ]; then
         mkdir -p "$mw_tmp/esp"
         if mount "$mw_p1" "$mw_tmp/esp" 2>/dev/null; then
             mw_patched=0
-            # Whatever the image uses, and wherever it keeps it: the kernel line
-            # is the one carrying modloop=.
-            find "$mw_tmp/esp" -maxdepth 4 -type f \
-                 \( -name 'grub.cfg' -o -name 'syslinux.cfg' -o -name '*.conf' \) \
-                 2>/dev/null > "$SPORE_WORK/bootcfgs" || true
+            find "$mw_tmp/esp" -maxdepth 5 -type f \
+                 \( -name '*.cfg' -o -name '*.conf' \) 2>/dev/null > "$SPORE_WORK/bootcfgs" || true
             while IFS= read -r mw_cfg; do
                 [ -n "$mw_cfg" ] || continue
-                grep -q 'modloop=' "$mw_cfg" 2>/dev/null || continue
-                if grep -q 'console=ttyS0' "$mw_cfg" 2>/dev/null; then continue; fi
-                if sed 's|\(modloop=[^ ]*\)|\1 console=tty0 console=ttyS0,115200|' \
-                       "$mw_cfg" > "$mw_cfg.spore" && mv "$mw_cfg.spore" "$mw_cfg"
+                grep -qE '(^|[ \t])(linux|linuxefi|linux16|kernel|append|APPEND)[ \t]|search' \
+                    "$mw_cfg" 2>/dev/null || continue
+                if awk -v LBL=ALPINE -f "$SPORE_PREFIX/lib/bootpatch.awk" "$mw_cfg" > "$mw_cfg.spore" &&
+                   ! cmp -s "$mw_cfg" "$mw_cfg.spore"
                 then
+                    mv "$mw_cfg.spore" "$mw_cfg"
                     mw_patched=$((mw_patched + 1))
+                else
+                    rm -f "$mw_cfg.spore"
                 fi
             done < "$SPORE_WORK/bootcfgs"
             if [ "$mw_patched" -gt 0 ]; then
-                say "added a serial console to the boot options ($mw_patched file(s))"
+                say "pointed $mw_patched boot config(s) at label ALPINE, with a serial console"
             else
-                warn "could not find a kernel command line to add a serial console to.
-         The boot will still work; it just cannot be captured as text, so
-         \`spore try\` will have nothing to show you when something goes wrong."
+                warn "found no boot configuration to adjust on this image. If it
+         searches for its own ISO volume label it will fail with \"no such
+         device\" on every boot, and nothing here can be read as text."
             fi
             umount "$mw_tmp/esp"
         fi
