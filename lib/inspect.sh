@@ -25,6 +25,7 @@ inspect_stale() {
 
 inspect_data() {
     id_dir=$1
+    id_dev=${2-}
 
     printf '\non the data partition\n\n' >&2
     # shellcheck disable=SC2012  # a listing for a human, not a pipeline
@@ -77,8 +78,20 @@ inspect_data() {
            [ "$id_dir/spore-seed.apkovl.tar.gz" -nt "$id_dir/spore-seed.log" ]; then
             printf '  %sthis log is older than the seed next to it%s — it is from a boot\n' \
                 "$_c_red" "$_c_reset" >&2
-            printf '  before the last install, so it says nothing about the current\n' >&2
-            printf '  code. Boot the machine again before reading it.\n\n' >&2
+            printf '  before the last install, so it says nothing about the current code.\n\n' >&2
+            # And the commonest reason it stays old is not that nobody booted.
+            # `spore try` runs the medium under -snapshot unless told `write`,
+            # so the machine writes its log and qemu discards it on exit — the
+            # medium is never touched, by design, and this file can therefore
+            # sit unchanged through any number of reinstalls and boots. The
+            # boot console is captured to a file on the host instead, and that
+            # is the one with the answer in it.
+            printf '  If you booted it with %s try%s, that is expected: writes go to a\n' \
+                "$SPORE_SELF" "$_c_reset" >&2
+            printf '  snapshot and are thrown away, so nothing here can change. Read\n' >&2
+            printf '  spore-boot.log where you ran it, or boot with:\n' >&2
+            printf '      sudo %s try %s write\n' "$SPORE_SELF" "${id_dev:-/dev/sdX}" >&2
+            printf '  Otherwise boot the machine again before reading what follows.\n\n' >&2
         fi
         sed 's/^/  /' "$id_dir/spore-seed.log" >&2
     else
@@ -119,7 +132,7 @@ inspect_medium() {
     SPORE_UNMOUNT="$SPORE_WORK/look"
 
     printf '%s\n' "$im2_target" >&2
-    inspect_data "$SPORE_WORK/look"
+    inspect_data "$SPORE_WORK/look" "$im2_target"
 
     # The boot partition matters only for whether the seed could be found there.
     im2_p1=$(media_part "$im2_target" 1)

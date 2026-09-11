@@ -1366,7 +1366,11 @@ hasnt 'a fresh log is not doubted'  "$INL" 'older than the seed'
 touch "$IN/m/spore-seed.apkovl.tar.gz"
 INA=$("$SPORE" inspect "$IN/m" 2>&1)
 has 'a log older than its seed is doubted' "$INA" 'older than the seed next to it'
-has 'and says to boot before reading it'   "$INA" 'Boot the machine again'
+has 'and says to boot before reading it'   "$INA" 'boot the machine again'
+# The commonest reason it stays old is not that nobody booted: `spore try`
+# discards writes unless told otherwise, so the seed log never lands.
+has 'and names snapshot as the usual cause' "$INA" 'writes go to a'
+has 'pointing at the console log instead'   "$INA" 'spore-boot.log'
 if INE=$("$SPORE" inspect /nonexistent 2>&1); then
     t_fail 'a missing target is refused' 'succeeded'
 else has 'a missing target is refused' "$INE" 'no such device or directory'; fi

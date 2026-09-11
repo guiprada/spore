@@ -263,10 +263,23 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
         printf 'booting the kernel off the medium directly, so the command line is ours' ||
         printf 'booting through the medium own bootloader')" >&2
     printf 'booting %s%s — console in %s\n' "$tb_target" \
-        "$([ "$tb_write" = write ] && printf ' (writing)' || printf ' (snapshot; the medium is not touched)')" \
+        "$([ "$tb_write" = write ] && printf ' (writing)' || printf ' (snapshot)')" \
         "$tb_where" >&2
     printf 'The boot console is written to %s — that is the\n' "$tb_log" >&2
-    printf 'one to read when it comes up wrong.\n\n' >&2
+    printf 'one to read when it comes up wrong.\n' >&2
+    # Which matters more than it sounds. Under -snapshot the guest writes its
+    # seed log to the medium and qemu throws it away on exit, so `spore inspect`
+    # afterwards shows the log from some earlier boot — unchanged, however many
+    # times you reinstall and try again. "The medium is not touched" was true,
+    # and read as reassurance, when what it means is that the evidence you are
+    # about to go looking for will not be there.
+    if [ "$tb_write" != write ]; then
+        printf '\nWrites are discarded when qemu exits, so the seed log will NOT land\n' >&2
+        printf 'on the medium: %s inspect will keep showing an older boot,\n' "$SPORE_SELF" >&2
+        printf 'however many times you reinstall. Read the file above instead, or\n' >&2
+        printf 'pass write to let the machine keep what it does.\n' >&2
+    fi
+    printf '\n' >&2
 
     # Printing the invocation rather than running it: for the tests, and for
     # anyone who wants to take these arguments and add their own.
