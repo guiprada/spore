@@ -168,3 +168,38 @@ plan_validate() {
     done < "$SPORE_WORK/conflicts"
     die "conflicting claims in the plan; resolve them before applying"
 }
+
+# plan_age
+# age has to exist on the target before any sealed secret can be opened, and
+# `apk add age` is the wrong way to get it: it needs a working mirror, and the
+# machine that most needs an unattended password is the one whose network is
+# not up yet. `spore install` puts the binary on the medium for exactly this,
+# so look there first and fall back to the package.
+#
+# Bootstrap, not pkg: it must be in place before the secret pass, and the whole
+# point is that it must not depend on the package pass working at all.
+plan_age() {
+    # shellcheck disable=SC2016  # the target's shell expands these, not ours
+    plan_bootstrap age-available 'if command -v age >/dev/null 2>&1; then
+    exit 0
+fi
+for b in /media/*/spore-bin/age /mnt/*/spore-bin/age; do
+    [ -f "$b" ] || continue
+    mkdir -p /usr/local/bin
+    cp "$b" /usr/local/bin/age || continue
+    chmod 755 /usr/local/bin/age
+    if age --version >/dev/null 2>&1; then
+        echo "spore: using the age carried on the boot medium"
+        exit 0
+    fi
+    rm -f /usr/local/bin/age
+done
+if apk add --no-progress age; then
+    exit 0
+fi
+echo "spore: age is not installed and could not be fetched, so no sealed" >&2
+echo "spore: secret can be opened — no password will be set on this machine." >&2
+echo "spore: Re-run spore install on a workstation with a network and it will" >&2
+echo "spore: carry the binary on the medium instead of needing one here." >&2
+exit 1'
+}

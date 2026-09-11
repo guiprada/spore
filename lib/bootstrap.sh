@@ -204,6 +204,62 @@ INFO
     fi
 }
 
+# install_carry_age <dir> <data> <boot>
+# Put the target's own age binary on the medium, so a sealed password does not
+# depend on the machine having a network.
+#
+# This is where it belongs: the workstation building a medium has a network by
+# definition, and the machine booting it is the one that may not. A run that
+# gets all the way to "age (no such package)" has already done everything else
+# right and still comes up with no password on any account.
+#
+# Never fatal. A medium without it is exactly as good as every medium was
+# before, and saying so beats refusing to write one.
+install_carry_age() {
+    ica_dir=$1 ica_data=$2 ica_boot=$3
+
+    # Only if there is something sealed to open.
+    ica_n=$(find "$ica_dir/spore/secrets" -name '*.age' 2>/dev/null | wc -l | tr -d ' ')
+    [ "${ica_n:-0}" -gt 0 ] || return 0
+    [ "$SPORE_DRYRUN" = 1 ] && { say "would carry age on the medium"; return 0; }
+
+    ica_dest=$ica_data/spore-bin/age
+    [ -f "$ica_dest" ] && return 0
+
+    # Which Alpine, and for which processor. Both are facts about the medium
+    # rather than about this workstation, and both are written on it — guessing
+    # either produces a binary that cannot run, which is worse than none.
+    ica_rel=''
+    for ica_f in "$ica_boot/.alpine-release" "$ica_data/.alpine-release"; do
+        [ -n "$ica_f" ] && [ -f "$ica_f" ] && { ica_rel=$(cat "$ica_f"); break; }
+    done
+    if [ -z "$ica_rel" ]; then
+        warn "cannot tell which Alpine this medium is, so age was not carried on
+         it. The machine will need a working network to fetch it."
+        return 0
+    fi
+    ica_arch=''
+    for ica_d in "$ica_boot"/apks/*; do
+        [ -d "$ica_d" ] && { ica_arch=${ica_d##*/}; break; }
+    done
+    [ -n "$ica_arch" ] || ica_arch=x86_64
+
+    ica_mirror=$(conf_get "$ica_dir/spore/modules/repos.conf" REPOS_MIRROR '')
+    [ -n "$ica_mirror" ] || ica_mirror=https://dl-cdn.alpinelinux.org/alpine
+    ica_mirror=${ica_mirror%/}
+
+    ica_branch=$(apk_branch "$ica_rel")
+    if ica_ver=$(apk_extract_binary "$ica_mirror" "$ica_branch" community \
+                                    "$ica_arch" age usr/bin/age "$ica_dest"); then
+        say "carried age $ica_ver ($ica_arch) on the medium"
+    else
+        warn "could not fetch age for $ica_arch from
+         $ica_mirror/$ica_branch/community, so it is not on this medium. The
+         machine will need a working network to install it, and without it no
+         sealed password can be set. Nothing else is affected."
+    fi
+}
+
 # install_machine <dir> <target> [boot]
 install_machine() {
     im_dir=$1
@@ -287,6 +343,8 @@ install_machine() {
          that decrypts every secret in the spore."
         fi
     fi
+
+    install_carry_age "$im_dir" "$im_target" "$im_boot"
 
     # Built here, now, rather than copied: the overlay carries the tool itself,
     # so a stale one silently boots the target on an older spore than the one

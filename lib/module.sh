@@ -70,10 +70,11 @@ plan_build() {
     plan_spore_packages
     plan_spore_files
 
-    # Secrets are decrypted on the target, so age has to be there first. The
-    # package pass runs before the secret pass, so declaring it here suffices.
+    # Secrets are decrypted on the target, so age has to be there first —
+    # from the medium if `spore install` put it there, from a mirror only as a
+    # fallback. The bootstrap pass runs before the secret pass.
     if [ -s "$SPORE_PLAN" ] && awk -F'\t' '$2 == "secret" { found = 1 } END { exit !found }' "$SPORE_PLAN"; then
-        plan_pkg age
+        plan_age
     fi
 
     # Blobs are fetched over HTTPS by curl/wget, which need a CA trust store. A

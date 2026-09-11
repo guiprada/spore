@@ -473,6 +473,78 @@ has   'it is written on the machine'     "$FAA" 'firewall: FW_IFACE=auto'
 rm -rf "$FA" "$FAR"
 
 # ---------------------------------------------------------- idempotence -----
+section 'age travels on the medium, so a sealed password needs no network'
+# The whole run can get everything else right and still end at "age (no such
+# package)", which leaves no password on any account. The workstation building
+# the medium has a network by definition; the machine booting it may not.
+AGSRC=$(cat "$ROOT/lib/plan.sh")
+has 'the medium is looked at first'   "$AGSRC" '/media/*/spore-bin/age'
+has 'and the package is the fallback' "$AGSRC" 'apk add --no-progress age'
+has 'a copied binary is run once'     "$AGSRC" 'age --version'
+# 3.24.1 is v3.24; edge stays edge. Guessing this wrong fetches a binary built
+# against a different musl and it fails on the target, one boot away from here.
+AGB=$( . "$ROOT/lib/apkfetch.sh"; apk_branch 3.24.1; printf ' '; apk_branch 3.20.7
+       printf ' '; apk_branch 3.24.0_alpha20260101 )
+check 'the branch comes off the release' "$AGB" 'v3.24 v3.20 edge'
+# Run the emitted shell against a fake medium carrying a binary, and confirm it
+# is preferred over any package manager.
+AGR=$(mktemp -d /tmp/spore-agebin.XXXXXX)
+mkdir -p "$AGR/media/sdz1/spore-bin" "$AGR/usr/local/bin"
+printf '#!/bin/sh\ncase $1 in --version) echo 1.2.3 ;; esac\n' > "$AGR/media/sdz1/spore-bin/age"
+chmod 755 "$AGR/media/sdz1/spore-bin/age"
+# Out of a real plan, not by hand-wiring the planner: the script that ships is
+# the one worth running.
+AGD=$(mktemp -d /tmp/spore-ageplan.XXXXXX)
+AGS=$AGD/s; cp -r "$EX" "$AGS"; mkdir -p "$AGS/secrets"
+AGW=$(mktemp -d /tmp/spore-agework.XXXXXX)
+if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1; then
+    age-keygen -o "$AGD/identity" 2>"$AGD/pub"
+    grep -o 'age1[a-z0-9]*' "$AGD/pub" > "$AGS/secrets/recipients"
+    sed -i "s|^SECRETS_IDENTITY=.*|SECRETS_IDENTITY=$AGD/identity|" "$AGS/spore.conf"
+    # A secret a module actually consumes: an unused one plans no secret
+    # action, so nothing would ask for age at all.
+    printf 'x' | "$SPORE" --spore "$AGS" seal root.password >/dev/null 2>&1 || true
+fi
+if [ -f "$AGS/secrets/root.password.age" ]; then
+    env SPORE_WORK="$AGW" SPORE_WORK_OWNED=0 SPORE_FACT_INIT=openrc \
+        SPORE_FACT_NETADMIN=yes SPORE_FACT_PERSIST=lbu SPORE_FACT_ARCH=x86_64 \
+        SPORE_FACT_ROOT=yes SPORE_FACT_ALPINE=3.20.0 \
+        "$SPORE" --spore "$AGS" plan >/dev/null 2>&1 || true
+    AGSHA=$(awk -F'\t' '$2=="bootstrap" && $3=="age-available"{print $4}' \
+            "$AGW/plan.tsv" 2>/dev/null | head -1)
+    if [ -n "${AGSHA:-}" ] && [ -f "$AGW/content/$AGSHA" ]; then
+        sed "s|/media/\*|$AGR/media/*|g; s|/mnt/\*|$AGR/mnt/*|g; s|/usr/local/bin|$AGR/usr/local/bin|g" \
+            "$AGW/content/$AGSHA" > "$AGW/run.sh"
+        # A PATH with no age on it, or the script rightly exits at its first
+        # line and proves nothing. Just enough utilities for it to work with.
+        mkdir -p "$AGR/shim"
+        for AGU in mkdir cp chmod rm; do
+            AGP=$(command -v "$AGU") && ln -sf "$AGP" "$AGR/shim/$AGU"
+        done
+        AGSH=$(command -v sh)
+        AGO=$(PATH="$AGR/usr/local/bin:$AGR/shim" "$AGSH" "$AGW/run.sh" 2>&1 || true)
+        has   'a carried binary is used'     "$AGO" 'using the age carried on the boot medium'
+        check 'and put where it will run'    "$([ -x "$AGR/usr/local/bin/age" ] && echo yes || echo no)" yes
+    else
+        t_fail 'the age bootstrap action is planned' 'no age-available action in the plan'
+    fi
+else
+    printf '  (no age here — the carried-binary script was not run)\n'
+fi
+rm -rf "$AGR" "$AGW" "$AGD"
+# A mirror that answers with an error page must not leave that on the medium as
+# a "binary" — it would fail on the target, one boot and a day away from here.
+AGE2=$(mktemp -d /tmp/spore-agebad.XXXXXX)
+printf '<html>not found</html>\n' > "$AGE2/notelf"
+AGELF=$(head -c 4 "$AGE2/notelf" | od -An -tx1 | tr -d ' \n')
+check 'an html error page is not an ELF' "$([ "$AGELF" = 7f454c46 ] && echo elf || echo no)" no
+rm -rf "$AGE2"
+# And carrying it is never fatal: a medium without it is exactly as good as
+# every medium was before this existed.
+BSSRC=$(cat "$ROOT/lib/bootstrap.sh")
+has 'a failed fetch only warns'       "$BSSRC" 'could not fetch age for'
+has 'and only when something is sealed' "$BSSRC" "-name '*.age'"
+
 section 'idempotence'
 LOG2=$(mktemp /tmp/spore-log2.XXXXXX)
 export SPORE_RUN_LOG="$LOG2"
@@ -801,7 +873,10 @@ else
     SP=$(alpine "$SPORE" --spore "$SD/s" plan 2>&1)
     has 'config carrying a password becomes a secret action' "$SP" 'secret     /etc/dufs/config.yaml'
     has 'host key is a secret action'                        "$SP" 'secret     /etc/ssh/ssh_host_ed25519_key'
-    has 'age is installed before secrets are written'        "$SP" 'pkg        age'
+    # Not `pkg age`: that needs a mirror, and the machine most in need of an
+    # unattended password is the one whose network is not up. `spore install`
+    # carries the binary, and this looks there first.
+    has 'age is there before secrets are written'            "$SP" 'bootstrap  age-available'
     hasnt 'plan never shows the password'                    "$SP" 'hunter2'
 
     SR=$(mktemp -d /tmp/spore-secroot.XXXXXX)
@@ -850,7 +925,7 @@ else
     SPORE_WORK=$PWW alpine "$SPORE" --spore "$SD/s" plan >/dev/null 2>&1
     PWP=$(alpine "$SPORE" --spore "$SD/s" plan 2>&1)
     has 'a sealed password is planned'  "$PWP" 'firstboot  user-gui-password'
-    has 'and brings age with it'        "$PWP" 'pkg        age'
+    has 'and brings age with it'        "$PWP" 'bootstrap  age-available'
     PWS=$(grep -rl chpasswd "$PWW/content" 2>/dev/null | head -1)
     has 'decrypts on the target'        "$(cat "$PWS")" 'age --decrypt'
     has 'applies the hash encrypted'    "$(cat "$PWS")" 'chpasswd -e'

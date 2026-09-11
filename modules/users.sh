@@ -37,7 +37,7 @@ users_meta() {
 users_plan_password() {
     upp_who=$1
     secret_exists "$upp_who.password" || return 0
-    plan_pkg age
+    plan_age
     upp_ct=$(secret_path "$upp_who.password")
     plan_firstboot "user-$upp_who-password" "# secret: $(sha256_file "$upp_ct")
 set -e

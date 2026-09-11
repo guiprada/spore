@@ -17,7 +17,7 @@ SPORE_LIB=$SPORE_PREFIX/lib
 SPORE_MODULES=$SPORE_PREFIX/modules
 
 for _f in core conf facts plan render blob secret module exec_live exec_print \
-          persist seed bootstrap wizard media try inspect; do
+          persist seed apkfetch bootstrap wizard media try inspect; do
     . "$SPORE_LIB/$_f.sh"
 done
 
