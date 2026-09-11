@@ -292,6 +292,20 @@ NETSRC=$(cat "$ROOT/modules/net.sh")
 has 'brought up with ifup'          "$NETSRC" 'ifup -a'
 has 'and the service is a fallback' "$NETSRC" 'elif [ -x /etc/init.d/networking ]'
 has 'no card is not the end of the run' "$NETSRC" 'The rest of the spore still applies'
+# "DNS: transient error" is the same message for no address, no route, a dead
+# gateway and no resolver. The log has to say which.
+has 'and it reports what it got'       "$NETSRC" 'render_net_report'
+NRSH=$(mktemp /tmp/spore-netrep.XXXXXX)
+{ echo 'iface=lo'; ( . "$ROOT/lib/render.sh"; render_net_report 1 ); } > "$NRSH"
+NRO=$(sh "$NRSH" 2>&1)
+has 'the default route is always spoken to' "$NRO" 'default route'
+has 'and the resolver situation too'        "$NRO" 'resolv'
+# A report that cannot tell "no address" from "no tool to ask with" is worse
+# than no report, because it is believed.
+NRSRC=$(cat "$ROOT/lib/render.sh")
+has 'missing tools are said, not guessed'  "$NRSRC" 'no ip or ifconfig here'
+has 'the route needs no ip(1) at all'      "$NRSRC" '/proc/net/route'
+rm -f "$NRSH"
 # Three different things go wrong at an interface name and from a distance they
 # look identical. The name can be wrong — predictable naming gives eth0 on one
 # box and enp3s0 on the next. It can be right and not there yet, because the

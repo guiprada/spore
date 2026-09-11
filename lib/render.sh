@@ -37,9 +37,6 @@ sshd_include_supported() {
         grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$ssi_f"
 }
 
-# render_iface_resolve <name> [where-it-is-configured]
-# Prints shell that leaves $iface holding a real interface name on the target.
-#
 # render_iface_resolve <name> [where-it-is-configured] [seconds-to-wait]
 # Prints shell that leaves $iface holding a real interface name on the target,
 # or empty if there is none — having already said, on the console and in the
@@ -191,4 +188,104 @@ else
     iface=''
 fi
 RIR
+}
+
+# render_net_report [seconds-to-wait-for-an-address]
+# Prints shell that says what the interface in $iface actually got.
+#
+# Whether it worked, not whether it was attempted. Four phases later every one
+# of these reads as `DNS: transient error (try again later)`: no address, an
+# address with no route, a route to something that is not there, a working route
+# with no resolver, and a genuinely slow mirror. Five repairs behind one message,
+# and nothing in the log could tell them apart — which is how a wrong gateway
+# gets diagnosed as a flaky CDN, twice.
+#
+# The wait is not decoration either: dhcp takes a moment, and `apk update` in the
+# very next phase will happily run before the lease lands.
+#
+# And where it cannot find out, it says that instead of saying "none". A report
+# that cannot tell "no address" from "no tool to ask with" is worse than no
+# report, because it is believed.
+render_net_report() {
+    printf "netwait=%s\n" "${1:-15}"
+    cat <<'RNR'
+spore_addr_of() {
+    if command -v ip >/dev/null 2>&1; then
+        { ip -4 addr show dev "$1" 2>/dev/null || ip addr show dev "$1" 2>/dev/null; } |
+            sed -n 's/.*inet \([0-9.][0-9.]*\).*/\1/p' | head -1
+    elif command -v ifconfig >/dev/null 2>&1; then
+        ifconfig "$1" 2>/dev/null |
+            sed -n 's/.*inet \(addr:\)*\([0-9.][0-9.]*\).*/\2/p' | head -1
+    else
+        printf '?'
+    fi
+}
+
+# Little-endian hex, as the kernel writes it into /proc.
+spore_hex_ip() {
+    printf '%d.%d.%d.%d' \
+        "0x$(printf '%s' "$1" | cut -c7-8)" \
+        "0x$(printf '%s' "$1" | cut -c5-6)" \
+        "0x$(printf '%s' "$1" | cut -c3-4)" \
+        "0x$(printf '%s' "$1" | cut -c1-2)"
+}
+
+# /proc/net/route rather than ip(1): it is always there, and the default route
+# is the single most useful fact in this whole report.
+spore_default_route() {
+    [ -r /proc/net/route ] || return 1
+    while read -r rif rdest rgw rrest; do
+        [ "$rdest" = 00000000 ] || continue
+        printf '%s via %s' "$rif" "$(spore_hex_ip "$rgw")"
+        return 0
+    done < /proc/net/route
+    return 1
+}
+
+netwaited=0
+netaddr=''
+while :; do
+    netaddr=$(spore_addr_of "$iface")
+    if [ -n "$netaddr" ]; then break; fi
+    if [ "$netwaited" -ge "$netwait" ]; then break; fi
+    sleep 1
+    netwaited=$((netwaited + 1))
+done
+
+if [ "$netaddr" = '?' ]; then
+    echo "spore: no ip or ifconfig here, so $iface's address cannot be read." >&2
+elif [ -n "$netaddr" ]; then
+    echo "spore: $iface has $netaddr after ${netwaited}s"
+else
+    echo "spore: $iface has no address after ${netwaited}s — dhcp got no lease," >&2
+    echo 'spore: or the static address in this spore was never applied.' >&2
+fi
+
+if netroute=$(spore_default_route); then
+    echo "spore: default route: $netroute"
+    netgw=${netroute##* }
+    if command -v ping >/dev/null 2>&1; then
+        if ping -c 1 -W 2 "$netgw" >/dev/null 2>&1; then
+            echo "spore: gateway $netgw answers"
+        else
+            echo "spore: gateway $netgw does not answer — nothing leaves this" >&2
+            echo 'spore: machine, whatever the mirror says about itself.' >&2
+        fi
+    fi
+else
+    echo 'spore: no default route, so nothing can leave this subnet.' >&2
+fi
+
+if [ -f /etc/resolv.conf ]; then
+    netdns=$(sed -n 's/^[[:space:]]*nameserver[[:space:]][[:space:]]*//p' \
+             /etc/resolv.conf | tr '\n' ' ')
+    if [ -n "$netdns" ]; then
+        echo "spore: resolvers: $netdns"
+    else
+        echo 'spore: /etc/resolv.conf names no resolver, so no name resolves.' >&2
+    fi
+else
+    echo 'spore: no /etc/resolv.conf at all, so no name resolves.' >&2
+fi
+RNR
 }

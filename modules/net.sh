@@ -130,5 +130,6 @@ if command -v ifup >/dev/null 2>&1; then
     ifup -a || true
 elif [ -x /etc/init.d/networking ]; then
     rc-service networking restart || rc-service networking start || true
-fi"
+fi
+$(render_net_report)"
 }
