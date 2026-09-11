@@ -32,7 +32,14 @@ seed_build() {
     cat > "$sb_stage/usr/local/lib/spore/seed-run" <<'START'
 #!/bin/sh
 # Managed by spore. Finds a spore on attached media and converges this machine.
-exec >>/var/log/spore-seed.log 2>&1
+#
+# Everything this says goes to the console as well as the log. Writing only to
+# a file assumes a filesystem can be written, and "no filesystem could be read
+# or written" is precisely the failure worth reporting — so the report went into
+# the void exactly when it was needed. The console needs nothing to work.
+SEED_RC=/run/spore-seed.rc
+
+seed_main() {
 printf '\n=== spore seed: %s ===\n' "$(date 2>/dev/null)"
 
 # /var/log is on the RAM root, so a reboot takes this log with it — and the
@@ -74,7 +81,7 @@ trap save_log EXIT
 
 if [ -f /etc/spore/.seeded ]; then
     echo "already converged; nothing to do"
-    exit 0
+    return 0
 fi
 
 # Already-mounted media first, then anything mountable. The spore is a directory
@@ -104,9 +111,19 @@ if [ -z "$found" ]; then
 fi
 
 if [ -z "$found" ]; then
-    echo "no spore found on any attached filesystem."
+    echo "no spore found on any attached filesystem. Tried:"
+    for d in /dev/sd[a-z][0-9]* /dev/vd[a-z][0-9]* /dev/xvd[a-z][0-9]* \
+             /dev/nvme[0-9]n[0-9]p[0-9]* /dev/mmcblk[0-9]p[0-9]*; do
+        [ -b "$d" ] || continue
+        if mount "$d" /mnt/spore-scan 2>/dev/null; then
+            echo "  $d mounted, no spore/spore.conf on it"
+            umount /mnt/spore-scan 2>/dev/null
+        else
+            echo "  $d would not mount (no driver for its filesystem?)"
+        fi
+    done
     echo "Unpack one as <filesystem>/spore/ — it needs a spore.conf at its root."
-    exit 1
+    return 1
 fi
 
 seed_data=$(dirname "$found")
@@ -120,8 +137,14 @@ else
     # No stamp: the next boot tries again rather than leaving a half-built
     # machine that looks finished.
     echo "apply failed — will retry on next boot"
-    exit 1
+    return 1
 fi
+}
+
+: > "$SEED_RC" 2>/dev/null || true
+{ seed_main; printf '%s' "$?" > "$SEED_RC" 2>/dev/null; } 2>&1 |
+    tee -a /dev/console 2>/dev/null >> /var/log/spore-seed.log
+exit "$(cat "$SEED_RC" 2>/dev/null || echo 1)"
 START
     chmod 755 "$sb_stage/usr/local/lib/spore/seed-run"
 

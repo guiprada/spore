@@ -834,6 +834,13 @@ has 'on every exit path, not just success' "$SEEDSTART" 'cp /var/log/spore-seed.
 # is ours, and the FAT one needs no module to mount.
 has 'and even when no spore was found'     "$SEEDSTART" 'spore-seed.apkovl.tar.gz'
 has 'by scanning for the seed itself'      "$SEEDSTART" '/mnt/spore-log'
+# And to the console, always. Writing only to a file assumes a filesystem can be
+# written, and "nothing could be read or written" is the failure worth
+# reporting — so the report went into the void exactly when it was needed.
+has 'everything is said on the console too' "$SEEDSTART" 'tee -a /dev/console'
+has 'and the exit status survives the pipe' "$SEEDSTART" 'spore-seed.rc'
+# When nothing is found, say what was tried and why each one failed.
+has 'a failed scan names what it tried'     "$SEEDSTART" 'would not mount'
 
 # The real property: unpacked onto a blank machine, the embedded tool runs a
 # spore that was never inside the overlay.
