@@ -185,8 +185,14 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
     if [ "$tb_kernel" = yes ]; then
         # The options Alpine's own boot entry uses, plus the console that entry
         # cannot be told to add.
+        # alpine_dev names the boot partition outright. Left to scan for it the
+        # initramfs came up without modloop — no /lib/modules, so no ext4, so the
+        # data partition cannot be mounted and the spore cannot be found. That is
+        # a failure invented by this rehearsal, which is worse than no rehearsal.
+        # The medium is the guest's only disk and arrives over USB, so its first
+        # partition is sda1 every time.
         set -- "$@" -kernel "$SPORE_WORK/vmlinuz" -initrd "$SPORE_WORK/initramfs" \
-            -append 'modules=loop,squashfs,sd-mod,usb-storage quiet console=ttyS0,115200'
+            -append 'modules=loop,squashfs,sd-mod,usb-storage,ext4 alpine_dev=sda1 console=ttyS0,115200'
     elif [ -n "$tb_vars" ]; then
         cp "$tb_vars" "$SPORE_WORK/OVMF_VARS.fd" || die "cannot stage OVMF variables"
         set -- "$@" \
