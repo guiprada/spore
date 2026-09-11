@@ -43,28 +43,26 @@ sshd_include_supported() {
 # render_iface_resolve <name> [where-it-is-configured] [seconds-to-wait]
 # Prints shell that leaves $iface holding a real interface name on the target,
 # or empty if there is none — having already said, on the console and in the
-# log, what it looked for and what it found.
+# log, what it looked for, what it found, and where to look next.
 #
-# Two different things go wrong here and from a distance they look identical.
+# Three different things go wrong here and from a distance they look identical.
 #
 # The name can be wrong. Predictable naming gives eth0 on one box and enp3s0 on
 # the next, and a spore is written on a workstation for a machine that is not in
 # front of you, so the interface name is the one piece of it that cannot be
 # known from there. `auto` exists for that.
 #
-# Or the name can be right and simply not there yet. A network card is not
-# present the moment userspace starts: its driver is loaded by coldplug and
-# probes asynchronously, so a machine booting off USB can reach the default
-# runlevel first and lose the race. That reads as
+# The name can be right and not there yet. A card's driver is loaded by coldplug
+# and probes asynchronously, so a machine booting off USB can reach the default
+# runlevel first. That reads as `ip: ioctl 0x8913 failed: No such device` —
+# SIOCGIFFLAGS, *get* flags, returning ENODEV — about an interface that is there
+# by the time anyone gets to the console. So: wait, do not believe the first
+# look.
 #
-#     ip: ioctl 0x8913 failed: No such device
-#     ifup: failed to change interface eth0 state to 'up'
-#
-# — SIOCGIFFLAGS, *get* flags, returning ENODEV — and by the time anyone is at
-# the console the interface has appeared and the message has become a lie. So
-# ask for the drivers, then wait, rather than believing the first look. Both
-# cases end with the list of what was actually there, because that one line is
-# the difference between a five-minute fix and another boot spent guessing.
+# Or there is no driver to load, because the modloop never mounted. Then the
+# machine has *no* interface, ever, and nothing here can conjure one — but that
+# is a completely different repair from the first two, and it is worth one line
+# to say which of them you are in rather than another boot spent guessing.
 render_iface_resolve() {
     printf "iface='%s'\nifacekey='%s'\nifacewait=%s\n" \
         "$1" "${2:-NET_IFACE in modules/net.conf}" "${3:-30}"
@@ -77,12 +75,84 @@ spore_ifaces() {
     done
 }
 
+# Alpine keeps its kernel modules in a squashfs on the boot medium rather than
+# in the RAM root, so "is there a driver for this card" and "did the modloop
+# mount" are the same question. Without it a diskless box still boots — kernel
+# and initramfs carry what they need for USB and ext4 — and then has no network
+# hardware at all, which is the shape of this failure exactly.
+spore_modules_here() { [ -d "/lib/modules/$(uname -r)" ]; }
+
+# What coldplug does, done directly. mdev -s creates device nodes but only
+# modprobes when its hotplug rules fire, and udevadm is not on a stock mdev
+# image at all — so on the machine where this matters most, neither of the two
+# polite ways of asking does anything.
+spore_coldplug() {
+    command -v modprobe >/dev/null 2>&1 || return 0
+    find /sys/devices -name modalias -type f 2>/dev/null | while read -r ma; do
+        modprobe -b -q -- "$(cat "$ma" 2>/dev/null)" >/dev/null 2>&1 || true
+    done
+}
+
+# Said only when there is nothing, because then it is the whole story.
+spore_why_no_iface() {
+    # If there are cards here and the named one simply is not among them, the
+    # hardware is fine and the spore is wrong. Saying anything about modloops
+    # here would be answering a question nobody asked.
+    if [ -n "$(spore_ifaces)" ]; then
+        echo 'spore:   there are interfaces on this machine, just not that one.' >&2
+        echo 'spore:   The name is wrong, not the hardware.' >&2
+        return 0
+    fi
+    if spore_modules_here; then
+        echo "spore:   /lib/modules/$(uname -r) is present" >&2
+        echo "spore:   $(grep -c . /proc/modules 2>/dev/null) modules loaded" >&2
+    else
+        echo "spore:   /lib/modules/$(uname -r) is MISSING — the modloop did not" >&2
+        echo 'spore:   mount, so this machine has no drivers beyond what the' >&2
+        echo 'spore:   kernel and initramfs carry, and never will have a card.' >&2
+        echo 'spore:   Check modloop= and alpine_dev= against the boot medium.' >&2
+    fi
+    # The other half of that question: the kernel command line says which device
+    # the initramfs was told to find the modloop on, and a medium rewritten by
+    # `spore media` is exactly where that can stop being true.
+    echo "spore:   cmdline: $(cat /proc/cmdline 2>/dev/null)" >&2
+    sn_found=0
+    for d in /sys/bus/pci/devices/*; do
+        [ -f "$d/class" ] || continue
+        case $(cat "$d/class" 2>/dev/null) in
+            0x02*)
+                sn_found=$((sn_found + 1))
+                echo "spore:   network controller ${d##*/} wants:" >&2
+                echo "spore:     $(cat "$d/modalias" 2>/dev/null)" >&2
+                ;;
+        esac
+    done
+    if [ "$sn_found" = 0 ]; then
+        echo 'spore:   no PCI device announces itself as a network controller.' >&2
+        echo 'spore:   Everything on the bus, in case the card is behind one:' >&2
+        for d in /sys/bus/pci/devices/*; do
+            [ -f "$d/modalias" ] || continue
+            printf '%s %s\n' "${d##*/}" "$(cat "$d/modalias" 2>/dev/null)"
+        done 2>/dev/null | head -24 | sed 's/^/spore:     /' >&2
+    fi
+}
+
+if ! spore_modules_here; then
+    echo 'spore: no kernel modules yet; trying to mount the modloop'
+    if command -v rc-service >/dev/null 2>&1; then
+        rc-service modloop start >/dev/null 2>&1 || true
+    elif [ -x /etc/init.d/modloop ]; then
+        /etc/init.d/modloop start >/dev/null 2>&1 || true
+    fi
+fi
+
 if command -v udevadm >/dev/null 2>&1; then
     udevadm trigger --subsystem-match=net >/dev/null 2>&1 || true
     udevadm settle --timeout=10 >/dev/null 2>&1 || true
 elif command -v mdev >/dev/null 2>&1; then
     mdev -s >/dev/null 2>&1 || true
 fi
+spore_coldplug
 
 ifacewaited=0
 ifacefound=''
@@ -111,15 +181,13 @@ if [ -n "$ifacefound" ]; then
     echo "spore: using interface $iface"
 else
     if [ "$iface" = auto ]; then
-        echo "spore: this machine has no network interface other than loopback," >&2
-        echo "spore: and none appeared in ${ifacewaited}s. Either its card has no" >&2
-        echo 'spore: driver in this Alpine image, or the modloop did not mount.' >&2
+        echo "spore: no network interface other than loopback, and none appeared" >&2
+        echo "spore: in ${ifacewaited}s. Why:" >&2
     else
         echo "spore: this machine has no interface named '$iface', and none" >&2
-        echo "spore: appeared in ${ifacewaited}s. Set $ifacekey to one of the" >&2
-        echo 'spore: names listed above, or to auto to take whichever one this' >&2
-        echo 'spore: machine turns out to have.' >&2
+        echo "spore: appeared in ${ifacewaited}s. Why:" >&2
     fi
+    spore_why_no_iface
     iface=''
 fi
 RIR

@@ -292,18 +292,26 @@ NETSRC=$(cat "$ROOT/modules/net.sh")
 has 'brought up with ifup'          "$NETSRC" 'ifup -a'
 has 'and the service is a fallback' "$NETSRC" 'elif [ -x /etc/init.d/networking ]'
 has 'no card is not the end of the run' "$NETSRC" 'The rest of the spore still applies'
-# Two different things go wrong at an interface name and they look the same from
-# a distance. The name can be wrong — predictable naming gives eth0 on one box
-# and enp3s0 on the next. Or it can be right and not there yet: the driver is
-# loaded by coldplug and probes asynchronously, so a USB-booted box reaches the
-# default runlevel first and ifup says "failed to change interface eth0 state to
-# 'up'" about an interface that is there by the time anyone reads it.
+# Three different things go wrong at an interface name and from a distance they
+# look identical. The name can be wrong — predictable naming gives eth0 on one
+# box and enp3s0 on the next. It can be right and not there yet, because the
+# driver probes asynchronously and a USB-booted box wins the race. Or there can
+# be no driver at all because the modloop never mounted, which is a completely
+# different repair and worth one line to tell apart.
 IFSRC=$(cat "$ROOT/lib/render.sh")
 has 'drivers are asked for first'    "$IFSRC" 'udevadm trigger --subsystem-match=net'
+has 'then coldplugged by modalias'   "$IFSRC" 'modprobe -b -q --'
 has 'and it waits for one to appear' "$IFSRC" 'waiting up to'
 has 'a missing interface is named'   "$IFSRC" 'this machine has no interface named'
 has 'along with the ones it has'     "$IFSRC" '/sys/class/net/'
 has 'and eth0 wins when it is there' "$IFSRC" '[ -e /sys/class/net/eth0 ]'
+has 'the modloop is checked'         "$IFSRC" 'spore_modules_here'
+has 'and mounted if it is not'       "$IFSRC" 'rc-service modloop start'
+# No card at all is a different repair from the wrong name, and the log is the
+# only place anyone will ever see the difference.
+has 'no card at all names the reason' "$IFSRC" 'the modloop did not'
+has 'with the kernel command line'    "$IFSRC" 'cmdline:'
+has 'and the card that wants a driver' "$IFSRC" 'network controller'
 # Run the thing, where there is a card to find. "Does it resolve" is the test;
 # "does the source contain a string" is not.
 if [ -e /sys/class/net/eth0 ]; then IFREAL=eth0; else
@@ -325,6 +333,10 @@ if [ -n "$IFREAL" ]; then
     has   'a name that is not there waits' "$IFO2" 'waiting up to 2s'
     has   'then says so, with real names'  "$IFO2" "no interface named 'nosuch0'"
     hasnt 'without inventing one'          "$IFO2" "RESOLVED=$IFREAL"
+    # Cards here, just not that one: the hardware is fine and the spore is
+    # wrong, so the report says that and nothing about modloops.
+    has   'and blames the name, not the box' "$IFO2" 'The name is wrong, not the hardware'
+    hasnt 'without a word about drivers'     "$IFO2" 'the modloop did not'
     rm -f "$IFSH"
 else
     printf '  (no network card on this host — resolver checked by source only)\n'

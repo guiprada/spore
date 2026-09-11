@@ -135,7 +135,8 @@ fi
 
 seed_data=$(dirname "$found")
 
-echo "applying $found"
+# `spore apply` announces the directory itself; saying it here too just made the
+# log look like it ran twice.
 if /usr/local/bin/spore -s "$found" apply --persist; then
     mkdir -p /etc/spore
     date > /etc/spore/.seeded

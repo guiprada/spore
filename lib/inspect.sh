@@ -117,6 +117,25 @@ inspect_medium() {
     if [ -b "$im2_p1" ] && mount -o ro "$im2_p1" "$SPORE_WORK/look1" 2>/dev/null; then
         SPORE_UNMOUNT="$SPORE_WORK/look1 $SPORE_UNMOUNT"
         printf 'on the boot partition\n\n' >&2
+        # Alpine keeps its kernel modules in a squashfs here, not in the RAM
+        # root, and the initramfs identifies this medium by .alpine-release. If
+        # either did not survive the ISO extraction, the machine boots with only
+        # the drivers the kernel and initramfs carry — enough for USB and ext4,
+        # not enough for a network card — and the symptom is a box with no
+        # interface at all, which reads like anything but a boot medium problem.
+        im2_rel=no
+        [ -f "$SPORE_WORK/look1/.alpine-release" ] && im2_rel=yes
+        im2_ml=$(find "$SPORE_WORK/look1/boot" -maxdepth 1 -name 'modloop-*' \
+                 2>/dev/null | wc -l | tr -d ' ')
+        im2_kern=$(find "$SPORE_WORK/look1/boot" -maxdepth 1 -name 'vmlinuz-*' \
+                   2>/dev/null | wc -l | tr -d ' ')
+        printf '  .alpine-release %s, %s modloop, %s kernel\n' \
+            "$im2_rel" "${im2_ml:-0}" "${im2_kern:-0}" >&2
+        if [ "$im2_rel" = no ] || [ "${im2_ml:-0}" = 0 ]; then
+            warn "without both of those the initramfs cannot mount the modloop, so
+         the machine comes up with no kernel modules and so no network card at
+         all. Re-run \`spore media\` from the ISO."
+        fi
         if [ -f "$SPORE_WORK/look1/spore-seed.apkovl.tar.gz" ]; then
             printf '  spore-seed.apkovl.tar.gz — the initramfs can certainly read this one\n' >&2
         else
