@@ -46,7 +46,11 @@ local_apks=\$(grep -m1 '^/media/.*/apks' \"\$f\" 2>/dev/null || true)
     printf '%s/%s/main\\n' '$repos_mirror' \"\$branch\"
     printf '%s/%s/community\\n' '$repos_mirror' \"\$branch\"
 } > \"\$f\"
-apk update"
+if ! apk update; then
+    echo 'spore: apk update could not reach every repository.' >&2
+    echo 'spore: continuing — a package that is genuinely missing will say so' >&2
+    echo 'spore: when it fails to install, which is a far clearer place to stop.' >&2
+fi"
     fi
 
     # Three states have to be handled, not one. A configured box has the
@@ -78,7 +82,13 @@ else
     fi
     printf "%s\n" "$main" | sed "s|/main[[:space:]]*$|/community|" >> "$f"
 fi
-apk update'
+# One unreachable mirror is not a reason to abandon a machine: a local
+# repository on the boot medium may carry what is needed, and a package that
+# genuinely is not available anywhere will say so when it fails to install,
+# which is a far clearer place to stop than here.
+if ! apk update; then
+    echo "spore: apk update could not reach every repository; continuing" >&2
+fi'
     fi
 
     # On a diskless box /etc/apk/world persists the *intent* to have a package,

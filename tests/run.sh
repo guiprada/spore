@@ -1007,6 +1007,17 @@ printf 'REPOS_COMMUNITY=yes\nREPOS_MIRROR=https://mirror.ufpr.br/alpine\n' \
     > "$MR/modules/repos.conf"
 MRP=$(alpine "$SPORE" --spore "$MR" plan 2>&1)
 has  'the mirror is a bootstrap action'  "$MRP" 'bootstrap  repos-mirror'
+# One unreachable mirror is not a reason to abandon a machine: the boot medium
+# may carry a local repository with what is needed, and a package that genuinely
+# is not available anywhere says so when it fails to install — a far clearer
+# place to stop than an update that could not reach one of three repositories.
+REPOSRC=$(cat "$ROOT/modules/repos.sh")
+has  'a partly unreachable mirror is survivable' "$REPOSRC" 'could not reach every repository'
+if grep -qx 'apk update' "$ROOT/modules/repos.sh"; then
+    t_fail 'rather than a bare apk update' 'an unguarded apk update remains'
+else
+    t_ok 'rather than a bare apk update'
+fi
 has  'alongside enabling community'      "$MRP" 'bootstrap  repos-community'
 hasnt 'and no Alpine version is baked in' "$MRP" 'v3.2'
 # A mirror that is not a URL is refused rather than written into apk's config.
