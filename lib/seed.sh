@@ -165,10 +165,14 @@ START
 description="Find a spore on attached media and converge this machine"
 
 depend() {
-    # After the filesystems it will look through, and after the network it will
-    # need to fetch packages — but needing neither, since a machine with no
-    # network still has a spore worth applying as far as it can get.
-    after localmount net
+    # After the filesystems it will look through, after the drivers that make a
+    # network card exist at all, and after the network it will need to fetch
+    # packages — but needing none of them, since a machine with no network still
+    # has a spore worth applying as far as it can get.
+    #
+    # hwdrivers having finished is not the card being ready: probing is
+    # asynchronous, so the actual wait is in the netup script, not here.
+    after localmount hwdrivers modules net
 }
 
 start() {

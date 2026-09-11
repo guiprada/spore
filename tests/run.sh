@@ -291,13 +291,44 @@ has 'the interface is configured first of all' "$PLAN" 'netup      net-up'
 NETSRC=$(cat "$ROOT/modules/net.sh")
 has 'brought up with ifup'          "$NETSRC" 'ifup -a'
 has 'and the service is a fallback' "$NETSRC" 'elif [ -x /etc/init.d/networking ]'
-# An interface name is the one thing a spore cannot know in advance: predictable
-# naming gives eth0 on one box and enp3s0 on the next, and a name that does not
-# exist means no network at all, forever, on a machine nobody is standing at.
+has 'no card is not the end of the run' "$NETSRC" 'The rest of the spore still applies'
+# Two different things go wrong at an interface name and they look the same from
+# a distance. The name can be wrong — predictable naming gives eth0 on one box
+# and enp3s0 on the next. Or it can be right and not there yet: the driver is
+# loaded by coldplug and probes asynchronously, so a USB-booted box reaches the
+# default runlevel first and ifup says "failed to change interface eth0 state to
+# 'up'" about an interface that is there by the time anyone reads it.
 IFSRC=$(cat "$ROOT/lib/render.sh")
+has 'drivers are asked for first'    "$IFSRC" 'udevadm trigger --subsystem-match=net'
+has 'and it waits for one to appear' "$IFSRC" 'waiting up to'
 has 'a missing interface is named'   "$IFSRC" 'this machine has no interface named'
 has 'along with the ones it has'     "$IFSRC" '/sys/class/net/'
 has 'and eth0 wins when it is there' "$IFSRC" '[ -e /sys/class/net/eth0 ]'
+# Run the thing, where there is a card to find. "Does it resolve" is the test;
+# "does the source contain a string" is not.
+if [ -e /sys/class/net/eth0 ]; then IFREAL=eth0; else
+    IFREAL=$(for i in /sys/class/net/*; do
+        n=${i##*/}; [ "$n" = lo ] || printf '%s\n' "$n"
+    done | head -1)
+fi
+if [ -n "$IFREAL" ]; then
+    IFSH=$(mktemp /tmp/spore-ifr.XXXXXX)
+    ( . "$ROOT/lib/render.sh"; render_iface_resolve auto ) > "$IFSH"
+    printf 'printf "RESOLVED=%%s\\n" "$iface"\n' >> "$IFSH"
+    IFO=$(sh "$IFSH" 2>&1)
+    has 'auto resolves to a real card'     "$IFO" "RESOLVED=$IFREAL"
+    has 'and says which one it took'       "$IFO" "using interface $IFREAL"
+    has 'and lists what it saw'            "$IFO" 'interfaces present after'
+    ( . "$ROOT/lib/render.sh"; render_iface_resolve nosuch0 'NET_IFACE' 2 ) > "$IFSH"
+    printf 'printf "RESOLVED=%%s\\n" "$iface"\n' >> "$IFSH"
+    IFO2=$(sh "$IFSH" 2>&1)
+    has   'a name that is not there waits' "$IFO2" 'waiting up to 2s'
+    has   'then says so, with real names'  "$IFO2" "no interface named 'nosuch0'"
+    hasnt 'without inventing one'          "$IFO2" "RESOLVED=$IFREAL"
+    rm -f "$IFSH"
+else
+    printf '  (no network card on this host — resolver checked by source only)\n'
+fi
 NA=$(mktemp -d /tmp/spore-netauto.XXXXXX)/s; cp -r "$EX" "$NA"
 printf 'NET_HOSTNAME=h\nNET_IFACE=auto\nNET_MODE=dhcp\n' > "$NA/modules/net.conf"
 NAP=$(alpine "$SPORE" --spore "$NA" plan 2>&1)
@@ -857,7 +888,7 @@ has 'the unit is an openrc script'    "$SEEDUNIT" '#!/sbin/openrc-run'
 has 'and runs the seed'               "$SEEDUNIT" '/usr/local/lib/spore/seed-run'
 # after, not need: a machine with no network still has a spore worth applying as
 # far as it can get, and a hard dependency would stop it before it tried.
-has 'ordered after mounts and network' "$SEEDUNIT" 'after localmount net'
+has 'ordered after mounts and drivers'  "$SEEDUNIT" 'after localmount hwdrivers modules net'
 hasnt 'without depending on them'      "$SEEDUNIT" 'need localmount'
 has 'hook discovers a spore on media' "$SEEDSTART" '/media/*/spore'
 has 'hook scans block devices too'    "$SEEDSTART" '/dev/sd'

@@ -84,6 +84,11 @@ firewall_plan() {
          compared against the spore."
         fw_enable="mkdir -p /etc/awall/optional
 $(render_iface_resolve "$fw_iface" 'FW_IFACE in modules/firewall.conf')
+if [ -z \"\$iface\" ]; then
+    echo 'spore: refusing to write a zone that names no interface — it would' >&2
+    echo 'spore: match nothing, drop nothing, and still read as protection.' >&2
+    exit 1
+fi
 cat > /etc/awall/optional/spore.json <<'SPORE_FW_EOF'
 $fw_json
 SPORE_FW_EOF

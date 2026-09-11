@@ -96,10 +96,12 @@ nameserver $net_s"
     # correct and `status` stays honest.
     net_early="mkdir -p /etc/network
 $(render_iface_resolve "$net_iface")
+if [ -n \"\$iface\" ]; then
 cat > /etc/network/interfaces <<'SPORE_IFACE_EOF'
 $net_body
 SPORE_IFACE_EOF
-sed -i \"s/__SPORE_IFACE__/\$iface/g\" /etc/network/interfaces"
+sed -i \"s/__SPORE_IFACE__/\$iface/g\" /etc/network/interfaces
+fi"
     if [ -n "$net_resolv" ]; then
         net_early="$net_early
 cat > /etc/resolv.conf <<'SPORE_RESOLV_EOF'
@@ -111,7 +113,18 @@ SPORE_RESOLV_EOF"
     # start this early — and the whole thing fails with "cannot start networking
     # as fsck would not start". The interface then never comes up and the first
     # apk update dies of DNS, three layers away from the cause.
+    #
+    # Not having an interface is not a reason to abandon the machine. The parts
+    # of a spore that need no network — the user account, its password, the
+    # keyboard map — are exactly the parts you most want on a box you cannot
+    # reach over the network, so this says what went wrong and lets the rest of
+    # the run continue rather than dying here and leaving nothing at all.
     plan_netup net-up "$net_early
+if [ -z \"\$iface\" ]; then
+    echo 'spore: leaving the network alone. The rest of the spore still applies,' >&2
+    echo 'spore: but anything that needs to fetch a package will not.' >&2
+    exit 0
+fi
 if command -v ifup >/dev/null 2>&1; then
     ifdown -a 2>/dev/null || true
     ifup -a || true
