@@ -19,12 +19,24 @@ system_plan() {
         case $sy_keymap in
             *[!A-Za-z0-9_\ -]*) die "system: SYSTEM_KEYMAP may only contain letters, digits, - and _" ;;
         esac
+        # Both words, or neither. Given only a layout, setup-keymap asks for the
+        # variant — and nobody is there to answer on a machine that is booting
+        # itself, so it reads EOF and asks again, and again, with no console to
+        # say so on. Caught here, where there is still somebody to tell.
+        sy_n=0
+        for sy_w in $sy_keymap; do sy_n=$((sy_n + 1)); done
+        [ "$sy_n" = 2 ] ||
+            die "system: SYSTEM_KEYMAP is '<layout> <variant>' — 'br br-abnt2', 'us us',
+        'de de-nodeadkeys'. Got '$sy_keymap', which would leave setup-keymap
+        waiting for a variant on a machine with nobody at the keyboard."
         plan_pkg kbd-bkeymaps
+        # And stdin closed anyway, so a version of alpine-conf that asks
+        # something we did not anticipate fails rather than hanging the boot.
         plan_firstboot system-keymap "if ! command -v setup-keymap >/dev/null 2>&1; then
     echo 'spore: setup-keymap is missing (alpine-conf); cannot set the keymap' >&2
     exit 1
 fi
-setup-keymap $sy_keymap"
+setup-keymap $sy_keymap < /dev/null"
     fi
 
     # A diskless box with no battery-backed clock comes up in 1970, and a clock
@@ -40,7 +52,7 @@ setup-keymap $sy_keymap"
     echo 'spore: setup-ntp is missing (alpine-conf); cannot set up time sync' >&2
     exit 1
 fi
-setup-ntp $sy_ntp"
+setup-ntp $sy_ntp < /dev/null"
     fi
 
     sy_tz=$(mconf SYSTEM_TIMEZONE '')
@@ -53,6 +65,6 @@ setup-ntp $sy_ntp"
     echo 'spore: setup-timezone is missing (alpine-conf); cannot set the timezone' >&2
     exit 1
 fi
-setup-timezone -z '$sy_tz'"
+setup-timezone -z '$sy_tz' < /dev/null"
     fi
 }

@@ -1013,6 +1013,25 @@ check 'the static address is recorded' "$(grep '^NET_ADDRESS=' "$WZS/modules/net
                                        'NET_ADDRESS=192.168.1.50'
 check 'the keymap, as setup-keymap takes it' "$(grep '^SYSTEM_KEYMAP=' "$WZS/modules/system.conf")" \
                                        'SYSTEM_KEYMAP="br br-abnt2"'
+# The wizard must not be able to write a keymap that hangs the boot, so a layout
+# without its variant is asked again rather than accepted.
+WZK=$(mktemp -d /tmp/spore-wizkm.XXXXXX)
+printf '%s\n' 'kmhost' 'br' 'br br-abnt2' 'UTC' 'none' 'auto' 'dhcp' '' \
+    'tester' 'n' '' 'n' |
+    env HOME="$WZK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZK/out" 2>&1 || true
+has   'a layout with no variant is asked again' "$(cat "$WZK/out")" 'both words: the layout and its variant'
+check 'and the second answer is kept' \
+    "$(grep '^SYSTEM_KEYMAP=' "$WZK/spores/kmhost/spore/modules/system.conf")" \
+    'SYSTEM_KEYMAP="br br-abnt2"'
+rm -rf "$WZK"
+# And there has to be a way to say "leave it alone" that is not a blank line,
+# because a blank line is how you take the default.
+WZD=$(mktemp -d /tmp/spore-wizdash.XXXXXX)
+printf '%s\n' 'dashhost' '-' 'UTC' 'none' 'auto' 'dhcp' '' 'tester' 'n' '' 'n' |
+    env HOME="$WZD" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZD/out" 2>&1 || true
+check 'a dash leaves the layout alone' \
+    "$(grep -c '^SYSTEM_KEYMAP=' "$WZD/spores/dashhost/spore/modules/system.conf" || true)" 0
+rm -rf "$WZD"
 check 'the timezone'                  "$(grep '^SYSTEM_TIMEZONE=' "$WZS/modules/system.conf")" \
                                        'SYSTEM_TIMEZONE=America/Sao_Paulo'
 check 'the account'                   "$(grep '^USERS=' "$WZS/modules/users.conf")" 'USERS="tester"'
@@ -1030,6 +1049,26 @@ else
 fi
 has 'keymap set through setup-keymap'   "$WZP" 'firstboot  system-keymap'
 has 'timezone through setup-timezone'   "$WZP" 'firstboot  system-timezone'
+# Given a layout with no variant, setup-keymap asks the machine for one — and
+# nobody answers on a box that is booting itself, so it reads EOF and asks
+# again, for ever, with no console to say so on.
+SYSRC=$(cat "$ROOT/modules/system.sh")
+has 'setup-keymap cannot be asked anything' "$SYSRC" 'setup-keymap $sy_keymap < /dev/null'
+has 'nor setup-timezone'                    "$SYSRC" "setup-timezone -z '\$sy_tz' < /dev/null"
+has 'nor setup-ntp'                         "$SYSRC" 'setup-ntp $sy_ntp < /dev/null'
+KM=$(mktemp -d /tmp/spore-keymap.XXXXXX)/s; cp -r "$EX" "$KM"
+printf 'SYSTEM_KEYMAP=br\n' > "$KM/modules/system.conf"
+printf 'FORMAT=1\nHOST=k\nMODULES="system"\n' > "$KM/spore.conf"
+if KMO=$(alpine "$SPORE" --spore "$KM" plan 2>&1); then
+    t_fail 'a layout with no variant is refused' 'planned anyway'
+else
+    has 'a layout with no variant is refused' "$KMO" "Got 'br'"
+    has 'and says what it would have done'    "$KMO" 'nobody at the keyboard'
+fi
+printf 'SYSTEM_KEYMAP=br br-abnt2\n' > "$KM/modules/system.conf"
+KMO2=$(alpine "$SPORE" --spore "$KM" plan 2>&1)
+has 'both words plan fine'                "$KMO2" 'firstboot  system-keymap'
+rm -rf "$KM"
 has 'the network comes up before apk'   "$WZP" 'netup      net-up'
 # setup-alpine asks for both of these, and for good reason: the default CDN can
 # be far away, and a box with no battery-backed clock boots in 1970, where every

@@ -99,9 +99,21 @@ INTRO
 
     # --- console -------------------------------------------------------------
     wz_head 'Console'
-    wz_say 'Keyboard layout, as setup-keymap takes it: "us us", "br br-abnt2",'
-    wz_say '"de de-nodeadkeys". Empty leaves the layout alone.'
-    wz_ask wz_keymap 'Keyboard' 'us us'
+    wz_say 'Keyboard layout and variant, both words, as setup-keymap takes them:'
+    wz_say '"us us", "br br-abnt2", "de de-nodeadkeys". A dash leaves it alone.'
+    # Both words or none. Given a layout alone, setup-keymap asks the machine
+    # for the variant, and on a box that is booting itself nobody answers — it
+    # reads EOF and asks again for ever, with no console to say so on. So it is
+    # refused here, where there is somebody to tell.
+    while :; do
+        wz_ask wz_keymap 'Keyboard' 'us us'
+        [ "$wz_keymap" = - ] && { wz_keymap=''; break; }
+        wz_n=0
+        for wz_w in $wz_keymap; do wz_n=$((wz_n + 1)); done
+        [ "$wz_n" = 2 ] && break
+        wz_say '  both words: the layout and its variant, like "br br-abnt2".'
+        wz_say '  A dash on its own leaves the layout alone.'
+    done
     wz_say ''
     wz_say 'Timezone as a zone name — America/Sao_Paulo, Europe/Lisbon, UTC.'
     wz_ask wz_tz 'Timezone' 'UTC'
@@ -209,7 +221,13 @@ CONF
 
     {
         printf '# As setup-keymap takes them: "<layout> <variant>".\n'
-        printf 'SYSTEM_KEYMAP=%s\n' "\"$wz_keymap\""
+        # Absent, not empty: "leave the layout alone" should read that way in
+        # the file too, rather than as a setting someone forgot to fill in.
+        if [ -n "$wz_keymap" ]; then
+            printf 'SYSTEM_KEYMAP=%s\n' "\"$wz_keymap\""
+        else
+            printf '# SYSTEM_KEYMAP="br br-abnt2"\n'
+        fi
         printf 'SYSTEM_TIMEZONE=%s\n' "$wz_tz"
         printf 'SYSTEM_NTP=%s\n' "$wz_ntp"
     } > "$SPORE_DIR/modules/system.conf"
