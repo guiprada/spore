@@ -124,6 +124,36 @@ inspect_medium() {
             printf '  initramfs could not read the data partition; put a copy here:\n' >&2
             printf '      sudo %s install <dir> %s\n' "$SPORE_SELF" "$im2_target" >&2
         fi
+        # Whether media's rewrite actually reached this medium. A boot that
+        # still says "no such device" and still shows no kernel output is
+        # otherwise indistinguishable from a rewrite that never ran, matched
+        # nothing, or patched a file the firmware does not read.
+        im2_cfgs=0 im2_serial=0 im2_isolabel=0
+        find "$SPORE_WORK/look1" -maxdepth 5 -type f \
+             \( -name '*.cfg' -o -name '*.conf' \) 2>/dev/null > "$SPORE_WORK/espcfgs" || true
+        while IFS= read -r im2_c; do
+            [ -n "$im2_c" ] || continue
+            grep -qE '(^|[ \t])(linux|linuxefi|linux16|kernel|append|APPEND)[ \t]' "$im2_c" 2>/dev/null ||
+                grep -q 'search' "$im2_c" 2>/dev/null || continue
+            im2_cfgs=$((im2_cfgs + 1))
+            grep -q 'console=ttyS0' "$im2_c" 2>/dev/null && im2_serial=$((im2_serial + 1))
+            grep -qE 'search.*(alpine-std|alpine-ext|[0-9]+\.[0-9]+\.[0-9]+ )' "$im2_c" 2>/dev/null &&
+                im2_isolabel=$((im2_isolabel + 1))
+        done < "$SPORE_WORK/espcfgs"
+        printf '  boot configs: %s found, %s with a serial console' "$im2_cfgs" "$im2_serial" >&2
+        [ "$im2_isolabel" -gt 0 ] && printf ', %s still searching for the ISO label' "$im2_isolabel" >&2
+        printf '\n' >&2
+        if [ "$im2_cfgs" -gt 0 ] && [ "$im2_serial" = 0 ]; then
+            warn "none of them carry console=ttyS0, so this medium was written
+         before that rewrite existed, or the rewrite matched nothing. Re-run
+         \`spore media\` and watch for the line naming how many it changed."
+        fi
+        if [ "$im2_cfgs" = 0 ]; then
+            warn "no boot configuration files here at all. This image's grub
+         config is embedded in its EFI binary, which nothing on this side can
+         rewrite — the failing label search cannot be fixed by editing files."
+        fi
+
         for im2_stray in "$SPORE_WORK/look1"/*.apkovl.tar.gz; do
             case $im2_stray in */spore-seed.apkovl.tar.gz|*'*'*) continue ;; esac
             warn "$(basename "$im2_stray") is also here, from the ISO. The initramfs
