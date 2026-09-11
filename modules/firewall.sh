@@ -13,7 +13,13 @@ firewall_meta() {
 }
 
 firewall_plan() {
-    fw_iface=$(mconf FW_IFACE eth0)
+    # Defaults to whatever net was told, so the two cannot silently disagree: a
+    # zone naming an interface this machine does not have matches nothing, the
+    # drop rule never applies, the catch-all accept does, and the box believes
+    # it is firewalled while it is wide open.
+    fw_iface=$(mconf FW_IFACE "$(conf_get "$SPORE_DIR/modules/net.conf" NET_IFACE auto)")
+    fw_auto=no
+    [ "$fw_iface" = auto ] && fw_auto=yes
 
     plan_pkg awall
     plan_pkg iptables
@@ -40,10 +46,12 @@ firewall_plan() {
         plan_note 'firewall: no module declared any ports — policy drops all inbound'
     fi
 
-    plan_file /etc/awall/optional/spore.json 0644 "{
+    fw_zone_if=$fw_iface
+    [ "$fw_auto" = yes ] && fw_zone_if=__SPORE_IFACE__
+    fw_json="{
   \"description\": \"managed by spore\",
 
-  \"variable\": { \"spore_if\": \"$fw_iface\" },
+  \"variable\": { \"spore_if\": \"$fw_zone_if\" },
 
   \"zone\": {
     \"world\": { \"iface\": \"\$spore_if\" }
@@ -63,7 +71,26 @@ firewall_plan() {
   ]
 }"
 
-    plan_firstboot awall-enable 'awall enable spore'
+    # A named interface is a fact about the machine, so the policy can be written
+    # now and compared later. `auto` cannot be: its zone depends on hardware this
+    # planner has never seen, so the file is written on the target instead — a
+    # file action would report drift for ever.
+    if [ "$fw_auto" = no ]; then
+        plan_file /etc/awall/optional/spore.json 0644 "$fw_json"
+        fw_enable='awall enable spore'
+    else
+        plan_note "firewall: FW_IFACE=auto, so the zone is filled in on the machine
+         from whatever interface it turns out to have, and the policy is not
+         compared against the spore."
+        fw_enable="mkdir -p /etc/awall/optional
+$(render_iface_resolve "$fw_iface" 'FW_IFACE in modules/firewall.conf')
+cat > /etc/awall/optional/spore.json <<'SPORE_FW_EOF'
+$fw_json
+SPORE_FW_EOF
+sed -i \"s/__SPORE_IFACE__/\$iface/g\" /etc/awall/optional/spore.json
+awall enable spore"
+    fi
+    plan_firstboot awall-enable "$fw_enable"
     plan_svc iptables default on
 
     if mconf_bool FW_ACTIVATE no; then

@@ -36,3 +36,45 @@ sshd_include_supported() {
     [ -f "$ssi_f" ] &&
         grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$ssi_f"
 }
+
+# render_iface_resolve <name> [where-it-is-configured]
+# Prints shell that leaves $iface holding a real interface name on the target.
+#
+# An interface name is the one piece of a spore that cannot be known in advance:
+# predictable naming gives eth0 on one box and enp3s0 on the next. `auto` defers
+# the choice to the machine — preferring eth0 when it exists, so a spore that
+# used to name it explicitly keeps getting it. Any other name is checked here,
+# because a name that does not exist means no network at all, forever, on a
+# machine nobody is standing in front of, and it surfaces three layers later as
+# a mirror that will not resolve rather than as the one wrong word it is.
+render_iface_resolve() {
+    printf "iface='%s'\nifacekey='%s'\n" \
+        "$1" "${2:-NET_IFACE in modules/net.conf}"
+    cat <<'RIR'
+if [ "$iface" = auto ]; then
+    if [ -e /sys/class/net/eth0 ]; then
+        iface=eth0
+    else
+        iface=$(for i in /sys/class/net/*; do
+            n=${i##*/}
+            [ "$n" = lo ] || printf '%s\n' "$n"
+        done | head -1)
+    fi
+    if [ -z "$iface" ]; then
+        echo 'spore: this machine has no network interface other than loopback.' >&2
+        exit 1
+    fi
+    echo "spore: using interface $iface"
+fi
+if [ ! -e "/sys/class/net/$iface" ]; then
+    echo "spore: this machine has no interface named '$iface'. It has:" >&2
+    for i in /sys/class/net/*; do
+        n=${i##*/}
+        [ "$n" = lo ] || echo "spore:   $n" >&2
+    done
+    echo "spore: set $ifacekey to one of those, or to auto to take" >&2
+    echo 'spore: whichever one this machine turns out to have.' >&2
+    exit 1
+fi
+RIR
+}

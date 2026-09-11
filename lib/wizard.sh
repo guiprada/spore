@@ -103,7 +103,11 @@ INTRO
 
     # --- network -------------------------------------------------------------
     wz_head 'Network'
-    wz_iface=$(wz_ask 'Interface' 'eth0')
+    wz_say 'Interface name. auto takes whichever card the machine turns out to'
+    wz_say 'have, which is almost always right from here: predictable naming gives'
+    wz_say 'eth0 on one box and enp3s0 on the next, and a name that does not exist'
+    wz_say 'means no network at all on a machine nobody is standing in front of.'
+    wz_iface=$(wz_ask 'Interface' 'auto')
     wz_mode=$(wz_ask 'Address: dhcp or static' 'dhcp')
     wz_addr='' wz_mask='' wz_gw='' wz_dns=''
     case $wz_mode in

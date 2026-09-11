@@ -291,6 +291,29 @@ has 'the interface is configured first of all' "$PLAN" 'netup      net-up'
 NETSRC=$(cat "$ROOT/modules/net.sh")
 has 'brought up with ifup'          "$NETSRC" 'ifup -a'
 has 'and the service is a fallback' "$NETSRC" 'elif [ -x /etc/init.d/networking ]'
+# An interface name is the one thing a spore cannot know in advance: predictable
+# naming gives eth0 on one box and enp3s0 on the next, and a name that does not
+# exist means no network at all, forever, on a machine nobody is standing at.
+IFSRC=$(cat "$ROOT/lib/render.sh")
+has 'a missing interface is named'   "$IFSRC" 'this machine has no interface named'
+has 'along with the ones it has'     "$IFSRC" '/sys/class/net/'
+has 'and eth0 wins when it is there' "$IFSRC" '[ -e /sys/class/net/eth0 ]'
+NA=$(mktemp -d /tmp/spore-netauto.XXXXXX)/s; cp -r "$EX" "$NA"
+printf 'NET_HOSTNAME=h\nNET_IFACE=auto\nNET_MODE=dhcp\n' > "$NA/modules/net.conf"
+NAP=$(alpine "$SPORE" --spore "$NA" plan 2>&1)
+has   'auto is resolved on the machine'  "$NAP" 'NET_IFACE=auto'
+has   'and still brought up first'       "$NAP" 'netup      net-up'
+# A file whose content depends on hardware this planner has never seen would
+# report drift for ever, so auto does not claim to own one.
+hasnt 'without claiming to own the file' "$NAP" 'file       /etc/network/interfaces'
+# A named interface is a fact, so that file is written and compared as usual.
+printf 'NET_HOSTNAME=h\nNET_IFACE=enp3s0\nNET_MODE=dhcp\n' > "$NA/modules/net.conf"
+NAN=$(alpine "$SPORE" --spore "$NA" plan 2>&1)
+has 'a named interface still owns it'    "$NAN" 'file       /etc/network/interfaces'
+NAR=$(mktemp -d /tmp/spore-netautoroot.XXXXXX)
+alpine "$SPORE" --spore "$NA" --root "$NAR" apply >/dev/null 2>&1
+has 'and carries the name given'         "$(cat "$NAR/etc/network/interfaces")" 'auto enp3s0'
+rm -rf "$NA" "$NAR"
 NS=$(mktemp -d /tmp/spore-netstatic.XXXXXX)/s; cp -r "$EX" "$NS"
 cat > "$NS/modules/net.conf" <<'NETC'
 NET_HOSTNAME=coisas
@@ -364,6 +387,22 @@ if command -v python3 >/dev/null 2>&1; then
     if python3 -c "import json,sys; json.load(open('$R/etc/awall/optional/spore.json'))" 2>/dev/null
     then t_ok 'awall policy is valid JSON'; else t_fail 'awall policy is valid JSON'; fi
 fi
+# A zone naming an interface the machine does not have matches nothing: the drop
+# rule never applies, the catch-all accept does, and the box reports a firewall
+# it does not have. So the interface follows net rather than being typed twice,
+# and `auto` is settled on the machine like it is there.
+FA=$(mktemp -d /tmp/spore-fwauto.XXXXXX)/s; cp -r "$EX" "$FA"
+printf 'NET_HOSTNAME=h\nNET_IFACE=enp3s0\nNET_MODE=dhcp\n' > "$FA/modules/net.conf"
+: > "$FA/modules/firewall.conf"
+FAR=$(mktemp -d /tmp/spore-fwroot.XXXXXX)
+alpine "$SPORE" --spore "$FA" --root "$FAR" apply >/dev/null 2>&1
+has 'firewall follows the net interface' \
+    "$(cat "$FAR/etc/awall/optional/spore.json")" '"spore_if": "enp3s0"'
+printf 'NET_HOSTNAME=h\nNET_IFACE=auto\nNET_MODE=dhcp\n' > "$FA/modules/net.conf"
+FAA=$(alpine "$SPORE" --spore "$FA" plan 2>&1)
+hasnt 'auto does not own the policy'     "$FAA" 'file       /etc/awall/optional/spore.json'
+has   'it is written on the machine'     "$FAA" 'firewall: FW_IFACE=auto'
+rm -rf "$FA" "$FAR"
 
 # ---------------------------------------------------------- idempotence -----
 section 'idempotence'
