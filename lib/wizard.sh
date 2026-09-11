@@ -13,26 +13,36 @@
 # about, and no others. An example full of volumes and a file server you did not
 # ask for is a worse starting point than a short file you understand.
 
+# The prompts assign into a variable you name rather than printing their answer.
+# That is not a style preference. Read through `$( )` they ran in a subshell, and
+# a subshell cannot stop the wizard — `die` there exits only itself — so when
+# stdin ended every prompt went on silently handing back its default, for ever.
+# Any loop that rejects its own default then spins until the terminal is killed,
+# which is exactly what `while [ -z "$wz_addr" ]` with an empty default did.
 wz_ask() {
-    # wz_ask <prompt> <default>
-    if [ -n "${2-}" ]; then
-        printf '%s%s%s [%s]: ' "$_c_bold" "$1" "$_c_reset" "$2" >&2
+    # wz_ask <var> <prompt> [default]
+    if [ -n "${3-}" ]; then
+        printf '%s%s%s [%s]: ' "$_c_bold" "$2" "$_c_reset" "$3" >&2
     else
-        printf '%s%s%s: ' "$_c_bold" "$1" "$_c_reset" >&2
+        printf '%s%s%s: ' "$_c_bold" "$2" "$_c_reset" >&2
     fi
-    if IFS= read -r wz_a; then :; else wz_a=''; fi
-    [ -n "$wz_a" ] || wz_a=${2-}
-    printf '%s' "$wz_a"
+    if IFS= read -r wz_a; then :; else
+        printf '\n' >&2
+        die "input ended at \"$2\", so nothing was written.
+             Answer at a terminal, or feed every answer on stdin."
+    fi
+    [ -n "$wz_a" ] || wz_a=${3-}
+    eval "$1=\$wz_a"
 }
 
 wz_yn() {
-    # wz_yn <prompt> <yes|no default>
-    wz_d=$2
+    # wz_yn <var> <prompt> <y|n default>
+    wz_d=$3
     while :; do
-        wz_r=$(wz_ask "$1 (y/n)" "$wz_d")
+        wz_ask wz_r "$2 (y/n)" "$wz_d"
         case $wz_r in
-            y|Y|yes|YES|Yes) printf 'yes'; return 0 ;;
-            n|N|no|NO|No)    printf 'no';  return 0 ;;
+            y|Y|yes|YES|Yes) eval "$1=yes"; return 0 ;;
+            n|N|no|NO|No)    eval "$1=no";  return 0 ;;
             *) printf '  answer y or n\n' >&2 ;;
         esac
     done
@@ -75,31 +85,30 @@ INTRO
     # --- identity ------------------------------------------------------------
     wz_head 'The machine'
     while :; do
-        wz_host=$(wz_ask 'Hostname' 'alpine')
+        wz_ask wz_host 'Hostname' 'alpine'
         case $wz_host in
             ''|*[!A-Za-z0-9_-]*) wz_say '  letters, digits, - and _ only' ;;
             *) break ;;
         esac
     done
-    # Not asked. The hostname already determines it, and a path typed at a
-    # prompt is one more thing to get wrong for no decision gained — pass one as
-    # A directory named on the command line is a destination, so it is checked
-    # now rather than after fifteen questions. Without one the machine goes onto
-    # the disk, and there is nothing on this workstation to collide with.
+    # Where it goes is not asked. A directory named on the command line is a
+    # destination, so it is checked now rather than after fifteen questions;
+    # without one the machine goes straight onto the disk, and there is nothing
+    # on this workstation for it to collide with.
     [ -z "$wz_dir" ] || wz_claim_dir "$wz_dir"
 
     # --- console -------------------------------------------------------------
     wz_head 'Console'
     wz_say 'Keyboard layout, as setup-keymap takes it: "us us", "br br-abnt2",'
     wz_say '"de de-nodeadkeys". Empty leaves the layout alone.'
-    wz_keymap=$(wz_ask 'Keyboard' 'us us')
+    wz_ask wz_keymap 'Keyboard' 'us us'
     wz_say ''
     wz_say 'Timezone as a zone name — America/Sao_Paulo, Europe/Lisbon, UTC.'
-    wz_tz=$(wz_ask 'Timezone' 'UTC')
+    wz_ask wz_tz 'Timezone' 'UTC'
     wz_say ''
     wz_say 'Time sync. A machine with no battery-backed clock boots in 1970, and'
     wz_say 'a clock that far out makes every certificate look not-yet-valid.'
-    wz_ntp=$(wz_ask 'NTP client: chrony, busybox, openntpd or none' 'chrony')
+    wz_ask wz_ntp 'NTP client: chrony, busybox, openntpd or none' 'chrony'
 
     # --- network -------------------------------------------------------------
     wz_head 'Network'
@@ -107,15 +116,15 @@ INTRO
     wz_say 'have, which is almost always right from here: predictable naming gives'
     wz_say 'eth0 on one box and enp3s0 on the next, and a name that does not exist'
     wz_say 'means no network at all on a machine nobody is standing in front of.'
-    wz_iface=$(wz_ask 'Interface' 'auto')
-    wz_mode=$(wz_ask 'Address: dhcp or static' 'dhcp')
+    wz_ask wz_iface 'Interface' 'auto'
+    wz_ask wz_mode 'Address: dhcp or static' 'dhcp'
     wz_addr='' wz_mask='' wz_gw='' wz_dns=''
     case $wz_mode in
         static)
-            while [ -z "$wz_addr" ]; do wz_addr=$(wz_ask 'IP address' ''); done
-            wz_mask=$(wz_ask 'Netmask' '255.255.255.0')
-            wz_gw=$(wz_ask 'Gateway' '')
-            wz_dns=$(wz_ask 'DNS servers, space separated' "${wz_gw:-1.1.1.1}")
+            while [ -z "$wz_addr" ]; do wz_ask wz_addr 'IP address' ''; done
+            wz_ask wz_mask 'Netmask' '255.255.255.0'
+            wz_ask wz_gw 'Gateway' ''
+            wz_ask wz_dns 'DNS servers, space separated' "${wz_gw:-1.1.1.1}"
             ;;
         *) wz_mode=dhcp ;;
     esac
@@ -123,30 +132,35 @@ INTRO
     wz_say 'Package mirror. Blank keeps whatever the image came with, which is'
     wz_say 'the global CDN — a nearer one is usually much faster.'
     wz_say 'For example: https://mirror.ufpr.br/alpine'
-    wz_mirror=$(wz_ask 'Mirror URL' '')
+    wz_ask wz_mirror 'Mirror URL' ''
 
     # --- account -------------------------------------------------------------
     wz_head 'Account'
     wz_say 'root already exists and is not created here. This is the account you'
     wz_say 'log in as.'
+    # Whoever is running this, unless that is root or something a username
+    # cannot be — offering back a default the next line will reject is how a
+    # prompt becomes unanswerable.
+    wz_sug=$(bootstrap_user)
+    case $wz_sug in ''|root|*[!a-z0-9_-]*) wz_sug='' ;; esac
     while :; do
-        wz_user=$(wz_ask 'Username' "$(bootstrap_user)")
+        wz_ask wz_user 'Username' "$wz_sug"
         case $wz_user in
             ''|root|*[!a-z0-9_-]*) wz_say '  lowercase letters, digits, - and _; not root' ;;
             *) break ;;
         esac
     done
-    wz_doas=$(wz_yn "May $wz_user use doas to become root?" y)
+    wz_yn wz_doas "May $wz_user use doas to become root?" y
 
     wz_key=$(bootstrap_pubkey)
     if [ -n "$wz_key" ]; then
-        wz_key=$(wz_ask 'Public key to install' "$wz_key")
+        wz_ask wz_key 'Public key to install' "$wz_key"
     else
         wz_say ''
         wz_say 'No public key found in your ~/.ssh. Without one, and with root'
         wz_say 'login and password auth off, nothing can reach this machine over'
         wz_say 'the network. Make one with: ssh-keygen -t ed25519'
-        wz_key=$(wz_ask 'Public key to install (blank to skip)' '')
+        wz_ask wz_key 'Public key to install (blank to skip)' ''
     fi
     if [ -n "$wz_key" ] && [ ! -f "$wz_key" ]; then
         die "no such file: $wz_key"
@@ -155,14 +169,14 @@ INTRO
     # --- ssh -----------------------------------------------------------------
     wz_head 'Remote access'
     if [ -n "$wz_key" ]; then
-        wz_ssh=$(wz_yn 'Enable ssh?' y)
+        wz_yn wz_ssh 'Enable ssh?' y
     else
         wz_say 'ssh cannot be enabled without a key for the account: nothing'
         wz_say 'would be able to log in, and spore refuses to build that.'
         wz_ssh=no
     fi
     wz_port=22
-    [ "$wz_ssh" = yes ] && wz_port=$(wz_ask 'ssh port' 22)
+    [ "$wz_ssh" = yes ] && wz_ask wz_port 'ssh port' 22
 
     # --- write ---------------------------------------------------------------
     # Built in a staging area first, so where it ends up is still an open
@@ -343,7 +357,8 @@ wz_claim_dir() {
         wz_say 'including its identity, so every password and host key sealed'
         wz_say 'into it becomes undecryptable.'
     fi
-    [ "$(wz_yn 'Replace it?' n)" = yes ] ||
+    wz_yn wc_go 'Replace it?' n
+    [ "$wc_go" = yes ] ||
         die "left $wc_d alone.
         To change one thing, edit the file rather than starting again:
             \$EDITOR $wc_d/spore/modules/<module>.conf
@@ -380,7 +395,8 @@ wz_disk() {
     wz_head 'The disk'
     wz_say 'A machine lives on the disk it boots from — that is where this one'
     wz_say 'goes. Answer no and it is saved here instead, to write later.'
-    [ "$(wz_yn 'Write a USB stick now?' y)" = yes ] || return 1
+    wz_yn wd_go 'Write a USB stick now?' y
+    [ "$wd_go" = yes ] || return 1
 
     wd_sudo=''
     if [ "$(id -u)" != 0 ]; then
@@ -398,7 +414,7 @@ wz_disk() {
     # path slightly wrong is the most ordinary mistake here, and it should cost
     # a retry, not the answers to fifteen questions.
     while :; do
-        wd_dev=$(wz_ask 'Device (blank to skip)' '')
+        wz_ask wd_dev 'Device (blank to skip)' ''
         [ -n "$wd_dev" ] || return 1
         if [ ! -b "$wd_dev" ]; then
             warn "$wd_dev is not a block device — pick one from the list above."
@@ -423,10 +439,13 @@ wz_disk() {
     wz_say ''
     wd_found=$(wz_find_iso)
     while :; do
-        wd_iso=$(wz_ask 'Alpine ISO (blank to skip)' "$wd_found")
+        wz_ask wd_iso 'Alpine ISO (blank to skip)' "$wd_found"
         [ -n "$wd_iso" ] || return 1
         [ -f "$wd_iso" ] && break
         warn "no such file: $wd_iso"
+        # Never offer back a default that was just rejected: pressing Enter on
+        # it would ask the same unanswerable question for ever.
+        wd_found=''
     done
 
     # media does its own listing and makes the path be typed back, so the

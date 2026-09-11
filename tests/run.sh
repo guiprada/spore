@@ -1070,6 +1070,25 @@ check 'and the identity with them' \
 has 'and it says what is left to do' "$(cat "$WZH/out")" 'not on a disk yet'
 rm -rf "$WZH"
 
+# Input that runs out must stop the wizard, not make it spin. Read through $( ),
+# every prompt ran in a subshell that could not stop anything, so on EOF each one
+# silently handed back its default for ever — and a loop that rejects its own
+# default (an empty IP address, say) asked the same unanswerable question until
+# the terminal was killed. `timeout` is the assertion here: without it this test
+# never returns, which is exactly the bug.
+WZX=$(mktemp -d /tmp/spore-wizeof.XXXXXX)
+if command -v timeout >/dev/null 2>&1; then
+    WZXRC=0
+    printf '%s\n' 'eofhost' 'us us' 'UTC' 'none' 'eth0' 'static' |
+        env HOME="$WZX" SUDO_USER= SPORE_PUBKEY= \
+            timeout 20 "$SPORE" setup > "$WZX/out" 2>&1 || WZXRC=$?
+    check 'input running out ends the wizard' "$([ "$WZXRC" = 124 ] && echo spun || echo stopped)" stopped
+    has   'and says where it ran out'         "$(cat "$WZX/out")" 'input ended at "IP address"'
+else
+    printf '  (no timeout(1) here — the EOF loop guard was not exercised)\n'
+fi
+rm -rf "$WZX"
+
 # A mistyped device path costs a retry, not the answers to fifteen questions.
 WZR=$(mktemp -d /tmp/spore-wizretry.XXXXXX)
 printf '%s\n' 'retryhost' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' \
@@ -1269,6 +1288,14 @@ printf '=== spore seed ===\nno spore found on any attached filesystem.\n' \
     > "$IN/m/spore-seed.log"
 INL=$("$SPORE" inspect "$IN/m" 2>&1)
 has 'a log that exists is printed' "$INL" 'no spore found on any attached filesystem'
+# The log is newer than the seed here, so nothing is said about its age.
+hasnt 'a fresh log is not doubted'  "$INL" 'older than the seed'
+# A log from before the last install reads exactly like fresh evidence, and a
+# whole round can go into explaining a failure that has already been replaced.
+touch "$IN/m/spore-seed.apkovl.tar.gz"
+INA=$("$SPORE" inspect "$IN/m" 2>&1)
+has 'a log older than its seed is doubted' "$INA" 'older than the seed next to it'
+has 'and says to boot before reading it'   "$INA" 'Boot the machine again'
 if INE=$("$SPORE" inspect /nonexistent 2>&1); then
     t_fail 'a missing target is refused' 'succeeded'
 else has 'a missing target is refused' "$INE" 'no such device or directory'; fi

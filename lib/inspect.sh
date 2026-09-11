@@ -70,6 +70,16 @@ inspect_data() {
 
     printf '\nthe log\n\n' >&2
     if [ -f "$id_dir/spore-seed.log" ]; then
+        # A log older than the seed beside it is from a boot that ran different
+        # code. It reads exactly like fresh evidence, and a whole round can go
+        # into explaining a failure that has already been replaced.
+        if [ -f "$id_dir/spore-seed.apkovl.tar.gz" ] &&
+           [ "$id_dir/spore-seed.apkovl.tar.gz" -nt "$id_dir/spore-seed.log" ]; then
+            printf '  %sthis log is older than the seed next to it%s — it is from a boot\n' \
+                "$_c_red" "$_c_reset" >&2
+            printf '  before the last install, so it says nothing about the current\n' >&2
+            printf '  code. Boot the machine again before reading it.\n\n' >&2
+        fi
         sed 's/^/  /' "$id_dir/spore-seed.log" >&2
     else
         printf '  no spore-seed.log.\n' >&2
