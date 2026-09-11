@@ -1083,6 +1083,42 @@ case $TFW in
     *)            t_fail 'firmware discovery answers either way' "$TFW" ;;
 esac
 
+section 'inspect: read the evidence instead of inferring from symptoms'
+# Everything needed after a failed boot is on the data partition, and getting at
+# it meant mount, cat, umount by hand — so it did not get looked at.
+IN=$(mktemp -d /tmp/spore-inspect.XXXXXX)
+printf 'ssh-ed25519 AAAAInspectTest t@t\n' > "$IN/id.pub"
+SPORE_PUBKEY="$IN/id.pub" USER=tester "$SPORE" new inspecthost "$IN/m" >/dev/null 2>&1
+"$SPORE" seed "$IN/m/spore-seed.apkovl.tar.gz" >/dev/null 2>&1
+INO=$("$SPORE" inspect "$IN/m" 2>&1)
+has 'it names the host'              "$INO" 'inspecthost'
+has 'and whether the identity is there' "$INO" 'identity  present'
+# The one fact that distinguishes "the fix did not work" from "the fix never
+# reached the machine".
+has 'and whether the seed matches this tool' "$INO" 'matches this tool'
+has 'it says nothing was ever committed'     "$INO" 'never finished an apply'
+has 'and that there is no log to read'       "$INO" 'no spore-seed.log'
+
+# A seed built from a different tool is the difference between a fix that failed
+# and a fix that was never installed — which four rounds of this could not tell
+# apart.
+printf 'tampered\n' >> "$IN/m/spore/spore.conf"
+mkdir -p "$IN/fake/usr/local/lib/spore/lib" "$IN/fake/usr/local/lib/spore/bin"
+printf 'different\n' > "$IN/fake/usr/local/lib/spore/lib/seed.sh"
+(cd "$IN/fake" && tar -czf "$IN/m/spore-seed.apkovl.tar.gz" .)
+INS=$("$SPORE" inspect "$IN/m" 2>&1)
+has 'a mismatched seed is called out' "$INS" 'built from a different version'
+
+# A log present is printed verbatim — it is the thing being looked for.
+printf '=== spore seed ===\nno spore found on any attached filesystem.\n' \
+    > "$IN/m/spore-seed.log"
+INL=$("$SPORE" inspect "$IN/m" 2>&1)
+has 'a log that exists is printed' "$INL" 'no spore found on any attached filesystem'
+if INE=$("$SPORE" inspect /nonexistent 2>&1); then
+    t_fail 'a missing target is refused' 'succeeded'
+else has 'a missing target is refused' "$INE" 'no such device or directory'; fi
+rm -rf "$IN"
+
 section 'a device node with no medium is named as such'
 # An empty card-reader slot opens fine and reports size 0. sgdisk then fails
 # with "Error is 123", which is ENOMEDIUM and tells the reader nothing.

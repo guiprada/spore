@@ -25,6 +25,7 @@ Every command is the tool pointed at a spore:
 spore setup                            # asks, then offers to write the stick
 spore media /dev/sdX alpine.iso        # partition and write a boot medium
 spore try /dev/sdX                     # boot it in a VM, medium untouched
+spore inspect /dev/sdX                 # what is on it, and what it logged
 spore install DIR /dev/sdX             # put the machine on it
 
 spore apply          # converge this host to the spore
@@ -512,6 +513,24 @@ puts the NAT on the same numbering, so what runs is the spore you wrote.
 apt install qemu-system-x86 ovmf
 ```
 
+### When it comes up wrong
+
+```sh
+sudo spore inspect /dev/sdX
+```
+
+Everything worth knowing after a failed boot is on the data partition, and
+reading it by hand meant mount, cat, umount with three paths typed correctly — so
+it did not get read, and whole evenings went into inferring from symptoms
+instead. `inspect` prints it: what spore is on the medium, whether the identity
+is there, whether an apkovl was ever committed, the seed's own log verbatim, and
+a stray apkovl on the boot partition that may be winning over yours.
+
+It also answers the question that symptoms cannot: **whether the seed on that
+medium is the one this tool would build.** A fix made on the workstation reaches
+the machine only through `spore install`, and a boot that fails the same way
+afterwards is otherwise indistinguishable from a fix that never landed.
+
 ### On the target
 
 Boot it with UEFI. If the firmware will not offer the stick, it is almost always
@@ -593,7 +612,7 @@ already configured with nothing left to run.
 ./tests/run.sh
 ```
 
-335 checks, no Alpine and no container required: plan assertions, a synthetic-root
+345 checks, no Alpine and no container required: plan assertions, a synthetic-root
 apply, the external commands that would have run, idempotence, dry-run,
 status/diff drift detection, a host-shape matrix, blob checksum verification over
 `file://`, per-arch blob resolution, the bootstrap-before-packages ordering

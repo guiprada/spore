@@ -17,7 +17,7 @@ SPORE_LIB=$SPORE_PREFIX/lib
 SPORE_MODULES=$SPORE_PREFIX/modules
 
 for _f in core conf facts plan render blob secret module exec_live exec_print \
-          persist seed bootstrap wizard media try; do
+          persist seed bootstrap wizard media try inspect; do
     . "$SPORE_LIB/$_f.sh"
 done
 
@@ -33,6 +33,7 @@ commands:
   setup [DIR]       guided: asks, then writes a machine directory
   media DEV ISO     partition and write a boot medium (ERASES DEV)
   try DEV [write]   boot it in a VM; without `write` the medium is untouched
+  inspect DEV       what is on a medium, and what its last boot logged
   new NAME [DIR]    the same directory, without the questions
   install DIR DEV|DATA [BOOT]
                     write a machine onto a mounted data partition; naming the
@@ -382,6 +383,12 @@ cmd_try() {
     try_boot "$@"
 }
 
+cmd_inspect() {
+    [ $# -eq 1 ] || die "usage: spore inspect DEVICE|DIRECTORY"
+    spore_workspace
+    inspect_medium "$1"
+}
+
 cmd_media() {
     [ $# -eq 2 ] || die "usage: spore media /dev/sdX alpine-standard-*.iso"
     spore_workspace
@@ -392,6 +399,7 @@ case $SPORE_CMD in
     setup)   cmd_setup "$@" ;;
     media)   cmd_media "$@" ;;
     try)     cmd_try "$@" ;;
+    inspect) cmd_inspect "$@" ;;
     new)     cmd_new "$@" ;;
     install) cmd_install "$@" ;;
     init)    cmd_init "$@" ;;
