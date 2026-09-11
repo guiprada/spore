@@ -99,21 +99,16 @@ INTRO
 
     # --- console -------------------------------------------------------------
     wz_head 'Console'
-    wz_say 'Keyboard layout and variant, both words, as setup-keymap takes them:'
-    wz_say '"us us", "br br-abnt2", "de de-nodeadkeys". A dash leaves it alone.'
-    # Both words or none. Given a layout alone, setup-keymap asks the machine
-    # for the variant, and on a box that is booting itself nobody answers — it
-    # reads EOF and asks again for ever, with no console to say so on. So it is
-    # refused here, where there is somebody to tell.
-    while :; do
-        wz_ask wz_keymap 'Keyboard' 'us us'
-        [ "$wz_keymap" = - ] && { wz_keymap=''; break; }
-        wz_n=0
-        for wz_w in $wz_keymap; do wz_n=$((wz_n + 1)); done
-        [ "$wz_n" = 2 ] && break
-        wz_say '  both words: the layout and its variant, like "br br-abnt2".'
-        wz_say '  A dash on its own leaves the layout alone.'
-    done
+    wz_say 'Keyboard layout and variant, as setup-keymap takes them: "us us",'
+    wz_say '"br br-abnt2", "de de-nodeadkeys". A layout on its own is used as'
+    wz_say 'its own variant. A dash leaves the layout alone.'
+    # Asked once. This was a loop that re-asked until it got two words, which is
+    # a worse thing to be caught in than the problem it was avoiding — a prompt
+    # you cannot get past is not validation. A layout alone is a fine answer and
+    # system.sh doubles it; anything genuinely unusable is caught there, once,
+    # with a message instead of another question.
+    wz_ask wz_keymap 'Keyboard' 'us us'
+    [ "$wz_keymap" = - ] && wz_keymap=''
     wz_say ''
     wz_say 'Timezone as a zone name — America/Sao_Paulo, Europe/Lisbon, UTC.'
     wz_ask wz_tz 'Timezone' 'UTC'

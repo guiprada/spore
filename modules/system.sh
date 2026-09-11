@@ -19,16 +19,25 @@ system_plan() {
         case $sy_keymap in
             *[!A-Za-z0-9_\ -]*) die "system: SYSTEM_KEYMAP may only contain letters, digits, - and _" ;;
         esac
-        # Both words, or neither. Given only a layout, setup-keymap asks for the
-        # variant — and nobody is there to answer on a machine that is booting
-        # itself, so it reads EOF and asks again, and again, with no console to
-        # say so on. Caught here, where there is still somebody to tell.
+        # Given only a layout, setup-keymap asks the machine which variant it
+        # wants — and on a box that is booting itself nobody answers, so it
+        # reads EOF and asks again, for ever, with no console to say so on.
+        #
+        # Rather than refuse, which fails a whole apply over a keyboard, the
+        # layout becomes its own variant. That is all `us us` ever was, and a
+        # layout named twice is a real answer to that prompt, so the machine
+        # gets a keymap instead of a hang either way.
         sy_n=0
         for sy_w in $sy_keymap; do sy_n=$((sy_n + 1)); done
-        [ "$sy_n" = 2 ] ||
-            die "system: SYSTEM_KEYMAP is '<layout> <variant>' — 'br br-abnt2', 'us us',
-        'de de-nodeadkeys'. Got '$sy_keymap', which would leave setup-keymap
-        waiting for a variant on a machine with nobody at the keyboard."
+        case $sy_n in
+            1)  sy_keymap="$sy_keymap $sy_keymap"
+                plan_note "system: SYSTEM_KEYMAP named a layout and no variant, so
+         '$sy_keymap' is used. Name the variant — 'br br-abnt2' — if that is
+         not the one you meant." ;;
+            2)  : ;;
+            *)  die "system: SYSTEM_KEYMAP is '<layout> <variant>' — 'br br-abnt2',
+        'us us', 'de de-nodeadkeys'. Got '$sy_keymap'." ;;
+        esac
         plan_pkg kbd-bkeymaps
         # And stdin closed anyway, so a version of alpine-conf that asks
         # something we did not anticipate fails rather than hanging the boot.

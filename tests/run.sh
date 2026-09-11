@@ -1013,16 +1013,16 @@ check 'the static address is recorded' "$(grep '^NET_ADDRESS=' "$WZS/modules/net
                                        'NET_ADDRESS=192.168.1.50'
 check 'the keymap, as setup-keymap takes it' "$(grep '^SYSTEM_KEYMAP=' "$WZS/modules/system.conf")" \
                                        'SYSTEM_KEYMAP="br br-abnt2"'
-# The wizard must not be able to write a keymap that hangs the boot, so a layout
-# without its variant is asked again rather than accepted.
+# Asked once. A validation loop here was a prompt you could not get past, which
+# is a worse thing to be caught in than the problem it was avoiding.
 WZK=$(mktemp -d /tmp/spore-wizkm.XXXXXX)
-printf '%s\n' 'kmhost' 'br' 'br br-abnt2' 'UTC' 'none' 'auto' 'dhcp' '' \
-    'tester' 'n' '' 'n' |
+printf '%s\n' 'kmhost' 'br' 'UTC' 'none' 'auto' 'dhcp' '' 'tester' 'n' '' 'n' |
     env HOME="$WZK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZK/out" 2>&1 || true
-has   'a layout with no variant is asked again' "$(cat "$WZK/out")" 'both words: the layout and its variant'
-check 'and the second answer is kept' \
+check 'a layout alone is taken as given' \
     "$(grep '^SYSTEM_KEYMAP=' "$WZK/spores/kmhost/spore/modules/system.conf")" \
-    'SYSTEM_KEYMAP="br br-abnt2"'
+    'SYSTEM_KEYMAP="br"'
+check 'and the next question is the next one' \
+    "$(grep -c 'Keyboard \[' "$WZK/out")" 1
 rm -rf "$WZK"
 # And there has to be a way to say "leave it alone" that is not a blank line,
 # because a blank line is how you take the default.
@@ -1056,18 +1056,25 @@ SYSRC=$(cat "$ROOT/modules/system.sh")
 has 'setup-keymap cannot be asked anything' "$SYSRC" 'setup-keymap $sy_keymap < /dev/null'
 has 'nor setup-timezone'                    "$SYSRC" "setup-timezone -z '\$sy_tz' < /dev/null"
 has 'nor setup-ntp'                         "$SYSRC" 'setup-ntp $sy_ntp < /dev/null'
+# A layout on its own becomes its own variant, which is all `us us` ever was.
+# Refusing instead would fail a whole apply over a keyboard, and re-asking would
+# be a prompt you cannot get past — neither is better than a keymap.
 KM=$(mktemp -d /tmp/spore-keymap.XXXXXX)/s; cp -r "$EX" "$KM"
 printf 'SYSTEM_KEYMAP=br\n' > "$KM/modules/system.conf"
 printf 'FORMAT=1\nHOST=k\nMODULES="system"\n' > "$KM/spore.conf"
-if KMO=$(alpine "$SPORE" --spore "$KM" plan 2>&1); then
-    t_fail 'a layout with no variant is refused' 'planned anyway'
-else
-    has 'a layout with no variant is refused' "$KMO" "Got 'br'"
-    has 'and says what it would have done'    "$KMO" 'nobody at the keyboard'
-fi
+KMO=$(alpine "$SPORE" --spore "$KM" plan 2>&1)
+has 'a layout alone still plans'          "$KMO" 'firstboot  system-keymap'
+has 'and says it doubled the layout'      "$KMO" "so
+         'br br' is used"
 printf 'SYSTEM_KEYMAP=br br-abnt2\n' > "$KM/modules/system.conf"
 KMO2=$(alpine "$SPORE" --spore "$KM" plan 2>&1)
 has 'both words plan fine'                "$KMO2" 'firstboot  system-keymap'
+hasnt 'and are left alone'                "$KMO2" 'named a layout and no variant'
+# Three words is not a keymap in any reading, so that one is said plainly.
+printf 'SYSTEM_KEYMAP=a b c\n' > "$KM/modules/system.conf"
+if KMO3=$(alpine "$SPORE" --spore "$KM" plan 2>&1); then
+    t_fail 'three words is refused' 'planned anyway'
+else has 'three words is refused' "$KMO3" "Got 'a b c'"; fi
 rm -rf "$KM"
 has 'the network comes up before apk'   "$WZP" 'netup      net-up'
 # setup-alpine asks for both of these, and for good reason: the default CDN can
