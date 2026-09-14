@@ -275,6 +275,47 @@ else
 fi
 rmdir "$SD3" 2>/dev/null || true
 
+section 'lbu only remounts for a medium, so the destination has to be one'
+# lbu's commit:
+#     mnt="$LBU_BACKUPDIR"
+#     if [ -z "$mnt" ]; then
+#         mnt=/media/$media
+#         mount_once_rw "$mnt" || die "failed to mount $mnt"
+#     fi
+# LBU_BACKUPDIR takes the early path and nothing remounts, so on a read-only
+# boot medium the commit dies at `cp: can't create '…/x.apkovl.tar.gz.new':
+# Read-only file system` with the destination perfectly correct.
+LM=$(mktemp -d /tmp/spore-lbumedia.XXXXXX)/s; cp -r "$EX" "$LM"
+printf 'FORMAT=1\nHOST=k\nMODULES="apkovl"\n' > "$LM/spore.conf"
+lm_conf() {
+    printf 'APKOVL_BACKUPDIR=%s\n' "$1" > "$LM/modules/apkovl.conf"
+    LMR=$(mktemp -d /tmp/spore-lbur.XXXXXX)
+    env SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=yes SPORE_FACT_PERSIST=lbu \
+        SPORE_FACT_ARCH=x86_64 SPORE_FACT_ROOT=yes SPORE_FACT_ALPINE=3.20.0 \
+        SPORE_FACT_BOOT_MEDIA=yes \
+        "$SPORE" --spore "$LM" --root "$LMR" apply >/dev/null 2>&1 || true
+    grep -E '^LBU_' "$LMR/etc/lbu/lbu.conf" 2>/dev/null | tr -d '\n'
+    rm -rf "$LMR"
+}
+check 'a plain /media path becomes a medium' "$(lm_conf /media/sda2)" 'LBU_MEDIA=sda2'
+# The ones it cannot express stay a backup directory, and persist remounts for
+# those itself.
+check 'a subdirectory stays a directory'     "$(lm_conf /media/storage/data)" \
+      'LBU_BACKUPDIR=/media/storage/data'
+check 'and so does somewhere else entirely'  "$(lm_conf /srv/backups)" \
+      'LBU_BACKUPDIR=/srv/backups'
+rm -rf "$LM"
+
+# /proc/mounts lists mount points, not paths. Looking up /media/storage/data
+# finds nothing and concludes it is writable — and a subdirectory of a
+# read-only medium is the one case where the answer matters.
+PMO=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/persist.sh"
+       persist_mount_of /proc/self/fd )
+check 'the enclosing mount is found, not the path' "$PMO" /proc
+PMO2=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/persist.sh"
+        persist_mount_of /definitely/not/mounted/anywhere )
+check 'and an unmounted path lands on /' "$PMO2" /
+
 section 'the hostname is set on the kernel, not only in a file'
 # Nothing rereads /etc/hostname until the next boot, and lbu asks the kernel:
 # it names its overlay $(hostname).apkovl.tar.gz. A machine that has not been

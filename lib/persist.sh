@@ -5,6 +5,38 @@
 
 persist_backend() { fact_persist; }
 
+# The filesystem a path is on, which is not the path. /proc/mounts lists mount
+# points, so looking up /media/storage/data finds nothing at all and the caller
+# concludes it is writable — the one case where the answer matters is a
+# subdirectory of a read-only medium, and that is the case the naive lookup
+# cannot see.
+persist_mount_of() {
+    pmo_p=$1
+    while [ -n "$pmo_p" ]; do
+        if awk -v d="$pmo_p" '$2 == d { f = 1 } END { exit !f }' /proc/mounts 2>/dev/null
+        then
+            printf '%s' "$pmo_p"
+            return 0
+        fi
+        case $pmo_p in
+            /|'') break ;;
+        esac
+        pmo_p=${pmo_p%/*}
+        [ -n "$pmo_p" ] || pmo_p=/
+    done
+    printf '/'
+}
+
+# Is the filesystem under this path mounted read-only?
+persist_is_ro() {
+    pir_m=$(persist_mount_of "$1")
+    pir_o=$(awk -v d="$pir_m" '$2 == d { print $4; exit }' /proc/mounts 2>/dev/null || true)
+    case ",${pir_o}," in
+        *,ro,*) printf '%s' "$pir_m"; return 0 ;;
+    esac
+    return 1
+}
+
 # lbu refuses to commit when its destination holds an apkovl that is not the
 # one it is about to write:
 #
@@ -58,7 +90,6 @@ persist_clear_seed() {
     # inferred from the move having failed. A move can fail for permissions on a
     # perfectly writable filesystem, and "put it back read-only" would then be
     # taking away something nobody gave.
-    pcs_opts=$(awk -v d="$pcs_dir" '$2 == d { print $4; exit }' /proc/mounts 2>/dev/null || true)
     pcs_keep=$pcs_dir/spore-seed.superseded.tar.gz
 
     persist_move_seeds() {
@@ -73,14 +104,11 @@ persist_clear_seed() {
     pcs_moved=no
     if persist_move_seeds; then
         pcs_moved=yes
-    else
-        case ",${pcs_opts}," in
-            *,ro,*)
-                if mount -o remount,rw "$pcs_dir" 2>/dev/null; then
-                    persist_move_seeds && pcs_moved=yes
-                    mount -o remount,ro "$pcs_dir" 2>/dev/null || true
-                fi ;;
-        esac
+    elif pcs_mp=$(persist_is_ro "$pcs_dir"); then
+        if mount -o remount,rw "$pcs_mp" 2>/dev/null; then
+            persist_move_seeds && pcs_moved=yes
+            mount -o remount,ro "$pcs_mp" 2>/dev/null || true
+        fi
     fi
 
     if [ "$pcs_moved" = yes ]; then
@@ -127,7 +155,39 @@ persist_commit() {
 
             persist_clear_seed "$pc_dest"
 
-            run lbu commit
+            # lbu remounts read-write only when it was given a medium:
+            #
+            #     mnt="$LBU_BACKUPDIR"
+            #     if [ -z "$mnt" ]; then
+            #         mnt=/media/$media
+            #         mount_once_rw "$mnt" || die "failed to mount $mnt"
+            #     fi
+            #
+            # With LBU_BACKUPDIR it takes the early path and nothing remounts,
+            # so on a read-only boot medium the commit dies at the copy with the
+            # destination perfectly correct. apkovl turns any plain /media/<name>
+            # into LBU_MEDIA precisely so lbu handles it; this is for the ones it
+            # cannot — a subdirectory, or somewhere outside /media entirely.
+            pc_ro=no pc_mp=''
+            if mutate; then
+                pc_bdir=$(conf_get "$(rootpath /etc/lbu/lbu.conf)" LBU_BACKUPDIR '')
+                if [ -n "$pc_bdir" ] && pc_mp=$(persist_is_ro "$(rootpath "$pc_bdir")"); then
+                    mount -o remount,rw "$pc_mp" 2>/dev/null && pc_ro=yes
+                fi
+            fi
+
+            if [ "$pc_ro" = yes ]; then
+                # Put back whether or not the commit worked. A stick left
+                # mounted rw is a corruption risk at the next power cut, and
+                # the failure path is exactly where nobody looks.
+                runlog 'lbu commit'
+                if lbu commit; then pc_rc=0; else pc_rc=$?; fi
+                mount -o remount,ro "$pc_mp" 2>/dev/null || true
+                [ "$pc_rc" = 0 ] ||
+                    die "lbu commit failed (status $pc_rc) writing to $pc_bdir"
+            else
+                run lbu commit
+            fi
             # lbu returns once the write is issued, not once it has reached the
             # medium. On removable media a page-cached apkovl can survive a
             # clean shutdown and be lost to a power cut, leaving a truncated

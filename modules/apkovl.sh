@@ -62,7 +62,30 @@ apkovl_plan() {
             /*) : ;;
             *)  die "apkovl: APKOVL_BACKUPDIR must be an absolute path, not '$ap_dir'" ;;
         esac
-        ap_block="LBU_BACKUPDIR=$ap_dir"
+        # A path straight under /media becomes LBU_MEDIA, because the two keys
+        # are not interchangeable in lbu:
+        #
+        #     mnt="$LBU_BACKUPDIR"
+        #     if [ -z "$mnt" ]; then
+        #         mnt=/media/$media
+        #         mount_once_rw "$mnt" || die "failed to mount $mnt"
+        #     fi
+        #
+        # BACKUPDIR takes the early path and nothing ever remounts. The boot
+        # medium is mounted read-only, so the commit dies at
+        # `cp: can't create '…/coisas.apkovl.tar.gz.new': Read-only file
+        # system` — with the destination perfectly correct. Naming the same
+        # place as a medium gets the remount, and the restore to read-only
+        # afterwards, from lbu itself.
+        ap_conv=${ap_dir#/media/}
+        case $ap_dir in
+            /media/*)
+                case $ap_conv in
+                    */*|'') ap_block="LBU_BACKUPDIR=$ap_dir" ;;
+                    *)      ap_block="LBU_MEDIA=$ap_conv" ;;
+                esac ;;
+            *) ap_block="LBU_BACKUPDIR=$ap_dir" ;;
+        esac
     else
         # lbu builds the path as /media/$LBU_MEDIA, so a path here would produce
         # /media//media/data and fail somewhere far from the cause.
