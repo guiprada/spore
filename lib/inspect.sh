@@ -11,16 +11,63 @@ inspect_stale() {
     # workstation reaches the machine only through `spore install`, and a boot
     # that still fails the same way is otherwise indistinguishable from a fix
     # that did not land.
+    #
+    # Every file the seed carries, not four of them. Sampling lib/seed.sh,
+    # lib/plan.sh, modules/net.sh and bin/spore said "matches this tool" about a
+    # medium whose persist.sh was two commits old — and persist.sh was the file
+    # the question was about. A staleness check you cannot trust is worse than
+    # none, because the next thing you do is re-read a log that cannot have
+    # changed.
     is_seed=$1
     is_differ=''
-    for is_f in lib/seed.sh lib/plan.sh modules/net.sh bin/spore; do
+    is_count=0
+
+    # bin, lib and modules: the tool tree the seed copies. Not seed-run, which
+    # seed_build writes rather than copies and which therefore has nothing here
+    # to be compared against — a change to it is a change to lib/seed.sh, and
+    # that is compared.
+    tar -tzf "$is_seed" 2>/dev/null |
+        sed -n 's|^\./usr/local/lib/spore/||p' |
+        grep -E '^(bin|lib|modules)/.*[^/]$' |
+        sort > "$SPORE_WORK/seed.files" 2>/dev/null || true
+    ( cd "$SPORE_PREFIX" 2>/dev/null &&
+      find bin lib modules -type f 2>/dev/null | sort ) > "$SPORE_WORK/here.files" 2>/dev/null || true
+
+    while IFS= read -r is_f; do
+        [ -n "$is_f" ] || continue
+        is_count=$((is_count + 1))
+        if [ ! -f "$SPORE_PREFIX/$is_f" ]; then
+            is_differ="$is_differ $is_f(gone-here)"
+            continue
+        fi
         is_there=$(tar -xzOf "$is_seed" "./usr/local/lib/spore/$is_f" 2>/dev/null |
                    sha256sum 2>/dev/null | cut -d' ' -f1)
         is_here=$(sha256_file "$SPORE_PREFIX/$is_f" 2>/dev/null || true)
-        [ -n "$is_there" ] || { is_differ="$is_differ $is_f(absent)"; continue; }
         [ "$is_there" = "$is_here" ] || is_differ="$is_differ $is_f"
-    done
-    printf '%s' "${is_differ# }"
+    done < "$SPORE_WORK/seed.files"
+
+    # And the other way round. A file added since this seed was built is simply
+    # absent from it, and comparing only what the seed has would never notice —
+    # which is how a whole new module reaches nothing.
+    while IFS= read -r is_f; do
+        [ -n "$is_f" ] || continue
+        grep -qxF "$is_f" "$SPORE_WORK/seed.files" 2>/dev/null ||
+            is_differ="$is_differ $is_f(not-in-seed)"
+    done < "$SPORE_WORK/here.files"
+
+    if [ "$is_count" = 0 ]; then
+        printf 'the seed carries no copy of the tool at all'
+        return 0
+    fi
+
+    is_differ=${is_differ# }
+    # Long enough to name the culprit, short enough to read.
+    is_n=0
+    for is_w in $is_differ; do is_n=$((is_n + 1)); done
+    if [ "$is_n" -gt 8 ]; then
+        is_differ="$(printf '%s' "$is_differ" | cut -d" " -f1-8) and $((is_n - 8)) more"
+    fi
+    printf '%s' "$is_differ"
 }
 
 inspect_data() {

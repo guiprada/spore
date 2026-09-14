@@ -1613,6 +1613,34 @@ printf 'different\n' > "$IN/fake/usr/local/lib/spore/lib/seed.sh"
 INS=$("$SPORE" inspect "$IN/m" 2>&1)
 has 'a mismatched seed is called out' "$INS" 'built from a different version'
 
+# Every file the seed carries, not a sample. This compared lib/seed.sh,
+# lib/plan.sh, modules/net.sh and bin/spore, and said "matches this tool" about
+# a medium whose persist.sh was two commits old — while persist.sh was the file
+# the whole question was about. A staleness check you cannot trust is worse than
+# none: the next thing you do is re-read a log that cannot have changed.
+STW=$(mktemp -d /tmp/spore-stalew.XXXXXX)
+STS=$(mktemp -d /tmp/spore-stales.XXXXXX)
+mkdir -p "$STS/usr/local/lib/spore"
+cp -r "$ROOT/bin" "$ROOT/lib" "$ROOT/modules" "$STS/usr/local/lib/spore/"
+( cd "$STS" && tar -czf "$STW/same.tar.gz" . )
+ST_SAME=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
+           SPORE_PREFIX=$ROOT; SPORE_WORK=$STW; inspect_stale "$STW/same.tar.gz" )
+check 'an identical seed differs in nothing' "${ST_SAME:-none}" none
+# A file the old check never looked at.
+printf '\n# drift\n' >> "$STS/usr/local/lib/spore/lib/persist.sh"
+( cd "$STS" && tar -czf "$STW/drift.tar.gz" . )
+ST_DRIFT=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
+            SPORE_PREFIX=$ROOT; SPORE_WORK=$STW; inspect_stale "$STW/drift.tar.gz" )
+check 'and one that drifted is named' "$ST_DRIFT" 'lib/persist.sh'
+# A file added since the seed was built is absent from it, which comparing only
+# what the seed holds could never notice.
+rm -f "$STS/usr/local/lib/spore/lib/apkfetch.sh"
+( cd "$STS" && tar -czf "$STW/missing.tar.gz" . )
+ST_MISS=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
+           SPORE_PREFIX=$ROOT; SPORE_WORK=$STW; inspect_stale "$STW/missing.tar.gz" )
+has 'a file the seed lacks is named too' "$ST_MISS" 'lib/apkfetch.sh(not-in-seed)'
+rm -rf "$STW" "$STS"
+
 # A log present is printed verbatim — it is the thing being looked for.
 printf '=== spore seed ===\nno spore found on any attached filesystem.\n' \
     > "$IN/m/spore-seed.log"
