@@ -198,6 +198,10 @@ persist_commit() {
                 pc_to="timeout ${SPORE_COMMIT_TIMEOUT:-600}"
             fi
 
+            # The longest silence in the whole run, and until now an
+            # unannounced one: lbu tars /etc onto the medium and prints nothing
+            # at all until it is finished or has failed.
+            starting "committing the apkovl to $pc_dest"
             pc_rc=0
             # shellcheck disable=SC2086  # pc_to is a command prefix, or empty
             persist_try $pc_to lbu commit || pc_rc=$?

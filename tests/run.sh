@@ -720,6 +720,35 @@ OPTE3=$(alpine "$SPORE" install 2>&1 || true)
 has 'a command still gets its arguments' "$OPTE3" 'usage: spore install DIR DATA'
 rm -rf "$OPT" "$OPTR" "$OPTR2"
 
+section 'a slow action says what it is before it is slow'
+# Every other line reports something finished, so while a slow action runs the
+# last line names the one before it — and "is this working or has it hung?"
+# has no answer. Only the ones that can take real time: announcing a symlink
+# would bury the ones that matter.
+PG=$(mktemp -d /tmp/spore-prog.XXXXXX)/s; cp -r "$EX" "$PG"
+PGR=$(mktemp -d /tmp/spore-progr.XXXXXX)
+PGO=$(alpine "$SPORE" --spore "$PG" --root "$PGR" apply --persist 2>&1 || true)
+has 'a package is announced first'   "$PGO" '> package openssh'
+has 'and reported after'             "$PGO" '+ package openssh'
+has 'a script action too'            "$PGO" '> netup net-up'
+# The longest silence in the run, and the one that prompted this.
+has 'and the commit, which is silent' "$PGO" '> committing the apkovl to'
+# The order is the whole point: announced, then done.
+PG_A=$(printf '%s\n' "$PGO" | grep -n '> package openssh' | head -1 | cut -d: -f1)
+PG_B=$(printf '%s\n' "$PGO" | grep -n '+ package openssh' | head -1 | cut -d: -f1)
+if [ -n "$PG_A" ] && [ -n "$PG_B" ] && [ "$PG_A" -lt "$PG_B" ]; then
+    t_ok 'announced before it is reported done'
+else
+    t_fail 'announced before it is reported done' "start [$PG_A], done [$PG_B]"
+fi
+# A dry run promises, it does not announce: two lines for work never done
+# would read as work in progress.
+PGD=$(mktemp -d /tmp/spore-progd.XXXXXX)
+PGDO=$(alpine "$SPORE" --spore "$PG" --root "$PGD" --dry-run apply 2>&1 || true)
+hasnt 'a dry run announces nothing'  "$PGDO" '> package openssh'
+has   'it only says what it would do' "$PGDO" 'would install package openssh'
+rm -rf "$PG" "$PGR" "$PGD"
+
 section 'idempotence'
 LOG2=$(mktemp /tmp/spore-log2.XXXXXX)
 export SPORE_RUN_LOG="$LOG2"

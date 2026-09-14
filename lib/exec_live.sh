@@ -37,6 +37,7 @@ el_pkg() {
     fi
     if ! mutate; then say "would install package $1"; return 0; fi
 
+    starting "package $1"
     run apk add --no-progress "$1"
     if synthetic; then
         mkdir -p "$(dirname "$ep_world")"
@@ -252,6 +253,7 @@ el_script() {
     fi
     if ! mutate; then say "would run $es_kind $es_id"; return 0; fi
 
+    starting "$es_kind $es_id"
     el_run_script "$(content_path "$es_sha")"
     mkdir -p "$(dirname "$es_stamp")"
     printf '%s\n' "$es_sha" > "$es_stamp"

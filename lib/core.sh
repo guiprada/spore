@@ -45,6 +45,14 @@ changed()   { SPORE_N_CHANGED=$((SPORE_N_CHANGED + 1));   printf '  %s+ %s%s\n' 
 unchanged() { SPORE_N_UNCHANGED=$((SPORE_N_UNCHANGED + 1)); printf '  %s. %s%s\n' "$_c_dim" "$*" "$_c_reset" >&2; }
 skipped()   { printf '  %s~ %s%s\n' "$_c_yellow" "$*" "$_c_reset" >&2; }
 
+# Said before the work, not after it. Every other line here reports something
+# that has finished, so while a slow action runs the last line on the console
+# names the one before it — and "is this working or has it hung?" has no answer
+# at all, which is a question that has been asked of this tool more than once.
+# Only for the ones that can take real time; announcing a symlink would just
+# bury the ones that matter.
+starting() { printf '  %s> %s%s\n' "$_c_dim" "$*" "$_c_reset" >&2; }
+
 # --- workspace ---------------------------------------------------------------
 
 spore_workspace() {
