@@ -70,20 +70,42 @@ USAGE
 SPORE_DO_PERSIST=0
 SPORE_CMD=''
 
-while [ $# -gt 0 ]; do
+# Options are taken from anywhere on the line, before the command or after it.
+# This loop used to stop at the first word that was not an option — so
+# `spore -s DIR apply --persist`, which is exactly what the seed runs, set the
+# command, left `--persist` unread, and said nothing about it. The machine then
+# converged perfectly, persisted nothing, and reported success for both. An
+# option that is silently ignored is worse than one that is rejected.
+#
+# Everything that is not an option is rotated to the back, so what remains when
+# the count runs out is the positional arguments in their original order.
+sp_left=$#
+while [ "$sp_left" -gt 0 ]; do
+    sp_left=$((sp_left - 1))
     case $1 in
-        -s|--spore)   [ $# -ge 2 ] || die "--spore needs a directory"; SPORE_DIR=$2; shift 2 ;;
-        -r|--root)    [ $# -ge 2 ] || die "--root needs a directory";  SPORE_ROOT=$2; shift 2 ;;
+        -s|--spore)   [ $# -ge 2 ] || die "--spore needs a directory"
+                      SPORE_DIR=$2; shift 2; sp_left=$((sp_left - 1)) ;;
+        -r|--root)    [ $# -ge 2 ] || die "--root needs a directory"
+                      SPORE_ROOT=$2; shift 2; sp_left=$((sp_left - 1)) ;;
         -n|--dry-run) SPORE_DRYRUN=1; shift ;;
-        -i|--identity) [ $# -ge 2 ] || die "--identity needs a file"; SPORE_IDENTITY=$2; shift 2 ;;
+        -i|--identity) [ $# -ge 2 ] || die "--identity needs a file"
+                      SPORE_IDENTITY=$2; shift 2; sp_left=$((sp_left - 1)) ;;
         --persist)    SPORE_DO_PERSIST=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         -V|--version) printf 'spore %s\n' "$SPORE_VERSION"; exit 0 ;;
-        --)           shift; break ;;
+        --)           shift
+                      while [ "$sp_left" -gt 0 ]; do
+                          set -- "$@" "$1"; shift
+                          sp_left=$((sp_left - 1))
+                      done ;;
         -*)           die "unknown option: $1" ;;
-        *)            SPORE_CMD=$1; shift; break ;;
+        *)            set -- "$@" "$1"; shift ;;
     esac
 done
+if [ $# -gt 0 ]; then
+    SPORE_CMD=$1
+    shift
+fi
 
 [ -n "$SPORE_CMD" ] || { usage; exit 2; }
 
@@ -398,6 +420,13 @@ cmd_media() {
     media_write "$@"
 }
 
+# A word this command has no use for is a mistake worth naming: it is almost
+# always a misspelled option, and the alternative is doing three-quarters of
+# what was asked and reporting success.
+cmd_noargs() {
+    [ $# -eq 0 ] || die "spore $SPORE_CMD takes no arguments, but got: $*"
+}
+
 case $SPORE_CMD in
     setup)   cmd_setup "$@" ;;
     media)   cmd_media "$@" ;;
@@ -406,14 +435,14 @@ case $SPORE_CMD in
     new)     cmd_new "$@" ;;
     install) cmd_install "$@" ;;
     init)    cmd_init "$@" ;;
-    plan)    cmd_plan ;;
-    apply)   cmd_apply ;;
-    status)  cmd_status ;;
-    diff)    cmd_diff ;;
-    persist) cmd_persist ;;
-    doctor)  cmd_doctor ;;
-    modules|module) cmd_modules ;;
-    secrets) cmd_secrets ;;
+    plan)    cmd_noargs "$@"; cmd_plan ;;
+    apply)   cmd_noargs "$@"; cmd_apply ;;
+    status)  cmd_noargs "$@"; cmd_status ;;
+    diff)    cmd_noargs "$@"; cmd_diff ;;
+    persist) cmd_noargs "$@"; cmd_persist ;;
+    doctor)  cmd_noargs "$@"; cmd_doctor ;;
+    modules|module) cmd_noargs "$@"; cmd_modules ;;
+    secrets) cmd_noargs "$@"; cmd_secrets ;;
     seed)    cmd_seed "$@" ;;
     seal)    cmd_seal "$@" ;;
     help)    usage ;;

@@ -550,6 +550,33 @@ BSSRC=$(cat "$ROOT/lib/bootstrap.sh")
 has 'a failed fetch only warns'       "$BSSRC" 'could not fetch age for'
 has 'and only when something is sealed' "$BSSRC" "-name '*.age'"
 
+section 'options are read wherever they are written'
+# `spore -s DIR apply --persist` is exactly what the seed runs. The option loop
+# stopped at the first word that was not an option, so the command was taken and
+# --persist was left unread, silently. The machine converged perfectly,
+# persisted nothing, and reported success for both — for a week.
+OPT=$(mktemp -d /tmp/spore-opt.XXXXXX)/s; cp -r "$EX" "$OPT"
+OPTR=$(mktemp -d /tmp/spore-optr.XXXXXX)
+OPTO=$(alpine "$SPORE" -s "$OPT" --root "$OPTR" apply --persist 2>&1 || true)
+has   'an option after the command is read'  "$OPTO" 'committed to apkovl'
+hasnt 'and the run does not claim otherwise' "$OPTO" 'nothing here survives a reboot'
+# Without it the warning is the correct answer, so the two are really distinct.
+OPTR2=$(mktemp -d /tmp/spore-optr2.XXXXXX)
+OPTO2=$(alpine "$SPORE" -s "$OPT" --root "$OPTR2" apply 2>&1 || true)
+has 'and without it, it is still warned about' "$OPTO2" 'nothing here survives a reboot'
+# A word the command cannot use is nearly always a misspelled option, and doing
+# three-quarters of what was asked while reporting success is how this hid.
+if OPTE=$(alpine "$SPORE" -s "$OPT" plan --persst 2>&1); then
+    t_fail 'a misspelled option is refused' 'accepted'
+else has 'a misspelled option is refused' "$OPTE" 'unknown option: --persst'; fi
+if OPTE2=$(alpine "$SPORE" -s "$OPT" plan wat 2>&1); then
+    t_fail 'a stray word is refused' 'accepted'
+else has 'a stray word is refused' "$OPTE2" 'takes no arguments'; fi
+# Positionals keep their order and their meaning wherever the options sit.
+OPTE3=$(alpine "$SPORE" install 2>&1 || true)
+has 'a command still gets its arguments' "$OPTE3" 'usage: spore install DIR DATA'
+rm -rf "$OPT" "$OPTR" "$OPTR2"
+
 section 'idempotence'
 LOG2=$(mktemp /tmp/spore-log2.XXXXXX)
 export SPORE_RUN_LOG="$LOG2"
