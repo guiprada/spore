@@ -102,14 +102,25 @@ inspect_data() {
         else
             printf '  %smatches this tool%s\n' "$_c_green" "$_c_reset" >&2
         fi
+    elif [ -f "$id_dir/spore-seed.superseded.tar.gz" ]; then
+        # Not missing: retired. A commit sets the seed aside, because lbu will
+        # not write into a directory holding an apkovl it did not write, and two
+        # apkovls on one filesystem means the initramfs boots whichever it finds
+        # first. Reporting that as "nothing would have run" describes the
+        # opposite of what happened.
+        printf '\nthe seed\n\n' >&2
+        printf '  %sset aside after a commit%s — spore-seed.superseded.tar.gz\n' \
+            "$_c_green" "$_c_reset" >&2
+        printf '  Its job was to get the first boot to apply the spore, and it did.\n' >&2
+        printf '  This machine now boots from its own committed overlay.\n' >&2
     else
         warn "no spore-seed.apkovl.tar.gz here, so nothing would have run at all."
     fi
 
     # The one thing that proves it got all the way through.
     printf '\ncommitted\n\n' >&2
-    if id_ovl=$(find "$id_dir" -maxdepth 1 -name '*.apkovl.tar.gz' ! -name 'spore-seed.*' 2>/dev/null |
-                head -1) && [ -n "$id_ovl" ]; then
+    if id_ovl=$(find "$id_dir" -maxdepth 1 -name '*.apkovl.tar.gz' \
+                     ! -name 'spore-seed.*' 2>/dev/null | head -1) && [ -n "$id_ovl" ]; then
         printf '  %s%s%s — it converged and committed at least once\n' \
             "$_c_green" "$(basename "$id_ovl")" "$_c_reset" >&2
     else

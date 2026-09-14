@@ -25,8 +25,20 @@ persist_backend() { fact_persist; }
 persist_clear_seed() {
     pcs_dir=$(rootpath "${1:-}")
     [ -n "${1:-}" ] && [ -d "$pcs_dir" ] || return 0
-    pcs_seed=$pcs_dir/spore-seed.apkovl.tar.gz
-    [ -f "$pcs_seed" ] || return 0
+    # Every seed of ours in here, under whatever name. lbu's glob is
+    # `*.apkovl.tar.gz*` — with a trailing star, for the encrypted variants —
+    # so an earlier attempt that renamed to `.apkovl.tar.gz.superseded` still
+    # matched it and lbu still refused. The name it moves to has to leave that
+    # glob entirely, not merely look different.
+    #
+    # Only files that are plainly ours. An apkovl from another machine is
+    # exactly the ambiguity lbu is warning about, and quietly moving it aside
+    # would answer a question that was worth asking.
+    pcs_found=no
+    for pcs_seed in "$pcs_dir"/spore-seed.apkovl.tar.gz*; do
+        [ -f "$pcs_seed" ] && { pcs_found=yes; break; }
+    done
+    [ "$pcs_found" = yes ] || return 0
     if ! mutate; then
         say "would set the bootstrap seed aside so lbu can commit here"
         return 0
@@ -47,14 +59,25 @@ persist_clear_seed() {
     # perfectly writable filesystem, and "put it back read-only" would then be
     # taking away something nobody gave.
     pcs_opts=$(awk -v d="$pcs_dir" '$2 == d { print $4; exit }' /proc/mounts 2>/dev/null || true)
+    pcs_keep=$pcs_dir/spore-seed.superseded.tar.gz
+
+    persist_move_seeds() {
+        pms_ok=no
+        for pms_f in "$pcs_dir"/spore-seed.apkovl.tar.gz*; do
+            [ -f "$pms_f" ] || continue
+            mv "$pms_f" "$pcs_keep" 2>/dev/null && pms_ok=yes
+        done
+        [ "$pms_ok" = yes ]
+    }
+
     pcs_moved=no
-    if mv "$pcs_seed" "$pcs_seed.superseded" 2>/dev/null; then
+    if persist_move_seeds; then
         pcs_moved=yes
     else
         case ",${pcs_opts}," in
             *,ro,*)
                 if mount -o remount,rw "$pcs_dir" 2>/dev/null; then
-                    mv "$pcs_seed" "$pcs_seed.superseded" 2>/dev/null && pcs_moved=yes
+                    persist_move_seeds && pcs_moved=yes
                     mount -o remount,ro "$pcs_dir" 2>/dev/null || true
                 fi ;;
         esac
@@ -64,7 +87,7 @@ persist_clear_seed() {
         say "set the bootstrap seed aside: it has done its job, and lbu will not
          commit into a directory holding an apkovl it did not write"
     else
-        warn "could not move $pcs_seed out of the way, so lbu is about to refuse
+        warn "could not move the bootstrap seed out of $pcs_dir, so lbu is about to refuse
          to commit here. Remove it by hand, or set APKOVL_BACKUPDIR to a
          directory it is not in."
     fi

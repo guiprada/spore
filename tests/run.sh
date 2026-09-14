@@ -221,18 +221,25 @@ section 'the bootstrap seed steps aside so lbu can commit'
 SD2=$(mktemp -d /tmp/spore-seedaside.XXXXXX)
 mkdir -p "$SD2/media/data"
 printf 'not really an apkovl\n' > "$SD2/media/data/spore-seed.apkovl.tar.gz"
+# And one left by the earlier attempt that renamed inside lbu's glob.
+printf 'older\n' > "$SD2/media/data/spore-seed.apkovl.tar.gz.superseded"
 SD2LOG=$SD2/cmds
 export SPORE_FACT_LBU_DEST=/media/data SPORE_RUN_LOG="$SD2LOG"
 alpine "$SPORE" --spore "$EX" --root "$SD2" persist > "$SD2/out" 2>&1 || true
 unset SPORE_FACT_LBU_DEST SPORE_RUN_LOG
 has   'it is set aside, and said so'  "$(cat "$SD2/out")" 'set the bootstrap seed aside'
+# lbu's glob is `*.apkovl.tar.gz*`, with a trailing star for the encrypted
+# variants. Renaming to `.apkovl.tar.gz.superseded` still matched it, and lbu
+# still refused — the new name has to leave that glob, not merely differ.
+SD2LEFT=$(cd "$SD2/media/data" && ls -1 ./*.apkovl.tar.gz* 2>/dev/null | tr '\n' ' ')
+check 'nothing lbu globs is left behind' "${SD2LEFT:-none}" none
 check 'the apkovl name is gone' \
     "$([ -e "$SD2/media/data/spore-seed.apkovl.tar.gz" ] && echo yes || echo no)" no
 # Renamed, not deleted: `lbu commit -d` would remove every apkovl in the
 # directory, and if the boot partition could not be mounted at install time
 # that is the only copy of the seed on the medium.
 check 'but the file is kept' \
-    "$([ -f "$SD2/media/data/spore-seed.apkovl.tar.gz.superseded" ] && echo yes || echo no)" yes
+    "$([ -f "$SD2/media/data/spore-seed.superseded.tar.gz" ] && echo yes || echo no)" yes
 has   'and lbu is still asked to commit' "$(cat "$SD2LOG")" 'lbu commit'
 hasnt 'but never with -d'               "$(cat "$SD2LOG")" 'lbu commit -d'
 rm -rf "$SD2"
@@ -252,7 +259,9 @@ if [ "$(id -u)" = 0 ] && mount -t tmpfs tmpfs "$SD3" 2>/dev/null; then
                 persist_clear_seed "$SD3" 2>&1 )
         has   'a read-only medium is remounted for it' "$SD3O" 'set the bootstrap seed aside'
         check 'and the seed is really renamed' \
-            "$([ -f "$SD3/spore-seed.apkovl.tar.gz.superseded" ] && echo yes || echo no)" yes
+            "$([ -f "$SD3/spore-seed.superseded.tar.gz" ] && echo yes || echo no)" yes
+        SD3LEFT=$(cd "$SD3" && ls -1 ./*.apkovl.tar.gz* 2>/dev/null | tr '\n' ' ')
+        check 'with nothing lbu globs left' "${SD3LEFT:-none}" none
         # Put back read-only, or the next power cut corrupts a USB stick.
         check 'and the medium is read-only again' \
             "$(awk -v d="$SD3" '$2 == d { print $4; exit }' /proc/mounts |
@@ -1612,6 +1621,16 @@ printf 'different\n' > "$IN/fake/usr/local/lib/spore/lib/seed.sh"
 (cd "$IN/fake" && tar -czf "$IN/m/spore-seed.apkovl.tar.gz" .)
 INS=$("$SPORE" inspect "$IN/m" 2>&1)
 has 'a mismatched seed is called out' "$INS" 'built from a different version'
+# A seed set aside by a commit did its job; saying "nothing would have run at
+# all" about it describes the opposite of what happened.
+INSUP=$(mktemp -d /tmp/spore-supseed.XXXXXX)
+mkdir -p "$INSUP/spore"
+printf 'FORMAT=1\nHOST=k\nMODULES="net"\n' > "$INSUP/spore/spore.conf"
+printf 'x\n' > "$INSUP/spore-seed.superseded.tar.gz"
+INSUPO=$("$SPORE" inspect "$INSUP" 2>&1)
+has   'a retired seed is reported as retired' "$INSUPO" 'set aside after a commit'
+hasnt 'not as one that never ran'             "$INSUPO" 'nothing would have run at all'
+rm -rf "$INSUP"
 
 # Every file the seed carries, not a sample. This compared lib/seed.sh,
 # lib/plan.sh, modules/net.sh and bin/spore, and said "matches this tool" about
