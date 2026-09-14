@@ -316,6 +316,23 @@ PMO2=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/persist.sh"
         persist_mount_of /definitely/not/mounted/anywhere )
 check 'and an unmounted path lands on /' "$PMO2" /
 
+# Nothing in a boot may run for ever. Every script action already had a
+# deadline; the commit did not, and it is the likeliest thing here to stop
+# returning — it tars /etc onto a USB stick and prints nothing while it does,
+# so working and wedged look identical from the console.
+PSRC2=$(cat "$ROOT/lib/persist.sh")
+has 'the commit has a deadline'       "$PSRC2" 'SPORE_COMMIT_TIMEOUT'
+has 'and a timeout is told apart'     "$PSRC2" '[ "$pc_rc" = 124 ]'
+has 'from a plain failure'            "$PSRC2" 'lbu commit failed (status'
+# And it still honours dry-run and the synthetic root, or the suite would
+# start running lbu against this workstation.
+PTRY=$(mktemp -d /tmp/spore-ptry.XXXXXX)
+PTRYO=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/persist.sh"
+         SPORE_DRYRUN=1; SPORE_ROOT=$PTRY; SPORE_RUN_LOG=''
+         persist_try lbu commit 2>&1 )
+has 'a dry run only says what it would do' "$PTRYO" 'would run: lbu commit'
+rm -rf "$PTRY"
+
 section 'the hostname is set on the kernel, not only in a file'
 # Nothing rereads /etc/hostname until the next boot, and lbu asks the kernel:
 # it names its overlay $(hostname).apkovl.tar.gz. A machine that has not been

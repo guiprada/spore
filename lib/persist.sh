@@ -5,6 +5,17 @@
 
 persist_backend() { fact_persist; }
 
+# run(), but handing back the status instead of dying on it: the caller has a
+# read-only mount to restore before anything else happens, and a timeout to
+# tell apart from a genuine failure. Same dry-run and synthetic-root guards,
+# because skipping those is how a test suite starts running lbu for real.
+persist_try() {
+    runlog "$*"
+    if [ "$SPORE_DRYRUN" = 1 ]; then say "would run: $*"; return 0; fi
+    if [ "${SPORE_NOEXEC:-0}" = 1 ] || synthetic; then return 0; fi
+    "$@"
+}
+
 # The filesystem a path is on, which is not the path. /proc/mounts lists mount
 # points, so looking up /media/storage/data finds nothing at all and the caller
 # concludes it is writable — the one case where the answer matters is a
@@ -176,17 +187,36 @@ persist_commit() {
                 fi
             fi
 
+            # Bounded, like every script action. This one was not, and it is
+            # the likeliest thing here to stop returning: it tars /etc and
+            # writes it to a USB stick, silently, so a boot that is working and
+            # a boot that is wedged look exactly alike from the console — which
+            # leaves a power switch and a guess.
+            pc_to=''
+            if [ "${SPORE_COMMIT_TIMEOUT:-600}" != 0 ] &&
+               command -v timeout >/dev/null 2>&1; then
+                pc_to="timeout ${SPORE_COMMIT_TIMEOUT:-600}"
+            fi
+
+            pc_rc=0
+            # shellcheck disable=SC2086  # pc_to is a command prefix, or empty
+            persist_try $pc_to lbu commit || pc_rc=$?
             if [ "$pc_ro" = yes ]; then
                 # Put back whether or not the commit worked. A stick left
                 # mounted rw is a corruption risk at the next power cut, and
                 # the failure path is exactly where nobody looks.
-                runlog 'lbu commit'
-                if lbu commit; then pc_rc=0; else pc_rc=$?; fi
                 mount -o remount,ro "$pc_mp" 2>/dev/null || true
-                [ "$pc_rc" = 0 ] ||
-                    die "lbu commit failed (status $pc_rc) writing to $pc_bdir"
-            else
-                run lbu commit
+            fi
+
+            if [ "$pc_rc" = 124 ]; then
+                die "lbu commit did not finish within ${SPORE_COMMIT_TIMEOUT:-600}s
+         and was stopped. It writes /etc to $pc_dest, so a medium that has
+         become slow or is failing looks exactly like this. Try the write by
+         hand to see where it stalls:
+             lbu commit
+         Set SPORE_COMMIT_TIMEOUT to allow longer, or 0 for no limit."
+            elif [ "$pc_rc" != 0 ]; then
+                die "lbu commit failed (status $pc_rc) writing to $pc_dest"
             fi
             # lbu returns once the write is issued, not once it has reached the
             # medium. On removable media a page-cached apkovl can survive a
