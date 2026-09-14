@@ -306,8 +306,9 @@ if netroute=$(spore_default_route); then
         if ping -c 1 -W 2 "$netgw" >/dev/null 2>&1; then
             echo "spore: gateway $netgw answers"
         else
-            echo "spore: gateway $netgw does not answer — nothing leaves this" >&2
-            echo 'spore: machine, whatever the mirror says about itself.' >&2
+            echo "spore: gateway $netgw does not answer a ping. That is usually"
+            echo 'spore: just ICMP being filtered, and only matters if nothing'
+            echo 'spore: else works either.'
         fi
     fi
 else
@@ -358,7 +359,11 @@ render_keymap() {
     cat <<'RKM'
 d=/usr/share/bkeymaps
 f=''
-for c in "$d/$layout/$variant.bmap.gz" "$d/$layout/$variant.bmap"; do
+# Alpine names every variant for its layout — us-dvorak, br-abnt2, us — so the
+# bare word is the natural thing to write and never matches. Try it as given,
+# then as the layout would spell it.
+for c in "$d/$layout/$variant.bmap.gz" "$d/$layout/$variant.bmap" \
+         "$d/$layout/$layout-$variant.bmap.gz" "$d/$layout/$layout-$variant.bmap"; do
     if [ -f "$c" ]; then f=$c; break; fi
 done
 
@@ -381,7 +386,13 @@ if [ -z "$f" ]; then
         echo "spore: not fetch, not a wrong layout." >&2
     fi
     echo 'spore: set SYSTEM_KEYMAP in modules/system.conf to one of those.' >&2
-    exit 1
+    echo 'spore: Carrying on without a keymap. A console layout is not worth' >&2
+    echo 'spore: the rest of this machine — the password and the services that' >&2
+    echo 'spore: come after it matter more, and this run stopped before them.' >&2
+    # Zero on purpose. The stamp is the hash of this script, so correcting
+    # SYSTEM_KEYMAP changes it and this runs again; leaving it wrong leaves it
+    # wrong, loudly, on a machine you can still get into.
+    exit 0
 fi
 
 mkdir -p /etc/keymap /etc/conf.d

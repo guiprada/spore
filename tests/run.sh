@@ -299,6 +299,11 @@ NRSH=$(mktemp /tmp/spore-netrep.XXXXXX)
 { echo 'iface=lo'; ( . "$ROOT/lib/render.sh"; render_net_report 1 ); } > "$NRSH"
 NRO=$(sh "$NRSH" 2>&1)
 has 'the default route is always spoken to' "$NRO" 'default route'
+# A gateway that ignores ping is not a gateway that is down. One run downloaded
+# 28673 packages through a gateway this called dead.
+NRSRC2=$(cat "$ROOT/lib/render.sh")
+hasnt 'a silent gateway is not called dead' "$NRSRC2" 'nothing leaves this'
+has   'it is called what it is'             "$NRSRC2" 'just ICMP being filtered'
 has 'and the resolver situation too'        "$NRO" 'resolv'
 # A report that cannot tell "no address" from "no tool to ask with" is worse
 # than no report, because it is believed.
@@ -1170,12 +1175,31 @@ has   'a real pair is installed'     "$KMO" 'spore: keymap br br-abnt2'
 check 'and loadkmap points at it' \
     "$(grep -c 'br-abnt2.bmap.gz' "$KMT/etc/conf.d/loadkmap" 2>/dev/null || echo 0)" 1
 # `br br` is exactly what a layout with no variant becomes, and it is not real.
+# Alpine names every variant for its layout — us-dvorak, br-abnt2 — so the bare
+# word is the natural thing to write and matches nothing. Try it both ways.
+KMO4=$(km_run br abnt2)
+has 'a bare variant finds the real one' "$KMO4" 'spore: keymap br abnt2'
+check 'and installs the prefixed file' \
+    "$(grep -c 'br-abnt2.bmap.gz' "$KMT/etc/conf.d/loadkmap" 2>/dev/null || echo 0)" 1
+# `br br` is what a layout with no variant becomes, and it is not real.
 KMO2=$(km_run br br)
 has 'a pair that is not real is named'  "$KMO2" "layout 'br' has no variant 'br'"
 has 'with the ones that are'            "$KMO2" 'spore:   br br-abnt2'
 KMO3=$(km_run zz zz)
 has 'and an unknown layout likewise'    "$KMO3" "no layout 'zz'"
 has 'listing the layouts there are'     "$KMO3" 'spore:   br'
+# But it does not take the machine with it. This aborted a run three actions
+# short of the password, on a box whose whole purpose was to come up with one.
+km_rc() {
+    ( . "$ROOT/lib/render.sh"; render_keymap "$1" "$2" ) |
+        sed "s|/usr/share/bkeymaps|$KMT/usr/share/bkeymaps|g;
+             s|/etc/keymap|$KMT/etc/keymap|g; s|/etc/conf.d|$KMT/etc/conf.d|g" > "$KMT/km.sh"
+    sh "$KMT/km.sh" >/dev/null 2>&1
+    printf '%s' $?
+}
+check 'a keymap nobody has is not fatal' "$(km_rc br nosuchvariant)" 0
+check 'nor is a layout nobody has'       "$(km_rc zz zz)" 0
+check 'a real one still succeeds'        "$(km_rc br br-abnt2)" 0
 rm -rf "$KMT"
 # Nothing may run for ever, whatever it is. An action that never returns takes
 # the boot with it, before anything can be written down about why.
