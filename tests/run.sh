@@ -237,6 +237,35 @@ has   'and lbu is still asked to commit' "$(cat "$SD2LOG")" 'lbu commit'
 hasnt 'but never with -d'               "$(cat "$SD2LOG")" 'lbu commit -d'
 rm -rf "$SD2"
 
+# On the machine it is not that simple: the medium is mounted read-only until
+# lbu remounts it, and lbu does that inside `lbu commit` — after this runs. So
+# the move fails with EROFS, which a writable temp directory never shows.
+SD3=/tmp/spore-roseed.$$
+mkdir -p "$SD3"
+if [ "$(id -u)" = 0 ] && mount -t tmpfs tmpfs "$SD3" 2>/dev/null; then
+    printf 'seed\n' > "$SD3/spore-seed.apkovl.tar.gz"
+    if mount -o remount,ro "$SD3" 2>/dev/null; then
+        SD3O=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/facts.sh"
+                . "$ROOT/lib/persist.sh"
+                SPORE_ROOT=/; SPORE_DRYRUN=0
+                mutate() { return 0; }
+                persist_clear_seed "$SD3" 2>&1 )
+        has   'a read-only medium is remounted for it' "$SD3O" 'set the bootstrap seed aside'
+        check 'and the seed is really renamed' \
+            "$([ -f "$SD3/spore-seed.apkovl.tar.gz.superseded" ] && echo yes || echo no)" yes
+        # Put back read-only, or the next power cut corrupts a USB stick.
+        check 'and the medium is read-only again' \
+            "$(awk -v d="$SD3" '$2 == d { print $4; exit }' /proc/mounts |
+               cut -d, -f1)" ro
+    else
+        printf '  (could not remount ro here — the EROFS path was not exercised)\n'
+    fi
+    umount "$SD3" 2>/dev/null || true
+else
+    printf '  (no root or no tmpfs here — the EROFS path was not exercised)\n'
+fi
+rmdir "$SD3" 2>/dev/null || true
+
 section 'the hostname is set on the kernel, not only in a file'
 # Nothing rereads /etc/hostname until the next boot, and lbu asks the kernel:
 # it names its overlay $(hostname).apkovl.tar.gz. A machine that has not been

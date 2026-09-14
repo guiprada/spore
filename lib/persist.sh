@@ -34,7 +34,33 @@ persist_clear_seed() {
     # Kept, and kept legible: still a seed, no longer an apkovl. `spore install`
     # writes a fresh one whenever it runs, and `spore seed` rebuilds one from a
     # running machine, so this is a courtesy rather than the only copy.
+    #
+    # The medium is mounted read-only at this point. lbu remounts it itself, and
+    # only inside `lbu commit` — which is after this runs, so the first attempt
+    # fails with EROFS. Remount around the move and put it straight back, rather
+    # than remounting for the whole commit: lbu decides whether to restore
+    # read-only by checking whether the medium was read-only when it started, so
+    # leaving it writable here means it stays writable afterwards, and a USB
+    # stick mounted rw is a corruption risk at the next power cut.
+    # And only when it really is read-only, read off /proc/mounts rather than
+    # inferred from the move having failed. A move can fail for permissions on a
+    # perfectly writable filesystem, and "put it back read-only" would then be
+    # taking away something nobody gave.
+    pcs_opts=$(awk -v d="$pcs_dir" '$2 == d { print $4; exit }' /proc/mounts 2>/dev/null || true)
+    pcs_moved=no
     if mv "$pcs_seed" "$pcs_seed.superseded" 2>/dev/null; then
+        pcs_moved=yes
+    else
+        case ",${pcs_opts}," in
+            *,ro,*)
+                if mount -o remount,rw "$pcs_dir" 2>/dev/null; then
+                    mv "$pcs_seed" "$pcs_seed.superseded" 2>/dev/null && pcs_moved=yes
+                    mount -o remount,ro "$pcs_dir" 2>/dev/null || true
+                fi ;;
+        esac
+    fi
+
+    if [ "$pcs_moved" = yes ]; then
         say "set the bootstrap seed aside: it has done its job, and lbu will not
          commit into a directory holding an apkovl it did not write"
     else
