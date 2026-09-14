@@ -231,11 +231,19 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
     SPORE_TRY_NETDEV='user,id=n0' SPORE_TRY_DNS_CLASH='' SPORE_TRY_DNS_OUTSIDE=''
     try_guest_net "$tb_target"
     if [ -n "$SPORE_TRY_DNS_CLASH" ]; then
+        # Slirp's gateway and its resolver have to be different addresses, and
+        # a home router is usually both — so a spore that is right about the
+        # real network cannot be rehearsed exactly here. Worth saying plainly,
+        # because the symptom is apk blaming a mirror.
         warn "this spore's DNS server and its gateway are the same address
-         ($SPORE_TRY_DNS_CLASH), and the VM cannot be both. Name resolution will
-         fail in here — apk will say \"temporary error (try again later)\" —
-         while working perfectly on the real network. Add a second resolver to
-         NET_DNS to rehearse this properly."
+         ($SPORE_TRY_DNS_CLASH), and this VM's network cannot be both. Names
+         will not resolve in here — apk will blame the mirror — while working
+         perfectly on the real network.
+             NET_DNS=\"$SPORE_TRY_DNS_CLASH 1.1.1.1\"   in modules/net.conf
+         resolves through the second one in here and the first one there. Only
+         packages the boot medium does not already carry are affected: age
+         travels on the medium, so a sealed password still works without any
+         of this."
     elif [ -n "$SPORE_TRY_DNS_OUTSIDE" ]; then
         warn "this spore resolves through $SPORE_TRY_DNS_OUTSIDE, which is outside
          the network this VM can answer on. Name resolution will fail in here and
