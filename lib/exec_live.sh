@@ -133,7 +133,22 @@ el_svc() {
             elif ! mutate; then
                 say "would start service $es_name"
             else
-                run rc-service "$es_name" start
+                # Enabling is the durable half and has already happened above.
+                # Starting is best-effort on purpose: this often runs from
+                # inside a service in the default runlevel, where OpenRC will
+                # refuse anything whose dependencies belong to an earlier one —
+                # "cannot start chronyd as fsck would not start". The service is
+                # in the runlevel and comes up on the next boot regardless, so
+                # dying here would trade a working machine for a timing detail.
+                if ! rc-service "$es_name" start; then
+                    warn "$es_name is enabled but would not start now.
+         OpenRC refuses a service whose dependencies belong to a runlevel that
+         has already passed, which is usual when applying from inside the boot
+         it is configuring. It starts on the next boot. If it still does not:
+             rc-service $es_name start"
+                    changed "service $es_name enabled, starts next boot"
+                    return 0
+                fi
                 # OpenRC reports success once the process is launched. A daemon
                 # that exits a moment later still counts as a successful start,
                 # so trusting the exit code claims success on a dead service.
@@ -147,12 +162,14 @@ el_svc() {
                     sleep 1
                 done
                 if [ "$es_up" != yes ]; then
-                    die "$es_name reported a successful start but is not running.
+                    warn "$es_name reported a successful start but is not running.
          OpenRC returns success once the process is launched; a daemon that
-         exits immediately still counts. Check its log, and try running it in
-         the foreground to see why:
+         exits immediately still counts. It is enabled, so the next boot will
+         try again. To see why it died:
              rc-service $es_name status
              /etc/init.d/$es_name describe"
+                    changed "service $es_name enabled, but not running"
+                    return 0
                 fi
                 changed "service $es_name started"
             fi

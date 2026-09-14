@@ -43,11 +43,33 @@ system_plan() {
             chrony|busybox|openntpd) : ;;
             *) die "system: SYSTEM_NTP is chrony, busybox, openntpd or none — not '$sy_ntp'" ;;
         esac
-        plan_firstboot system-ntp "if ! command -v setup-ntp >/dev/null 2>&1; then
-    echo 'spore: setup-ntp is missing (alpine-conf); cannot set up time sync' >&2
-    exit 1
-fi
-setup-ntp $sy_ntp"
+        # setup-ntp's last line is `rc-service $svc start`, so its exit status
+        # is that start's — and started from inside a service in the default
+        # runlevel, OpenRC refuses anything whose dependencies belong to an
+        # earlier one: "cannot start chronyd as fsck would not start". The
+        # daemon is configured correctly and the whole apply dies anyway.
+        #
+        # Everything before that line is deterministic: a one-shot sync so the
+        # clock is right now, and a package. The service belongs to spore's own
+        # svc pass, which enables it and treats starting as best-effort.
+        case $sy_ntp in
+            chrony)   sy_pkg=chrony   sy_svc=chronyd  ;;
+            openntpd) sy_pkg=openntpd sy_svc=openntpd ;;
+            busybox)  sy_pkg=''       sy_svc=ntpd     ;;
+        esac
+        [ -z "$sy_pkg" ] || plan_pkg "$sy_pkg"
+        plan_svc "$sy_svc" default on
+        # Before anything reaches for a certificate. A box with no battery-backed
+        # clock boots in 1970, where everything looks not-yet-valid — which is
+        # why this is a step of its own and not just the daemon's job later.
+        plan_firstboot system-ntp "if command -v busybox >/dev/null 2>&1; then
+    if busybox ntpd -qnN -p pool.ntp.org >/dev/null 2>&1; then
+        echo \"spore: clock set to \$(date 2>/dev/null)\"
+    else
+        echo 'spore: could not reach pool.ntp.org to set the clock now.' >&2
+        echo \"spore: $sy_svc is enabled and will correct it once the network is up.\" >&2
+    fi
+fi"
     fi
 
     sy_tz=$(mconf SYSTEM_TIMEZONE '')

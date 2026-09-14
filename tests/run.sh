@@ -1236,7 +1236,23 @@ check 'the mirror is recorded'          "$(grep '^REPOS_MIRROR=' "$WZS/modules/r
 has 'and set before any package'        "$WZP" 'bootstrap  repos-mirror'
 check 'the ntp client'                  "$(grep '^SYSTEM_NTP=' "$WZS/modules/system.conf")" \
                                         'SYSTEM_NTP=chrony'
-has 'time sync through setup-ntp'       "$WZP" 'firstboot  system-ntp'
+has 'the clock is set before anything' "$WZP" 'firstboot  system-ntp'
+# Not setup-ntp: its last line is `rc-service $svc start`, so its exit status
+# is that start's — and from inside a service in the default runlevel OpenRC
+# refuses anything whose dependencies belong to an earlier one. The daemon ends
+# up configured correctly and the whole apply dies anyway.
+SYSRC2=$(cat "$ROOT/modules/system.sh")
+hasnt 'setup-ntp is never invoked'      "$SYSRC2" 'setup-ntp '
+has   'the daemon is a service action'  "$SYSRC2" 'plan_svc "$sy_svc" default on'
+has   'and the clock is set on its own' "$SYSRC2" 'busybox ntpd -qnN'
+# Starting is best-effort everywhere, for the same reason. Enabling is the
+# durable half and stays fatal; a service that will not start right now is in
+# the runlevel and comes up on the next boot.
+ELSRC2=$(cat "$ROOT/lib/exec_live.sh")
+has   'a service that will not start yet is not fatal' \
+      "$ELSRC2" 'enabled, starts next boot'
+hasnt 'and no longer dies on a dead daemon' \
+      "$ELSRC2" 'die "$es_name reported a successful start'
 has 'and the apkovl has a destination'  "$WZP" 'file       /etc/lbu/lbu.conf'
 # An existing machine is offered up for replacement rather than refused — but
 # only a machine, and only when the answer is yes. Its identity is in there.
