@@ -5,6 +5,45 @@
 
 persist_backend() { fact_persist; }
 
+# lbu refuses to commit when its destination holds an apkovl that is not the
+# one it is about to write:
+#
+#     The following apkovl file(s) were found:
+#     /media/sda2/spore-seed.apkovl.tar.gz
+#     Please use -d to replace.
+#
+# and it is right to. Two apkovls on one filesystem is genuinely ambiguous —
+# the initramfs takes whichever it finds first, so which machine you boot is
+# down to scan order. The one it found is ours: the bootstrap seed, put there
+# by `spore install` so a blank Alpine could find the spore in the first place.
+#
+# Its job ends here. What is about to be written is a superset of it — the same
+# tool, the same service, plus everything the spore just converged — so the seed
+# is renamed out of the way rather than deleted. `lbu commit -d` would delete
+# it, along with anything else matching, and if this medium's boot partition
+# could not be mounted at install time that would be the only copy.
+persist_clear_seed() {
+    pcs_dir=$(rootpath "${1:-}")
+    [ -n "${1:-}" ] && [ -d "$pcs_dir" ] || return 0
+    pcs_seed=$pcs_dir/spore-seed.apkovl.tar.gz
+    [ -f "$pcs_seed" ] || return 0
+    if ! mutate; then
+        say "would set the bootstrap seed aside so lbu can commit here"
+        return 0
+    fi
+    # Kept, and kept legible: still a seed, no longer an apkovl. `spore install`
+    # writes a fresh one whenever it runs, and `spore seed` rebuilds one from a
+    # running machine, so this is a courtesy rather than the only copy.
+    if mv "$pcs_seed" "$pcs_seed.superseded" 2>/dev/null; then
+        say "set the bootstrap seed aside: it has done its job, and lbu will not
+         commit into a directory holding an apkovl it did not write"
+    else
+        warn "could not move $pcs_seed out of the way, so lbu is about to refuse
+         to commit here. Remove it by hand, or set APKOVL_BACKUPDIR to a
+         directory it is not in."
+    fi
+}
+
 persist_commit() {
     case $(persist_backend) in
         lbu)
@@ -36,6 +75,8 @@ persist_commit() {
             case $pc_dest in
                 /*) [ -d "$(rootpath "$pc_dest")" ] || run mkdir -p "$(rootpath "$pc_dest")" ;;
             esac
+
+            persist_clear_seed "$pc_dest"
 
             run lbu commit
             # lbu returns once the write is issued, not once it has reached the

@@ -16,6 +16,21 @@ net_plan() {
         plan_file /etc/hosts 0644 "127.0.0.1	localhost localhost.localdomain
 ::1		localhost localhost.localdomain
 127.0.1.1	$net_host"
+        # And on the running kernel, not only in the file. Nothing rereads
+        # /etc/hostname until the next boot, and one thing that asks the kernel
+        # in the meantime is lbu, which names its overlay $(hostname).apkovl —
+        # so a machine that has not been told its own name commits as
+        # `localhost.apkovl.tar.gz`, then as `coisas.apkovl.tar.gz` next boot,
+        # and lbu refuses the second because it will not write into a directory
+        # holding an apkovl it did not write.
+        plan_firstboot net-hostname "if [ \"\$(hostname 2>/dev/null)\" = '$net_host' ]; then
+    exit 0
+fi
+if hostname '$net_host' 2>/dev/null || hostname -F /etc/hostname 2>/dev/null; then
+    echo \"spore: hostname is now \$(hostname)\"
+else
+    echo 'spore: could not set the running hostname; it applies at the next boot.' >&2
+fi"
     fi
 
     if [ "$(fact_netadmin)" != yes ]; then

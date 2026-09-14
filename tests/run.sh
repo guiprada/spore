@@ -212,6 +212,53 @@ else
 fi
 rm -rf "$AD" "$ADLOG"
 
+section 'the bootstrap seed steps aside so lbu can commit'
+# lbu will not write into a directory holding an apkovl it did not write —
+# "Please use -d to replace" — and it is right to: two apkovls on one
+# filesystem means the initramfs boots whichever it happens to find first. The
+# one it finds is ours, put there by `spore install` so a blank Alpine could
+# find the spore at all. Its job ends at the first successful commit.
+SD2=$(mktemp -d /tmp/spore-seedaside.XXXXXX)
+mkdir -p "$SD2/media/data"
+printf 'not really an apkovl\n' > "$SD2/media/data/spore-seed.apkovl.tar.gz"
+SD2LOG=$SD2/cmds
+export SPORE_FACT_LBU_DEST=/media/data SPORE_RUN_LOG="$SD2LOG"
+alpine "$SPORE" --spore "$EX" --root "$SD2" persist > "$SD2/out" 2>&1 || true
+unset SPORE_FACT_LBU_DEST SPORE_RUN_LOG
+has   'it is set aside, and said so'  "$(cat "$SD2/out")" 'set the bootstrap seed aside'
+check 'the apkovl name is gone' \
+    "$([ -e "$SD2/media/data/spore-seed.apkovl.tar.gz" ] && echo yes || echo no)" no
+# Renamed, not deleted: `lbu commit -d` would remove every apkovl in the
+# directory, and if the boot partition could not be mounted at install time
+# that is the only copy of the seed on the medium.
+check 'but the file is kept' \
+    "$([ -f "$SD2/media/data/spore-seed.apkovl.tar.gz.superseded" ] && echo yes || echo no)" yes
+has   'and lbu is still asked to commit' "$(cat "$SD2LOG")" 'lbu commit'
+hasnt 'but never with -d'               "$(cat "$SD2LOG")" 'lbu commit -d'
+rm -rf "$SD2"
+
+section 'the hostname is set on the kernel, not only in a file'
+# Nothing rereads /etc/hostname until the next boot, and lbu asks the kernel:
+# it names its overlay $(hostname).apkovl.tar.gz. A machine that has not been
+# told its own name commits as localhost.apkovl.tar.gz, then as its real name
+# next boot — and lbu refuses the second, because now there are two.
+NHP=$(alpine "$SPORE" --spore "$EX" plan 2>&1)
+has 'the running hostname is set too' "$NHP" 'firstboot  net-hostname'
+NHR=$(mktemp -d /tmp/spore-nhost.XXXXXX)
+NHW=$(mktemp -d /tmp/spore-nhostw.XXXXXX)
+env SPORE_WORK="$NHW" SPORE_WORK_OWNED=0 SPORE_FACT_INIT=openrc \
+    SPORE_FACT_NETADMIN=yes SPORE_FACT_PERSIST=lbu SPORE_FACT_ARCH=x86_64 \
+    SPORE_FACT_ROOT=yes SPORE_FACT_ALPINE=3.20.0 \
+    "$SPORE" --spore "$EX" --root "$NHR" plan >/dev/null 2>&1 || true
+NHSHA=$(awk -F'\t' '$2=="firstboot" && $3=="net-hostname"{print $4}' "$NHW/plan.tsv" 2>/dev/null | head -1)
+if [ -n "${NHSHA:-}" ] && [ -f "$NHW/content/$NHSHA" ]; then
+    has 'it asks the kernel for the name'  "$(cat "$NHW/content/$NHSHA")" 'hostname 2>/dev/null'
+    has 'and does nothing when it matches' "$(cat "$NHW/content/$NHSHA")" 'exit 0'
+else
+    t_fail 'the hostname action is planned' 'no net-hostname action'
+fi
+rm -rf "$NHR" "$NHW"
+
 section 'a root password the spore sets itself counts, and lands before sshd'
 # Booting with no root password is normal; being reachable in that state is not.
 # So the question ssh has to answer is not "does root have a password" but "will
