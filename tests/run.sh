@@ -237,7 +237,7 @@ RPLOG=$(mktemp /tmp/spore-rootpwlog.XXXXXX)
 export SPORE_RUN_LOG="$RPLOG"
 alpine "$SPORE" --spore "$RP" --root "$RPR" apply >/dev/null 2>&1 || true
 unset SPORE_RUN_LOG
-RP_LASTSH=$(grep -n '^sh ' "$RPLOG" | tail -1 | cut -d: -f1)
+RP_LASTSH=$(grep -nE '^(timeout [0-9]+ )?sh ' "$RPLOG" | tail -1 | cut -d: -f1)
 RP_SSHD=$(grep -n 'rc-update add sshd' "$RPLOG" | head -1 | cut -d: -f1)
 if [ -n "$RP_LASTSH" ] && [ -n "$RP_SSHD" ] && [ "$RP_LASTSH" -lt "$RP_SSHD" ]; then
     t_ok 'and every firstboot script runs before sshd is enabled'
@@ -428,7 +428,7 @@ esac
 # The ordering invariant: enabling community must precede every apk add, or
 # `apk add dufs` fails on a stock Alpine.
 FIRST_APK=$(grep -n 'apk add' "$LOG" | head -1 | cut -d: -f1)
-FIRST_SH=$(grep -n '^sh ' "$LOG" | head -1 | cut -d: -f1)
+FIRST_SH=$(grep -nE '^(timeout [0-9]+ )?sh ' "$LOG" | head -1 | cut -d: -f1)
 if [ -n "$FIRST_SH" ] && [ -n "$FIRST_APK" ] && [ "$FIRST_SH" -lt "$FIRST_APK" ]; then
     t_ok 'bootstrap scripts run before any apk add'
 else
@@ -438,7 +438,7 @@ fi
 # Services start last. The accounts they run as, the capabilities they need and
 # the volumes they serve are all firstboot work; starting first fails in ways
 # that look like the service itself is broken.
-LAST_SH=$(grep -n '^sh ' "$LOG" | tail -1 | cut -d: -f1)
+LAST_SH=$(grep -nE '^(timeout [0-9]+ )?sh ' "$LOG" | tail -1 | cut -d: -f1)
 FIRST_RC=$(grep -n '^rc-update' "$LOG" | head -1 | cut -d: -f1)
 if [ -n "$LAST_SH" ] && [ -n "$FIRST_RC" ] && [ "$LAST_SH" -lt "$FIRST_RC" ]; then
     t_ok 'every firstboot script runs before any service is touched'
@@ -1138,10 +1138,50 @@ has 'timezone through setup-timezone'   "$WZP" 'firstboot  system-timezone'
 # Given a layout with no variant, setup-keymap asks the machine for one — and
 # nobody answers on a box that is booting itself, so it reads EOF and asks
 # again, for ever, with no console to say so on.
+# setup-keymap is not called at all. Its prompt is a `while true` around a read
+# that treats an empty answer as "ask again", so on a machine with nobody at the
+# console it loops on EOF for ever, reprinting the variant list as fast as the
+# console will take it. Closing its stdin makes it spin faster, not stop.
 SYSRC=$(cat "$ROOT/modules/system.sh")
-has 'setup-keymap cannot be asked anything' "$SYSRC" 'setup-keymap $sy_keymap < /dev/null'
-has 'nor setup-timezone'                    "$SYSRC" "setup-timezone -z '\$sy_tz' < /dev/null"
-has 'nor setup-ntp'                         "$SYSRC" 'setup-ntp $sy_ntp < /dev/null'
+has   'the keymap is installed direct' "$SYSRC" 'render_keymap'
+KMGEN=$( . "$ROOT/lib/render.sh"; render_keymap br br-abnt2 )
+hasnt 'and the script never calls it'  "$KMGEN" 'setup-keymap'
+KMSRC=$(cat "$ROOT/lib/render.sh")
+has 'it copies the map itself'        "$KMSRC" '/usr/share/bkeymaps'
+has 'and points loadkmap at it'       "$KMSRC" '/etc/conf.d/loadkmap'
+has 'and adds the service'            "$KMSRC" 'rc-update --quiet add loadkmap boot'
+# Run it. A pair that exists must land, and one that does not must say which do
+# and stop — that listing is the whole of what the prompt was for.
+KMT=$(mktemp -d /tmp/spore-km.XXXXXX)
+mkdir -p "$KMT/usr/share/bkeymaps/br" "$KMT/usr/share/bkeymaps/us"
+touch "$KMT/usr/share/bkeymaps/br/br-abnt2.bmap.gz" \
+      "$KMT/usr/share/bkeymaps/br/br-latin1-abnt2.bmap.gz" \
+      "$KMT/usr/share/bkeymaps/us/us.bmap.gz"
+km_run() {
+    ( . "$ROOT/lib/render.sh"; render_keymap "$1" "$2" ) |
+        sed "s|/usr/share/bkeymaps|$KMT/usr/share/bkeymaps|g;
+             s|/etc/keymap|$KMT/etc/keymap|g; s|/etc/conf.d|$KMT/etc/conf.d|g" > "$KMT/km.sh"
+    # The failing cases exit 1 on purpose, and under `set -e` a command
+    # substitution that fails takes the whole suite with it.
+    sh "$KMT/km.sh" 2>&1 || true
+}
+KMO=$(km_run br br-abnt2)
+has   'a real pair is installed'     "$KMO" 'spore: keymap br br-abnt2'
+check 'and loadkmap points at it' \
+    "$(grep -c 'br-abnt2.bmap.gz' "$KMT/etc/conf.d/loadkmap" 2>/dev/null || echo 0)" 1
+# `br br` is exactly what a layout with no variant becomes, and it is not real.
+KMO2=$(km_run br br)
+has 'a pair that is not real is named'  "$KMO2" "layout 'br' has no variant 'br'"
+has 'with the ones that are'            "$KMO2" 'spore:   br br-abnt2'
+KMO3=$(km_run zz zz)
+has 'and an unknown layout likewise'    "$KMO3" "no layout 'zz'"
+has 'listing the layouts there are'     "$KMO3" 'spore:   br'
+rm -rf "$KMT"
+# Nothing may run for ever, whatever it is. An action that never returns takes
+# the boot with it, before anything can be written down about why.
+ELSRC=$(cat "$ROOT/lib/exec_live.sh")
+has 'every script action has a deadline' "$ELSRC" 'timeout "$SPORE_SCRIPT_TIMEOUT" sh'
+has 'and stdin is left alone'            "$ELSRC" 'Stdin is deliberately not redirected'
 # A layout on its own becomes its own variant, which is all `us us` ever was.
 # Refusing instead would fail a whole apply over a keyboard, and re-asking would
 # be a prompt you cannot get past — neither is better than a keymap.
@@ -1150,8 +1190,9 @@ printf 'SYSTEM_KEYMAP=br\n' > "$KM/modules/system.conf"
 printf 'FORMAT=1\nHOST=k\nMODULES="system"\n' > "$KM/spore.conf"
 KMO=$(alpine "$SPORE" --spore "$KM" plan 2>&1)
 has 'a layout alone still plans'          "$KMO" 'firstboot  system-keymap'
-has 'and says it doubled the layout'      "$KMO" "so
-         'br br' is used"
+# No note here any more: whether `br br` is a real pair is a fact about the
+# image's keymaps, which this planner cannot see. The script says so on the
+# machine, where the files are, and lists the variants that do exist.
 printf 'SYSTEM_KEYMAP=br br-abnt2\n' > "$KM/modules/system.conf"
 KMO2=$(alpine "$SPORE" --spore "$KM" plan 2>&1)
 has 'both words plan fine'                "$KMO2" 'firstboot  system-keymap'

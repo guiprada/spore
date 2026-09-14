@@ -327,3 +327,71 @@ else
 fi
 RNR
 }
+
+# render_keymap <layout> <variant>
+# Prints shell that installs a console keymap, with no way to ask a question.
+#
+# Not setup-keymap. That tool prompts whenever the layout and variant it is
+# given do not match a file, and its prompt is a `while true` around `ask` that
+# treats an empty answer as "ask again":
+#
+#     select_variant() {
+#         while true; do
+#             show_variants "$layout"
+#             ask "Select variant (or 'abort'):" "$variant"
+#             variant="$resp"
+#             ...
+#         done
+#     }
+#
+# On a machine that is booting itself nobody answers, so it reads EOF, gets an
+# empty answer, and loops — reprinting the whole variant list every pass as fast
+# as the console will take it. There is no login to reach and nothing to do but
+# cut the power. Closing its stdin does not help; it makes it spin faster.
+#
+# What it does once it has a valid pair has no decisions in it at all: copy the
+# map out of /usr/share/bkeymaps, point /etc/conf.d/loadkmap at the copy, add
+# the service. So that is what this does, and a pair that does not exist is
+# reported with the ones that do — which is all the prompt was ever for.
+render_keymap() {
+    printf "layout='%s'\nvariant='%s'\n" "$1" "$2"
+    cat <<'RKM'
+d=/usr/share/bkeymaps
+f=''
+for c in "$d/$layout/$variant.bmap.gz" "$d/$layout/$variant.bmap"; do
+    if [ -f "$c" ]; then f=$c; break; fi
+done
+
+if [ -z "$f" ]; then
+    if [ -d "$d/$layout" ]; then
+        echo "spore: layout '$layout' has no variant '$variant'. It has:" >&2
+        for c in "$d/$layout"/*; do
+            n=${c##*/}
+            echo "spore:   $layout ${n%%.bmap*}" >&2
+        done
+    elif [ -d "$d" ]; then
+        echo "spore: there is no layout '$layout' in $d. There is:" >&2
+        for c in "$d"/*; do
+            [ -d "$c" ] || continue
+            echo "spore:   ${c##*/}" >&2
+        done
+    else
+        echo "spore: $d does not exist, so kbd-bkeymaps is not installed and" >&2
+        echo "spore: no keymap can be set. That is a package this machine could" >&2
+        echo "spore: not fetch, not a wrong layout." >&2
+    fi
+    echo 'spore: set SYSTEM_KEYMAP in modules/system.conf to one of those.' >&2
+    exit 1
+fi
+
+mkdir -p /etc/keymap /etc/conf.d
+cp "$f" "/etc/keymap/${f##*/}"
+if [ -f /etc/conf.d/loadkmap ]; then
+    sed -i '/^KEYMAP=/d' /etc/conf.d/loadkmap
+fi
+printf 'KEYMAP=%s\n' "/etc/keymap/${f##*/}" >> /etc/conf.d/loadkmap
+rc-update --quiet add loadkmap boot 2>/dev/null || true
+rc-service loadkmap restart >/dev/null 2>&1 || true
+echo "spore: keymap $layout $variant"
+RKM
+}

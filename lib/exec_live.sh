@@ -205,6 +205,28 @@ el_blob() {
 # Scripted work, stamped so it runs once. `bootstrap` runs before packages;
 # `firstboot` is deferred work that runs now under `apply` and, under `build`,
 # becomes a script in /etc/local.d that runs at first germination instead.
+# No action may hang the boot. One that never returns takes the machine with
+# it, before anything can be written down about why — which is exactly what
+# setup-keymap's EOF loop did, and the cost of that was a week of reading a log
+# from the last boot that finished. Generous, because a legitimate action can be
+# genuinely slow; finite, because none of them can be infinite. Set to 0 to
+# disable, for an action that really does take longer than this.
+: "${SPORE_SCRIPT_TIMEOUT:=600}"
+
+# Stdin is deliberately not redirected. Closing it does not stop a tool that
+# prompts — a `while` loop around a read treats EOF as an empty answer and asks
+# again, so /dev/null turns a program that blocks into one that spins. Better it
+# waits, where a human at a console can still answer, and the deadline below
+# ends it when there is nobody.
+el_run_script() {
+    ers_file=$1
+    if [ "${SPORE_SCRIPT_TIMEOUT:-0}" != 0 ] && command -v timeout >/dev/null 2>&1; then
+        run timeout "$SPORE_SCRIPT_TIMEOUT" sh "$ers_file"
+    else
+        run sh "$ers_file"
+    fi
+}
+
 el_script() {
     es_kind=$1 es_id=$2 es_sha=$3
     es_stamp=$(rootpath "/var/lib/spore/$es_kind/$es_id")
@@ -213,7 +235,7 @@ el_script() {
     fi
     if ! mutate; then say "would run $es_kind $es_id"; return 0; fi
 
-    run sh "$(content_path "$es_sha")"
+    el_run_script "$(content_path "$es_sha")"
     mkdir -p "$(dirname "$es_stamp")"
     printf '%s\n' "$es_sha" > "$es_stamp"
     changed "$es_kind $es_id"
