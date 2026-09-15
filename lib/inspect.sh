@@ -94,7 +94,7 @@ inspect_stale() {
 # because the committed overlay carries /etc/spore/.seeded and the seed service
 # stops at it before applying anything.
 inspect_seed_race() {
-    isr_boot=$1 isr_data=$2 isr_dev=${3:-/dev/sdX1}
+    isr_boot=$1 isr_data=$2 isr_dev=${3:-/dev/sdX}
     [ -f "$isr_boot/spore-seed.apkovl.tar.gz" ] || return 0
     find "$isr_data" -maxdepth 1 -name '*.apkovl.tar.gz' ! -name 'spore-seed.*' \
         2>/dev/null | grep -q . || return 0
@@ -116,14 +116,12 @@ inspect_seed_race() {
 
     warn "there is also a committed overlay on the data partition, so this medium
          holds two apkovls and the initramfs takes whichever it finds first.$isr_last
-         To hand the machine over to its own overlay, retire this copy:
-             sudo mount $isr_dev /mnt &&
-               sudo mv /mnt/spore-seed.apkovl.tar.gz /mnt/spore-seed.superseded.tar.gz &&
-               sudo umount /mnt
-         Keep it instead until you have seen the machine boot without it: it is
-         the only thing that recovers this medium if the initramfs turns out not
-         to be able to read the data partition, and \`spore install\` writes a
-         fresh one whenever it runs."
+         To hand the machine over to its own overlay:
+             sudo ${SPORE_SELF:-spore} retire $isr_dev
+         Keep the seed instead until you have seen the machine boot without it:
+         it is the only thing that recovers this medium if the initramfs turns
+         out not to be able to read the data partition. \`spore install\` writes
+         a fresh one whenever it runs."
 }
 
 inspect_data() {
@@ -302,7 +300,7 @@ inspect_medium() {
         fi
         if [ -f "$SPORE_WORK/look1/spore-seed.apkovl.tar.gz" ]; then
             printf '  spore-seed.apkovl.tar.gz — the initramfs can certainly read this one\n' >&2
-            inspect_seed_race "$SPORE_WORK/look1" "$SPORE_WORK/look" "$im2_p1"
+            inspect_seed_race "$SPORE_WORK/look1" "$SPORE_WORK/look" "$im2_target"
         else
             printf '  no seed here. If the machine boots without running spore, the\n' >&2
             printf '  initramfs could not read the data partition; put a copy here:\n' >&2

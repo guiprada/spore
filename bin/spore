@@ -42,6 +42,9 @@ commands:
                     write a machine onto a mounted data partition; naming the
                     boot partition too puts the seed where the initramfs can
                     certainly read it
+  retire DEV        after the machine has committed, set its bootstrap seeds
+                    aside so the committed overlay is the only apkovl left and
+                    the initramfs cannot pick the wrong one
 
   init [DIR]     scaffold a new spore
   plan           show the action list this spore produces (no changes)
@@ -397,6 +400,21 @@ cmd_install() {
     install_machine "$@"
 }
 
+cmd_retire() {
+    [ $# -ge 1 ] && [ $# -le 2 ] ||
+        die "usage: spore retire DEVICE   (or: spore retire DATADIR [BOOTDIR])"
+    spore_workspace
+    if [ -b "$1" ]; then
+        [ $# -eq 1 ] ||
+            die "when the target is a device both partitions are found on it,
+        so there is no second argument to give."
+        retire_medium "$1"
+    else
+        [ -d "$1" ] || die "no such device or directory: $1"
+        retire_seeds "$@"
+    fi
+}
+
 cmd_setup() {
     spore_workspace
     wizard "$@"
@@ -434,6 +452,7 @@ case $SPORE_CMD in
     inspect) cmd_inspect "$@" ;;
     new)     cmd_new "$@" ;;
     install) cmd_install "$@" ;;
+    retire)  cmd_retire "$@" ;;
     init)    cmd_init "$@" ;;
     plan)    cmd_noargs "$@"; cmd_plan ;;
     apply)   cmd_noargs "$@"; cmd_apply ;;

@@ -1833,24 +1833,28 @@ RACE=$(mktemp -d /tmp/spore-race.XXXXXX)
 mkdir -p "$RACE/boot" "$RACE/data"
 printf 'seed\n' > "$RACE/boot/spore-seed.apkovl.tar.gz"
 RACE_Q=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
-          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz1 2>&1 )
+          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz 2>&1 )
 check 'before any commit, a seed on the boot partition is just the seed' \
     "${RACE_Q:-quiet}" quiet
 printf 'overlay\n' > "$RACE/data/coisas.apkovl.tar.gz"
 RACE_W=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
-          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz1 2>&1 )
+          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz 2>&1 )
 has   'once one is committed, the race is called out' "$RACE_W" 'holds two apkovls'
-has   'with the command to settle it'                 "$RACE_W" 'sudo mount /dev/sdz1 /mnt'
+# A mount/rename/unmount printed inside a warning is a line long enough to wrap,
+# and the first person to paste it pasted as far as the wrap — renaming the seed
+# onto itself. It names the verb now.
+has   'with the command to settle it'                 "$RACE_W" 'spore retire /dev/sdz'
+hasnt 'and not a shell line long enough to wrap'      "$RACE_W" 'sudo mv /mnt/'
 # The log settles which way it went, so this does not have to predict it. A full
 # apply can only happen when there was no /etc/spore/.seeded to find, and the
 # committed overlay carries one — so that boot came up from a seed.
 printf 'applying /media/sda2/spore\n25 changed, 3 already correct\n' > "$RACE/data/spore-seed.log"
 RACE_A=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
-          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz1 2>&1 )
+          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz 2>&1 )
 has   'and the last boot is read off the log'  "$RACE_A" 'did not use it: its log is a full apply'
 printf 'already converged; nothing to do\n' > "$RACE/data/spore-seed.log"
 RACE_C=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
-          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz1 2>&1 )
+          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz 2>&1 )
 has   'the other way round too'    "$RACE_C" 'last boot used the committed overlay'
 has   'still warning, since it is probe order either way' "$RACE_C" 'holds two apkovls'
 rm -f "$RACE/data/spore-seed.log"
@@ -1862,7 +1866,7 @@ has   'and the reason to keep it'  "$RACE_W" 'until you have seen the machine bo
 rm -f "$RACE/data/coisas.apkovl.tar.gz"
 printf 'x\n' > "$RACE/data/spore-seed.superseded.tar.gz"
 RACE_S=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
-          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz1 2>&1 )
+          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz 2>&1 )
 check 'a retired seed is not a second apkovl' "${RACE_S:-quiet}" quiet
 rm -rf "$RACE"
 
@@ -2081,6 +2085,62 @@ else
     umount "$MP" 2>/dev/null || true
 fi
 rm -rf "$NB"
+
+section 'spore retire: handing the machine over to its own overlay'
+# The counterpart to the second seed `install` writes on the boot partition.
+# Once the machine has committed, that copy stops being insurance and starts
+# competing: two apkovls means the initramfs picks by probe order.
+RET=$(mktemp -d /tmp/spore-retire.XXXXXX)
+mkdir -p "$RET/data" "$RET/boot"
+printf 'seed\n' > "$RET/data/spore-seed.apkovl.tar.gz"
+printf 'seed\n' > "$RET/boot/spore-seed.apkovl.tar.gz"
+
+# Refused while the seed is the only thing that can boot the machine. Retiring
+# it here leaves the medium with no apkovl at all, and the box comes up as blank
+# Alpine with nothing on it to say why.
+RET_E=$("$SPORE" retire "$RET/data" "$RET/boot" 2>&1 || true)
+has   'it refuses before anything is committed' "$RET_E" 'no committed overlay'
+check 'and the seed is untouched' \
+    "$([ -f "$RET/data/spore-seed.apkovl.tar.gz" ] && echo yes || echo no)" yes
+
+printf 'overlay\n' > "$RET/data/coisas.apkovl.tar.gz"
+RET_N=$("$SPORE" -n retire "$RET/data" "$RET/boot" 2>&1)
+has   'a dry run says what it would do' "$RET_N" 'would retire'
+check 'and does not do it' \
+    "$([ -f "$RET/boot/spore-seed.apkovl.tar.gz" ] && echo yes || echo no)" yes
+
+RET_O=$("$SPORE" retire "$RET/data" "$RET/boot" 2>&1)
+# Both partitions: re-running `install` after a commit puts a live seed back on
+# the data partition too, so retiring only the boot copy still leaves two.
+check 'the boot-partition seed is retired' \
+    "$([ -f "$RET/boot/spore-seed.apkovl.tar.gz" ] && echo yes || echo no)" no
+check 'and the data-partition one as well' \
+    "$([ -f "$RET/data/spore-seed.apkovl.tar.gz" ] && echo yes || echo no)" no
+check 'renamed, not deleted' \
+    "$(cat "$RET/boot/spore-seed.superseded.tar.gz" 2>/dev/null)" seed
+check 'and the committed overlay is left alone' \
+    "$(cat "$RET/data/coisas.apkovl.tar.gz" 2>/dev/null)" overlay
+RET_LEFT=$(cd "$RET/boot" && ls -1 ./*.apkovl.tar.gz* 2>/dev/null | tr '\n' ' ')
+check 'nothing the initramfs globs is left on the boot partition' "${RET_LEFT:-none}" none
+has   'it says what the next boot should look like' "$RET_O" 'already converged'
+has   'and how to undo it'                          "$RET_O" 'spore install'
+
+# Running it twice is not an error: the medium is simply already handed over.
+RET_T=$("$SPORE" retire "$RET/data" "$RET/boot" 2>&1)
+has   'a second run is a no-op, and says so' "$RET_T" 'already handed over'
+
+# `retire` overwrites the seed the commit set aside, which is the usual case on
+# a medium that has booted once — mv asks before overwriting a destination it
+# cannot write to, and that question has hung a boot here already.
+RETSRC=$(cat "$ROOT/lib/bootstrap.sh")
+has   'the rename never asks' "$RETSRC" 'mv -f "$rs_f" "$rs_keep" < /dev/null'
+
+RET_U=$("$SPORE" retire 2>&1 || true)
+has   'it needs a target'    "$RET_U" 'usage: spore retire'
+RET_M=$("$SPORE" retire "$RET/nope" 2>&1 || true)
+has   'and refuses one that is not there' "$RET_M" 'no such device or directory'
+rm -rf "$RET"
+
 
 rm -rf "$R" "$R2" "$R3" "$R4" "$R5" "$BD" "$LOG" "$LOG2" "$PLOG" 2>/dev/null || true
 

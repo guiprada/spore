@@ -404,3 +404,103 @@ install_machine() {
     printf 'The first boot finds the spore, applies it and commits; progress goes\n'
     printf 'to spore-seed.log beside the spore.\n'
 }
+
+# --- retire ------------------------------------------------------------------
+#
+# The counterpart to the second copy install writes. `spore install` puts a seed
+# on the boot partition as well as beside the spore, because the initramfs can
+# certainly read a FAT filesystem and only probably read an ext4 one — so a
+# machine that cannot reach the data partition still has something to boot.
+#
+# Once the machine has committed, that insurance becomes a competitor. Alpine's
+# initramfs-init takes `head -n 1` of everything nlplug-findfs found, so a seed
+# on one partition and a committed overlay on the other means the machine that
+# comes up is probe order — and the seed usually wins, so the box re-applies the
+# whole spore on every boot, fetching packages each time, and never once boots
+# the overlay it keeps writing.
+#
+# This was a mount, a rename and an unmount printed inside a warning. That is a
+# line long enough to wrap in a terminal, and the first person to paste it
+# pasted as far as the wrap and renamed the seed onto itself.
+
+# retire_seeds DATA BOOT — the part that needs no device, so it can be tested.
+retire_seeds() {
+    rs_data=$1 rs_boot=${2:-}
+
+    # Nothing is retired before there is something to retire *to*. Without a
+    # committed overlay this leaves the medium with no apkovl at all, and the
+    # machine comes up as blank Alpine with nothing on it to say why.
+    if ! find "$rs_data" -maxdepth 1 -name '*.apkovl.tar.gz' ! -name 'spore-seed.*' \
+            2>/dev/null | grep -q .; then
+        die "there is no committed overlay on $rs_data, so the seed is still the
+         only thing that can boot this machine. Retiring it now would leave the
+         medium with no apkovl at all.
+         Boot it once and let the spore commit first; \`spore inspect\` says
+         whether it has."
+    fi
+
+    rs_n=0
+    for rs_d in "$rs_data" "$rs_boot"; do
+        [ -n "$rs_d" ] && [ -d "$rs_d" ] || continue
+        for rs_f in "$rs_d"/spore-seed.apkovl.tar.gz*; do
+            [ -f "$rs_f" ] || continue
+            rs_name=${rs_f##*/}
+            rs_keep=$rs_d/spore-seed.superseded.tar.gz${rs_name#spore-seed.apkovl.tar.gz}
+            if [ "$SPORE_DRYRUN" = 1 ]; then
+                say "would retire $rs_f"
+            else
+                # -f, and stdin closed: mv asks before overwriting a destination
+                # it cannot write to, and that question has hung a boot here once
+                # already. There is usually a superseded seed here from the
+                # commit, so the destination does exist.
+                # shellcheck disable=SC2217  # busybox mv does read stdin: that is the prompt
+                mv -f "$rs_f" "$rs_keep" < /dev/null ||
+                    die "could not rename $rs_f — is $rs_d mounted read-only?"
+            fi
+            rs_n=$((rs_n + 1))
+        done
+    done
+
+    if [ "$rs_n" = 0 ]; then
+        say "no live seed on this medium — it is already handed over."
+        return 0
+    fi
+    [ "$SPORE_DRYRUN" = 1 ] && return 0
+    printf '\nretired %s seed(s). The committed overlay is now the only apkovl here,\n' "$rs_n"
+    printf 'so the next boot uses it: expect spore-seed.log to say\n'
+    printf '"already converged; nothing to do" rather than a full apply.\n\n'
+    printf 'If the machine comes up blank instead, the initramfs cannot read the data\n'
+    printf 'partition. Put the seed back with: spore install <dir> <device>\n'
+}
+
+# retire_medium DEVICE — mount both partitions, retire, unmount.
+retire_medium() {
+    rm_dev=$1
+    [ "$(id -u)" = 0 ] || die "mounting $rm_dev needs root:
+             sudo $SPORE_SELF retire $rm_dev"
+    media_has_medium "$rm_dev" || die "$rm_dev has no medium in it"
+
+    rm_p1=$(media_part "$rm_dev" 1)
+    rm_p2=$(media_part "$rm_dev" 2)
+    [ -b "$rm_p2" ] ||
+        die "$rm_p2 does not exist, so this is not a spore medium."
+
+    mkdir -p "$SPORE_WORK/ret/data" "$SPORE_WORK/ret/boot"
+    # Read-write from the start: the whole point of the command is the rename,
+    # and finding out at the rename that the mount was read-only leaves half a
+    # medium behind.
+    mount "$rm_p2" "$SPORE_WORK/ret/data" ||
+        die "cannot mount $rm_p2 — unmount it elsewhere first"
+    SPORE_UNMOUNT="$SPORE_WORK/ret/data"
+    rm_boot=''
+    if [ -b "$rm_p1" ] && mount "$rm_p1" "$SPORE_WORK/ret/boot" 2>/dev/null; then
+        SPORE_UNMOUNT="$SPORE_WORK/ret/boot $SPORE_UNMOUNT"
+        rm_boot=$SPORE_WORK/ret/boot
+    else
+        warn "could not mount $rm_p1, so only the data partition is checked.
+         A seed left on the boot partition still competes with the overlay."
+    fi
+
+    retire_seeds "$SPORE_WORK/ret/data" "$rm_boot"
+    [ "$SPORE_DRYRUN" = 1 ] || sync
+}
