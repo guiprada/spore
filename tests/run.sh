@@ -1309,6 +1309,23 @@ has 'and runs the seed'               "$SEEDUNIT" '/usr/local/lib/spore/seed-run
 has 'ordered after mounts and drivers'  "$SEEDUNIT" 'after localmount hwdrivers modules net'
 hasnt 'without depending on them'      "$SEEDUNIT" 'need localmount'
 has 'hook discovers a spore on media' "$SEEDSTART" '/media/*/spore'
+# The spore is looked for before the stamp is checked, because finding it is
+# also what tells save_log where this boot's log goes. Stopping at the stamp
+# first meant the boot that finally came up on its own overlay — the one worth
+# having a record of — wrote its log to a RAM disk and took it down with it.
+SEED_FIND=$(printf '%s\n' "$SEEDSTART" | grep -n 'for d in /media/\*/spore' | head -1 | cut -d: -f1)
+SEED_STAMP=$(printf '%s\n' "$SEEDSTART" | grep -n 'f /etc/spore/.seeded' | head -1 | cut -d: -f1)
+if [ -n "$SEED_FIND" ] && [ -n "$SEED_STAMP" ] && [ "$SEED_FIND" -lt "$SEED_STAMP" ]; then
+    t_ok 'and looks before it checks the converged stamp'
+else
+    t_fail 'and looks before it checks the converged stamp' \
+        "find [$SEED_FIND], stamp [$SEED_STAMP]"
+fi
+# `spore retire` takes the live seed away, so a medium is ours by any of its
+# marks. Keying only on the seed meant the first boot after a retire had nowhere
+# to write its log.
+has 'a retired medium still takes the log' "$SEEDSTART" 'spore-seed.superseded.tar.gz'
+has 'as does one with just a spore on it'  "$SEEDSTART" '/mnt/spore-log/spore/spore.conf'
 has 'hook scans block devices too'    "$SEEDSTART" '/dev/sd'
 # A VM guest is one of the two things this is for, and every hypervisor hands it
 # a virtio disk. Scanning only sd/nvme/mmcblk found nothing there and called it
@@ -1784,6 +1801,24 @@ case $TFW in
     found|absent) t_ok 'firmware discovery answers either way' ;;
     *)            t_fail 'firmware discovery answers either way' "$TFW" ;;
 esac
+
+# Once the seed is retired the machine boots its own overlay, the seed service
+# stops at the stamp, and nothing is committed because nothing changed. That is
+# the finished state — and it read as "the boot ended without the spore
+# committing", word for word what a boot that died halfway gets.
+TRD=$(mktemp -d /tmp/spore-tryverdict.XXXXXX)
+printf 'Linux version 6.18\n=== spore seed: now ===\nalready converged; nothing to do\n' \
+    > "$TRD/quiet.log"
+TRD_Q=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/try.sh"
+         SPORE_WORK=$TRD; try_report "$TRD/quiet.log" 2>&1 )
+has   'a boot with nothing to do is a finished machine' "$TRD_Q" 'booted from its own committed overlay'
+hasnt 'not a boot that failed to commit'                "$TRD_Q" 'ended without the spore committing'
+# And a boot that really did stop short still says so.
+printf 'Linux version 6.18\n=== spore seed: now ===\n  > package openssh\n' > "$TRD/stuck.log"
+TRD_S=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/try.sh"
+         SPORE_WORK=$TRD; try_report "$TRD/stuck.log" 2>&1 )
+has 'while one that stopped still names where' "$TRD_S" 'package openssh'
+rm -rf "$TRD"
 
 section 'inspect: read the evidence instead of inferring from symptoms'
 # Everything needed after a failed boot is on the data partition, and getting at

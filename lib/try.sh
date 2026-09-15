@@ -345,6 +345,19 @@ try_report() {
         return 0
     fi
 
+    # The other success, and the one this had no verdict for. Once the seed is
+    # retired the machine comes up on its own overlay, the seed service finds
+    # /etc/spore/.seeded and stops, and nothing is committed because nothing
+    # changed. That is a finished machine — and it was reported as "the boot
+    # ended without the spore committing", word for word what a boot that died
+    # halfway gets.
+    if grep -q 'already converged; nothing to do' "$tr_c" 2>/dev/null; then
+        say "it booted from its own committed overlay and had nothing to do,
+         which is what a finished machine looks like. Nothing was committed
+         because nothing changed. $tr_log has the boot."
+        return 0
+    fi
+
     # An announcement with no matching completion names the action it stopped
     # in, which is the entire reason those announcements exist.
     tr_last=$(grep -n '^ *> ' "$tr_c" 2>/dev/null | tail -1)

@@ -74,7 +74,13 @@ save_log() {
              /dev/nvme[0-9]n[0-9]p[0-9]* /dev/mmcblk[0-9]p[0-9]*; do
         [ -b "$d" ] || continue
         mount "$d" /mnt/spore-log 2>/dev/null || continue
-        if [ -f /mnt/spore-log/spore-seed.apkovl.tar.gz ]; then
+        # Ours by any of its marks, not only by a live seed. `spore retire`
+        # removes that seed once the machine boots its own overlay, and this
+        # looked for nothing else — so the first boot after a retire, the one
+        # that proves the whole thing works, had nowhere to put its log.
+        if [ -f /mnt/spore-log/spore-seed.apkovl.tar.gz ] ||
+           [ -f /mnt/spore-log/spore-seed.superseded.tar.gz ] ||
+           [ -f /mnt/spore-log/spore/spore.conf ]; then
             mount -o remount,rw /mnt/spore-log 2>/dev/null || true
             cp /var/log/spore-seed.log /mnt/spore-log/spore-seed.log 2>/dev/null
             sync 2>/dev/null || true
@@ -86,17 +92,22 @@ save_log() {
 }
 trap save_log EXIT
 
-if [ -f /etc/spore/.seeded ]; then
-    echo "already converged; nothing to do"
-    return 0
-fi
-
 # Already-mounted media first, then anything mountable. The spore is a directory
 # named `spore` at the root of a filesystem — the same place you unpacked it to.
 found=
 for d in /media/*/spore /mnt/*/spore; do
     [ -f "$d/spore.conf" ] && { found=$d; break; }
 done
+# Before the stamp check, not after it, because this is also what tells save_log
+# where the log goes. Looking first and stopping second meant the boot that
+# finally came up on its own overlay — the one worth having a record of — wrote
+# its log to a RAM disk and took it down with it.
+[ -n "$found" ] && seed_data=$(dirname "$found")
+
+if [ -f /etc/spore/.seeded ]; then
+    echo "already converged; nothing to do"
+    return 0
+fi
 
 if [ -z "$found" ]; then
     mkdir -p /mnt/spore-scan
