@@ -124,6 +124,29 @@ inspect_seed_race() {
          a fresh one whenever it runs."
 }
 
+# What an overlay that is missing something actually holds. "It has no
+# spore-seed service" is a finding, not an explanation: lbu does not tar /etc
+# wholesale, it takes what `apk audit --backup` reports plus the includes, and
+# which of those dropped the file is not guessable from here. The archive knows,
+# so print enough of it to tell — the spore's own files are the ones that decide
+# whether this overlay is a machine or a shell of one.
+inspect_ovl_contents() {
+    ioc_list=$1
+    printf '  %s entries; top level: %s\n' \
+        "$(wc -l < "$ioc_list" | tr -d ' ')" \
+        "$(sed -n 's|^\./||; s|^/||; s|/.*||p' "$ioc_list" | sort -u | tr '\n' ' ')" >&2
+    printf '  of the files spore itself writes:\n' >&2
+    for ioc_p in etc/hostname etc/hosts etc/ssh/sshd_config etc/lbu/lbu.conf \
+                 etc/init.d/spore-seed etc/runlevels/default/sshd \
+                 usr/local/lib/spore/seed-run; do
+        if grep -qE "^\.?/?$ioc_p\$" "$ioc_list"; then
+            printf '    %syes%s  %s\n' "$_c_green" "$_c_reset" "$ioc_p" >&2
+        else
+            printf '    %sNO %s  %s\n'  "$_c_red" "$_c_reset" "$ioc_p" >&2
+        fi
+    done
+}
+
 inspect_data() {
     id_dir=$1
     id_dev=${2-}
@@ -197,6 +220,7 @@ inspect_data() {
             if ! grep -q 'etc/init.d/spore-seed' "$SPORE_WORK/ovl.files"; then
                 printf '  it carries no spore-seed service, so a machine booted from it is\n' >&2
                 printf '  configured but inert — it will not apply this spore again.\n' >&2
+                inspect_ovl_contents "$SPORE_WORK/ovl.files"
             elif grep -q 'usr/local/lib/spore/seed-run' "$SPORE_WORK/ovl.files"; then
                 printf '  %sand it carries the tool, so it can boot on its own%s\n' \
                     "$_c_green" "$_c_reset" >&2

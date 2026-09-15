@@ -195,10 +195,21 @@ persist_clear_seed() {
 #
 # Invisible for as long as the machine keeps booting from the seed, which
 # carries the tool — and the seed is exactly what `spore retire` takes away.
+# File by file, not the tree. `lbu include` takes a directory without
+# complaining and then keeps nothing of it, so naming /usr/local/lib/spore was
+# a no-op that looked exactly like a fix. The tool is a few dozen small files
+# and they are all known, so listing them is cheap and it is the only form lbu
+# actually honours.
 persist_tool_paths() {
     [ -f "$(rootpath /etc/init.d/spore-seed)" ] || return 0
     for ptp_p in /usr/local/lib/spore /usr/local/bin/spore; do
-        [ -e "$(rootpath "$ptp_p")" ] && printf '%s\n' "$ptp_p"
+        ptp_r=$(rootpath "$ptp_p")
+        if [ -d "$ptp_r" ]; then
+            find "$ptp_r" \( -type f -o -type l \) 2>/dev/null |
+                sed "s|^$ptp_r|$ptp_p|"
+        elif [ -e "$ptp_r" ]; then
+            printf '%s\n' "$ptp_p"
+        fi
     done
     return 0
 }
@@ -365,13 +376,54 @@ persist_verify() {
     [ "$pv_dir" != unset ] && [ -d "$pv_dir" ] || return 0
     pv_f=$pv_dir/$(hostname 2>/dev/null).apkovl.tar.gz
     [ -f "$pv_f" ] || return 0
-    if tar -tzf "$pv_f" >/dev/null 2>&1; then
-        say "verified $pv_f ($(wc -c < "$pv_f") bytes)"
-    else
+    if ! tar -tzf "$pv_f" > "$SPORE_WORK/committed.files" 2>/dev/null; then
         die "$pv_f was written but is not a readable archive.
          Do not reboot until this is resolved: the machine restores from this
          file and will come back without its configuration."
     fi
+    say "verified $pv_f ($(wc -c < "$pv_f") bytes)"
+    persist_verify_kept "$SPORE_WORK/committed.files"
+}
+
+# Readable is not the same as complete. lbu does not tar a directory tree: it
+# builds its list from `apk audit --backup` and then appends the entries in
+# /etc/lbu/include, and that second part drops anything that is a directory —
+#
+#     +*)
+#         line=${line#+}
+#         path="$ROOT$line"
+#         if [ -L "$path" ] || { [ ! -d "$path" ] && [ -e "$path" ]; }; then
+#             echo "$line"
+#
+# So `lbu include /home` is accepted, listed by `lbu include -l`, and keeps
+# nothing. Nothing reports it: the commit succeeds, the archive is valid, and
+# the files are simply not in it — which only shows up on the boot that needed
+# them, by which time the machine is the only copy and it has just been wiped.
+#
+# So: ask the archive. Whatever lbu's version does or does not do with a path,
+# the tarball either has it or it does not, and that is checkable here, on the
+# machine, one second after it was written.
+persist_verify_kept() {
+    pvk_list=$1
+    [ -f "$SPORE_WORK/persist.final" ] || return 0
+    pvk_missing=''
+    while read -r pvk_p; do
+        [ -n "$pvk_p" ] || continue
+        case $pvk_p in /etc|/etc/*) continue ;; esac
+        [ -e "$(rootpath "$pvk_p")" ] || continue
+        # Tar paths are relative and may or may not carry a ./ — match the path
+        # itself or anything under it.
+        if ! grep -qE "^\.?/?${pvk_p#/}(/|\$)" "$pvk_list"; then
+            pvk_missing="$pvk_missing $pvk_p"
+        fi
+    done < "$SPORE_WORK/persist.final"
+
+    [ -n "$pvk_missing" ] || return 0
+    warn "the commit succeeded but did not keep everything it was asked to.
+         Not in the archive:$pvk_missing
+         lbu drops an include that names a directory rather than a file, so
+         these exist on the running machine and will not come back after a
+         reboot. The apkovl is otherwise fine — what is in it is correct."
 }
 
 # The classic diskless trap.

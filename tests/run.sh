@@ -1895,6 +1895,13 @@ printf 'x\n' > "$OVLT/bare/etc/hostname"
 ( cd "$OVLT/bare" && tar -czf "$OVLT/m/k.apkovl.tar.gz" . )
 OVLT_B=$("$SPORE" inspect "$OVLT/m" 2>&1)
 has 'and says so when there is no seed service in it' "$OVLT_B" 'no spore-seed service'
+# "No seed service in it" is a finding, not an explanation. lbu does not tar
+# /etc wholesale — it takes what `apk audit --backup` reports plus the includes
+# — so which half dropped a file is not guessable, and the archive is the only
+# thing that knows.
+has 'and shows what the overlay does hold' "$OVLT_B" 'of the files spore itself writes'
+has 'naming the spore files it has'        "$OVLT_B" 'etc/hostname'
+has 'and the ones it has not'              "$OVLT_B" 'etc/init.d/spore-seed'
 rm -rf "$OVLT"
 
 # Every file the seed carries, not a sample. This compared lib/seed.sh,
@@ -2199,6 +2206,15 @@ export SPORE_FACT_LBU_DEST=/media/data SPORE_RUN_LOG="$TOOLPLOG"
 alpine "$SPORE" --spore "$EX" --root "$TOOLP" persist >/dev/null 2>&1 || true
 unset SPORE_FACT_LBU_DEST SPORE_RUN_LOG
 has 'the commit keeps the tool tree'   "$(cat "$TOOLPLOG")" 'lbu include /usr/local/lib/spore'
+# lbu takes an include that names a directory, lists it back, and keeps nothing
+# of it: _gen_filelist drops any + entry that is a real directory. So the tool
+# tree has to be named file by file, or the fix is a no-op that reads like a fix.
+has 'the tool is kept file by file'  "$(cat "$TOOLPLOG")" 'lbu include /usr/local/lib/spore/seed-run'
+if grep -qx 'lbu include /usr/local/lib/spore' "$TOOLPLOG"; then
+    t_fail 'not as a directory lbu drops' 'the tree was named, so nothing is kept'
+else
+    t_ok 'not as a directory lbu drops'
+fi
 has 'and the wrapper beside it'        "$(cat "$TOOLPLOG")" 'lbu include /usr/local/bin/spore'
 # But only on a machine that runs it at boot. A workstation applying a spore to
 # itself has no spore-seed service and no business keeping a copy of the tool.
