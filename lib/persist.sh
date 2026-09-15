@@ -16,6 +16,19 @@ persist_try() {
     "$@"
 }
 
+# A remount touches the device, so it can wait on one — a USB stick that has
+# gone slow or is failing takes the boot with it, silently, because mount says
+# nothing while it works. Bounded like everything else here.
+persist_mount() {
+    pm_t=$1
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$pm_t" mount "$@" 2>/dev/null
+    else
+        mount "$@" 2>/dev/null
+    fi
+}
+
 # The filesystem a path is on, which is not the path. /proc/mounts lists mount
 # points, so looking up /media/storage/data finds nothing at all and the caller
 # concludes it is writable — the one case where the answer matters is a
@@ -86,6 +99,7 @@ persist_clear_seed() {
         say "would set the bootstrap seed aside so lbu can commit here"
         return 0
     fi
+    starting "setting the bootstrap seed aside in $pcs_dir"
     # Kept, and kept legible: still a seed, no longer an apkovl. `spore install`
     # writes a fresh one whenever it runs, and `spore seed` rebuilds one from a
     # running machine, so this is a courtesy rather than the only copy.
@@ -116,9 +130,11 @@ persist_clear_seed() {
     if persist_move_seeds; then
         pcs_moved=yes
     elif pcs_mp=$(persist_is_ro "$pcs_dir"); then
-        if mount -o remount,rw "$pcs_mp" 2>/dev/null; then
+        starting "remounting $pcs_mp read-write"
+        if persist_mount 60 -o remount,rw "$pcs_mp"; then
             persist_move_seeds && pcs_moved=yes
-            mount -o remount,ro "$pcs_mp" 2>/dev/null || true
+            starting "remounting $pcs_mp read-only"
+            persist_mount 60 -o remount,ro "$pcs_mp" || true
         fi
     fi
 
@@ -147,6 +163,11 @@ persist_commit() {
 
             # /etc is already in the overlay by default; everything else has to
             # be declared. Owned paths come from the plan, so this can't drift.
+            # Announced as a phase, because the gap between "N changed" and
+            # the commit was the one stretch of this run with nothing in it —
+            # and a boot that stopped somewhere in here looked exactly like a
+            # boot that stopped at the counts.
+            starting 'recording what to keep'
             { plan_persist_paths; plan_all_owned_paths; } | sort -u > "$SPORE_WORK/persist.final"
             while read -r pc_p; do
                 [ -n "$pc_p" ] || continue
@@ -183,7 +204,8 @@ persist_commit() {
             if mutate; then
                 pc_bdir=$(conf_get "$(rootpath /etc/lbu/lbu.conf)" LBU_BACKUPDIR '')
                 if [ -n "$pc_bdir" ] && pc_mp=$(persist_is_ro "$(rootpath "$pc_bdir")"); then
-                    mount -o remount,rw "$pc_mp" 2>/dev/null && pc_ro=yes
+                    starting "remounting $pc_mp read-write"
+                    persist_mount 60 -o remount,rw "$pc_mp" && pc_ro=yes
                 fi
             fi
 
@@ -209,7 +231,8 @@ persist_commit() {
                 # Put back whether or not the commit worked. A stick left
                 # mounted rw is a corruption risk at the next power cut, and
                 # the failure path is exactly where nobody looks.
-                mount -o remount,ro "$pc_mp" 2>/dev/null || true
+                starting "remounting $pc_mp read-only"
+                persist_mount 60 -o remount,ro "$pc_mp" || true
             fi
 
             if [ "$pc_rc" = 124 ]; then

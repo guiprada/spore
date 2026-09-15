@@ -228,6 +228,11 @@ export SPORE_FACT_LBU_DEST=/media/data SPORE_RUN_LOG="$SD2LOG"
 alpine "$SPORE" --spore "$EX" --root "$SD2" persist > "$SD2/out" 2>&1 || true
 unset SPORE_FACT_LBU_DEST SPORE_RUN_LOG
 has   'it is set aside, and said so'  "$(cat "$SD2/out")" 'set the bootstrap seed aside'
+# The stretch between "N changed" and the commit had nothing in it, so a boot
+# that stopped anywhere in here looked exactly like one that stopped at the
+# counts. Each step names itself now.
+has   'and announced before it happens' "$(cat "$SD2/out")" '> setting the bootstrap seed aside'
+has   'as is deciding what to keep'     "$(cat "$SD2/out")" '> recording what to keep'
 # lbu's glob is `*.apkovl.tar.gz*`, with a trailing star for the encrypted
 # variants. Renaming to `.apkovl.tar.gz.superseded` still matched it, and lbu
 # still refused — the new name has to leave that glob, not merely differ.
@@ -262,6 +267,11 @@ if [ "$(id -u)" = 0 ] && mount -t tmpfs tmpfs "$SD3" 2>/dev/null; then
             "$([ -f "$SD3/spore-seed.superseded.tar.gz" ] && echo yes || echo no)" yes
         SD3LEFT=$(cd "$SD3" && ls -1 ./*.apkovl.tar.gz* 2>/dev/null | tr '\n' ' ')
         check 'with nothing lbu globs left' "${SD3LEFT:-none}" none
+        # A remount touches the device, so it can wait on one — and it says
+        # nothing while it works.
+        has 'each remount is announced'   "$SD3O" '> remounting'
+        PSRC3=$(cat "$ROOT/lib/persist.sh")
+        has 'and bounded'                 "$PSRC3" 'timeout "$pm_t" mount'
         # Put back read-only, or the next power cut corrupts a USB stick.
         check 'and the medium is read-only again' \
             "$(awk -v d="$SD3" '$2 == d { print $4; exit }' /proc/mounts |
