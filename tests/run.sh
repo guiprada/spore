@@ -2161,6 +2161,45 @@ else
 fi
 rm -rf "$NB"
 
+section 'a sealed password is a hash, and seal says so'
+# The firstboot action feeds it to `chpasswd -e`, which writes its input into
+# /etc/shadow verbatim. Seal the plaintext by mistake and the account gets a
+# field no password matches — not an error, just an account nobody can log into,
+# found out at a console on a machine that is by then the only copy of itself.
+if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1 &&
+   command -v openssl >/dev/null 2>&1; then
+    SP=$(mktemp -d /tmp/spore-sealpw.XXXXXX)
+    cp -r "$EX" "$SP/s"
+    mkdir -p "$SP/s/secrets"
+    age-keygen -o "$SP/identity" 2>"$SP/pub"
+    sed -n 's/^Public key: //p' "$SP/pub" > "$SP/s/secrets/recipients"
+
+    SP_NO=$(printf 'hunter2\n' | "$SPORE" -s "$SP/s" seal root.password 2>&1 || true)
+    has   'a plaintext password is refused'   "$SP_NO" 'must hold a password *hash*'
+    has   'with the command that makes one'   "$SP_NO" 'openssl passwd -6'
+    check 'and nothing is written' \
+        "$([ -f "$SP/s/secrets/root.password.age" ] && echo yes || echo no)" no
+
+    SP_HASH=$(openssl passwd -6 -salt spore hunter2)
+    printf '%s\n' "$SP_HASH" | "$SPORE" -s "$SP/s" seal root.password >/dev/null 2>&1
+    check 'a hash is sealed' \
+        "$([ -f "$SP/s/secrets/root.password.age" ] && echo yes || echo no)" yes
+    # Byte for byte: chpasswd -e is given whatever comes back out, so a stray
+    # newline or a truncated field is a locked account just the same.
+    check 'and comes back out unchanged' \
+        "$(age --decrypt -i "$SP/identity" "$SP/s/secrets/root.password.age")" "$SP_HASH"
+
+    # Only passwords. Every other secret is arbitrary bytes and must not be
+    # second-guessed — a TLS key does not start with $6$.
+    printf 'not a hash at all\n' | "$SPORE" -s "$SP/s" seal tls.key >/dev/null 2>&1
+    check 'other secrets are sealed as they are' \
+        "$(age --decrypt -i "$SP/identity" "$SP/s/secrets/tls.key.age" 2>/dev/null)" \
+        'not a hash at all'
+    rm -rf "$SP"
+else
+    t_skip 'sealed-password checks (age, age-keygen or openssl missing)'
+fi
+
 section 'root without a password is not root without a way in'
 # A stock diskless Alpine leaves root's field in /etc/shadow empty, and an empty
 # field is a password — the console takes a bare Enter. The spore would seal a

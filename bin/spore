@@ -341,6 +341,16 @@ cmd_seal() {
     [ -f "$cse_rcpt" ] || die "no secrets/recipients in this spore — add age public keys there first"
     command -v "$SPORE_AGE" >/dev/null 2>&1 || die "age is not installed"
     mkdir -p "$SPORE_DIR/secrets"
+    case $cse_name in
+        *.password)
+            if [ "$cse_src" = - ]; then cse_val=$(cat); else cse_val=$(cat "$cse_src"); fi
+            seal_password_check "$cse_name" "$cse_val"
+            printf '%s\n' "$cse_val" |
+                "$SPORE_AGE" --encrypt -R "$cse_rcpt" \
+                    -o "$SPORE_DIR/secrets/$cse_name.age"
+            printf 'sealed secrets/%s.age\n' "$cse_name"
+            return 0 ;;
+    esac
     if [ "$cse_src" = - ]; then
         "$SPORE_AGE" --encrypt -R "$cse_rcpt" -o "$SPORE_DIR/secrets/$cse_name.age"
     else
@@ -348,6 +358,30 @@ cmd_seal() {
         "$SPORE_AGE" --encrypt -R "$cse_rcpt" -o "$SPORE_DIR/secrets/$cse_name.age" "$cse_src"
     fi
     printf 'sealed secrets/%s.age\n' "$cse_name"
+}
+
+# A *.password secret is a hash, not a password.
+#
+# The firstboot action feeds it to `chpasswd -e`, which takes its input as an
+# already-encrypted field and writes it into /etc/shadow verbatim. Seal the
+# plaintext by mistake and the account ends up with a shadow field that no
+# password can ever match: not an error, not a warning, just an account nobody
+# can log into, found out at a console on a machine that is by then the only
+# copy of itself.
+#
+# Checked in memory, never through a file: this is the one command whose whole
+# job is that the plaintext does not touch the disk.
+seal_password_check() {
+    case $2 in
+        '$'*'$'*) return 0 ;;
+    esac
+    die "secrets/$1 must hold a password *hash*, and this does not look like one.
+         It is applied with \`chpasswd -e\`, which writes what it is given
+         straight into /etc/shadow — so a plaintext here becomes a field no
+         password matches, and the account is locked out with nothing said.
+         Make the hash and pipe that instead:
+             openssl passwd -6 | $SPORE_SELF -s $SPORE_DIR seal $1
+         (it asks twice and prints \$6\$...; the password never reaches a file)"
 }
 
 cmd_modules() {
