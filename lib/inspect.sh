@@ -138,7 +138,7 @@ inspect_ovl_contents() {
     printf '  of the files spore itself writes:\n' >&2
     for ioc_p in etc/hostname etc/hosts etc/ssh/sshd_config etc/lbu/lbu.conf \
                  etc/init.d/spore-seed etc/runlevels/default/spore-seed \
-                 etc/runlevels/default/sshd \
+                 etc/runlevels/default/sshd etc/spore/.seeded \
                  usr/local/lib/spore/seed-run; do
         if grep -qE "^\.?/?$ioc_p\$" "$ioc_list"; then
             printf '    %syes%s  %s\n' "$_c_green" "$_c_reset" "$ioc_p" >&2
@@ -225,6 +225,18 @@ inspect_data() {
             elif grep -q 'usr/local/lib/spore/seed-run' "$SPORE_WORK/ovl.files"; then
                 printf '  %sand it carries the tool, so it can boot on its own%s\n' \
                     "$_c_green" "$_c_reset" >&2
+                # Whether that boot is a fast one. The seed service stops at
+                # /etc/spore/.seeded before applying anything, so an overlay
+                # without the stamp is correct and slow: it redoes the whole
+                # spore, packages and all, which is the thing retiring the seed
+                # was meant to stop.
+                if grep -qE '^\.?/?etc/spore/\.seeded$' "$SPORE_WORK/ovl.files"; then
+                    printf '  %sand the converged stamp, so that boot goes straight through%s\n' \
+                        "$_c_green" "$_c_reset" >&2
+                else
+                    printf '  but no etc/spore/.seeded, so a boot from it applies the whole\n' >&2
+                    printf '  spore again — correct, but as slow as booting the seed.\n' >&2
+                fi
             else
                 warn "but it carries the spore-seed service without the tool that
          service runs, so a machine booted from it fails spore-seed every time

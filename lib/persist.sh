@@ -212,8 +212,8 @@ persist_clear_seed() {
 persist_tool_paths() {
     [ -f "$(rootpath /etc/init.d/spore-seed)" ] || return 0
     for ptp_p in /etc/init.d/spore-seed /etc/runlevels/default/spore-seed \
-                 /etc/local.d/spore.start /usr/local/bin/spore \
-                 /usr/local/lib/spore; do
+                 /etc/local.d/spore.start /etc/spore/.seeded \
+                 /usr/local/bin/spore /usr/local/lib/spore; do
         ptp_r=$(rootpath "$ptp_p")
         if [ -d "$ptp_r" ] && [ ! -L "$ptp_r" ]; then
             find "$ptp_r" \( -type f -o -type l \) 2>/dev/null |
@@ -225,10 +225,33 @@ persist_tool_paths() {
     return 0
 }
 
+# The stamp that stops the next boot redoing everything, written before the
+# archive rather than after it.
+#
+# seed-run writes /etc/spore/.seeded when `apply --persist` comes back, and the
+# commit happens inside that apply — so the stamp has never been in an apkovl
+# and never could be. An overlay-booted machine therefore finds no stamp and
+# applies the whole spore again, packages and all, which is precisely what
+# retiring the seed is supposed to stop. Writing it here puts it in /etc in
+# time for the tar.
+#
+# It says "this machine has converged", and by this point it has: every other
+# phase is done and the only thing left is the write. If that write then fails,
+# the stamp goes down with the RAM root it was written to — there is no overlay
+# for it to have lied in.
+persist_stamp_seeded() {
+    [ -f "$(rootpath /etc/init.d/spore-seed)" ] || return 0
+    mutate || return 0
+    pss_dir=$(rootpath /etc/spore)
+    mkdir -p "$pss_dir" 2>/dev/null || return 0
+    date > "$pss_dir/.seeded" 2>/dev/null || true
+}
+
 persist_commit() {
     case $(persist_backend) in
         lbu)
             lbu_warnings
+            persist_stamp_seeded
             # Deliberately NOT remounting the media read-write here. lbu does it
             # itself (mount_once_rw), records what it remounted, and restores
             # read-only on exit. Remounting first would make lbu's is_ro check

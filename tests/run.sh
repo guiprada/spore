@@ -1886,6 +1886,12 @@ has 'inspect calls out an overlay that cannot run its own service' \
 ( cd "$OVLT/whole" && tar -czf "$OVLT/m/k.apkovl.tar.gz" . )
 OVLT_W=$("$SPORE" inspect "$OVLT/m" 2>&1)
 has 'and confirms one that can'  "$OVLT_W" 'it carries the tool'
+has 'but says that boot still redoes everything' "$OVLT_W" 'no etc/spore/.seeded'
+mkdir -p "$OVLT/whole/etc/spore"
+printf 'now\n' > "$OVLT/whole/etc/spore/.seeded"
+( cd "$OVLT/whole" && tar -czf "$OVLT/m/k.apkovl.tar.gz" . )
+OVLT_S=$("$SPORE" inspect "$OVLT/m" 2>&1)
+has 'and with the stamp, that it goes straight through' "$OVLT_S" 'goes straight through'
 # An overlay with no seed service at all is a third answer, not the absence of
 # one. Printing nothing for it meant a report where the check had simply not
 # been installed yet read exactly like a clean bill of health.
@@ -2227,6 +2233,13 @@ has 'and the wrapper beside it'        "$(cat "$TOOLPLOG")" 'lbu include /usr/lo
 # A dangling runlevel link is worse than no service: OpenRC errors on it every
 # boot. Both halves travel together or neither does.
 has 'with its runlevel link'          "$(cat "$TOOLPLOG")" 'lbu include /etc/runlevels/default/spore-seed'
+# seed-run stamps /etc/spore/.seeded when `apply --persist` returns, and the
+# commit happens inside that apply — so the stamp has never been in an apkovl
+# and never could be. Without it an overlay-booted machine redoes the whole
+# spore, which is what retiring the seed was supposed to stop.
+check 'the converged stamp is written before the tar, not after the boot' \
+    "$([ -f "$TOOLP/etc/spore/.seeded" ] && echo yes || echo no)" yes
+has   'and kept'                      "$(cat "$TOOLPLOG")" 'lbu include /etc/spore/.seeded'
 # But only on a machine that runs it at boot. A workstation applying a spore to
 # itself has no spore-seed service and no business keeping a copy of the tool.
 rm -f "$TOOLP/etc/init.d/spore-seed"
