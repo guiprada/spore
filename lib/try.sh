@@ -299,4 +299,66 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
     fi
 
     qemu-system-x86_64 "$@"
+    try_report "$tb_log"
+}
+
+# What the boot did, said at the prompt you are standing at. Without this the
+# command simply exits, and "it did not boot", "it booted and the seed never
+# ran" and "it booted and stopped in the middle of installing a package" are
+# the same event as far as the terminal is concerned — while being three
+# completely different problems.
+try_report() {
+    tr_log=$1
+    printf '\n' >&2
+
+    if [ ! -s "$tr_log" ]; then
+        warn "the guest wrote nothing to the serial console at all, so it never
+         reached a kernel. That is the firmware or the medium rather than the
+         spore: check the medium still has its EFI partition with
+         \`$SPORE_SELF inspect\`, and that OVMF is installed if this went
+         through the image's own bootloader."
+        return 0
+    fi
+
+    # Colour is written to the console when the seed has one, and it is in the
+    # way of every match below.
+    tr_c=${SPORE_WORK:-/tmp}/boot.clean
+    sed 's/\033\[[0-9;]*m//g' "$tr_log" > "$tr_c" 2>/dev/null || tr_c=$tr_log
+
+    if ! grep -q 'Linux version' "$tr_c" 2>/dev/null; then
+        warn "there is console output but no kernel banner, so a bootloader ran
+         and the kernel did not start. The last of $tr_log:"
+        tail -8 "$tr_c" | sed 's/^/    /' >&2
+        return 0
+    fi
+
+    if ! grep -q '=== spore seed' "$tr_c" 2>/dev/null; then
+        warn "the kernel booted and the spore-seed service never ran, so either
+         the overlay did not load or OpenRC did not start it. Look in $tr_log
+         for \"looking for a spore to germinate\"; if it is absent, the
+         initramfs loaded a different apkovl than the seed."
+        return 0
+    fi
+
+    if grep -q 'converged and committed' "$tr_c" 2>/dev/null; then
+        say "the spore applied and committed. The whole boot is in $tr_log."
+        return 0
+    fi
+
+    # An announcement with no matching completion names the action it stopped
+    # in, which is the entire reason those announcements exist.
+    tr_last=$(grep -n '^ *> ' "$tr_c" 2>/dev/null | tail -1)
+    if [ -n "$tr_last" ]; then
+        tr_n=${tr_last%%:*}
+        tr_what=${tr_last#*> }
+        if ! tail -n "+$tr_n" "$tr_c" | grep -qF "+ $tr_what"; then
+            warn "it stopped in the middle of:
+             $tr_what
+         That action started and never reported finishing. $tr_log has the rest."
+            return 0
+        fi
+    fi
+
+    warn "the boot ended without the spore committing. The last of $tr_log:"
+    tail -12 "$tr_c" | sed 's/^/    /' >&2
 }

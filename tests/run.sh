@@ -749,6 +749,52 @@ hasnt 'a dry run announces nothing'  "$PGDO" '> package openssh'
 has   'it only says what it would do' "$PGDO" 'would install package openssh'
 rm -rf "$PG" "$PGR" "$PGD"
 
+section 'try says what the boot did, instead of just exiting'
+# Without this the command exits silently, and "it did not boot", "it booted
+# and the seed never ran" and "it stopped halfway through installing a
+# package" are the same event as far as the terminal is concerned — three
+# completely different problems.
+TRW=$(mktemp -d /tmp/spore-tryrep.XXXXXX)
+tr_say() {
+    printf '%s' "$2" > "$TRW/l"
+    ( . "$ROOT/lib/core.sh"; . "$ROOT/lib/try.sh"
+      SPORE_WORK=$TRW; SPORE_SELF=spore; try_report "$TRW/l" ) 2>&1
+}
+has 'nothing at all means no kernel' \
+    "$(tr_say empty '')" 'never
+         reached a kernel'
+has 'output but no banner is the bootloader' \
+    "$(tr_say nokern 'SeaBIOS
+no bootable device')" 'no kernel banner'
+has 'a kernel with no seed is the overlay' \
+    "$(tr_say noseed '[0.0] Linux version 6.18
+login:')" 'spore-seed service never ran'
+# The announcement with no completion is what names the stall — the whole
+# reason those announcements exist.
+has 'a stall names the action it stalled in' \
+    "$(tr_say stall '[0.0] Linux version 6.18
+=== spore seed: now ===
+  > package openssh
+  + package openssh
+  > committing the apkovl to /media/sda2')" 'committing the apkovl to /media/sda2'
+has 'and says it never finished' \
+    "$(tr_say stall2 '[0.0] Linux version 6.18
+=== spore seed: now ===
+  > committing the apkovl to /media/sda2')" 'never reported finishing'
+has 'a finished boot is reported as such' \
+    "$(tr_say ok '[0.0] Linux version 6.18
+=== spore seed: now ===
+  > committing the apkovl to /media/sda2
+  + committed
+converged and committed')" 'applied and committed'
+# An action that did finish is not reported as a stall.
+hasnt 'a completed action is not a stall' \
+    "$(tr_say done '[0.0] Linux version 6.18
+=== spore seed: now ===
+  > package openssh
+  + package openssh')" 'stopped in the middle of'
+rm -rf "$TRW"
+
 section 'idempotence'
 LOG2=$(mktemp /tmp/spore-log2.XXXXXX)
 export SPORE_RUN_LOG="$LOG2"
