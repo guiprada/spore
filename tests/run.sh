@@ -1819,7 +1819,39 @@ printf 'x\n' > "$INSUP/spore-seed.superseded.tar.gz"
 INSUPO=$("$SPORE" inspect "$INSUP" 2>&1)
 has   'a retired seed is reported as retired' "$INSUPO" 'set aside after a commit'
 hasnt 'not as one that never ran'             "$INSUPO" 'nothing would have run at all'
+# But that is a fact about this directory, not a verdict on the machine. Whether
+# it boots its own overlay is decided by what the initramfs finds first, and
+# install always leaves a second seed on the boot partition — which this had no
+# way of knowing and claimed anyway.
+hasnt 'and does not claim what it cannot see' "$INSUPO" 'boots from its own committed overlay'
 rm -rf "$INSUP"
+
+# Two apkovls on one medium: the seed the install left on the boot partition,
+# and the overlay the first commit wrote. Alpine's init takes `head -n 1` of
+# whatever nlplug-findfs turned up, so the machine that comes up is probe order.
+RACE=$(mktemp -d /tmp/spore-race.XXXXXX)
+mkdir -p "$RACE/boot" "$RACE/data"
+printf 'seed\n' > "$RACE/boot/spore-seed.apkovl.tar.gz"
+RACE_Q=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
+          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz1 2>&1 )
+check 'before any commit, a seed on the boot partition is just the seed' \
+    "${RACE_Q:-quiet}" quiet
+printf 'overlay\n' > "$RACE/data/coisas.apkovl.tar.gz"
+RACE_W=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
+          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz1 2>&1 )
+has   'once one is committed, the race is called out' "$RACE_W" 'holds two apkovls'
+has   'with the command to settle it'                 "$RACE_W" 'sudo mount /dev/sdz1 /mnt'
+# And why you might not want to: that copy is the recovery path if the
+# initramfs cannot read the ext4 data partition at all.
+has   'and the reason to keep it'  "$RACE_W" 'until you have seen the machine boot without it'
+# The retired seed is not an apkovl any more and must not count as the overlay,
+# or every committed medium would report a race with itself.
+rm -f "$RACE/data/coisas.apkovl.tar.gz"
+printf 'x\n' > "$RACE/data/spore-seed.superseded.tar.gz"
+RACE_S=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
+          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz1 2>&1 )
+check 'a retired seed is not a second apkovl' "${RACE_S:-quiet}" quiet
+rm -rf "$RACE"
 
 # Every file the seed carries, not a sample. This compared lib/seed.sh,
 # lib/plan.sh, modules/net.sh and bin/spore, and said "matches this tool" about

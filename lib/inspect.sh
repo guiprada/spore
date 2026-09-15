@@ -70,6 +70,41 @@ inspect_stale() {
     printf '%s' "$is_differ"
 }
 
+# A live seed on the boot partition is exactly what you want until the machine
+# has committed, and a coin toss afterwards. Alpine's initramfs-init:
+#
+#     if [ -z "$KOPT_apkovl" ]; then
+#         # Not manually set, use the apkovl found by nlplug
+#         if [ -e "$ROOT"/tmp/apkovls ]; then
+#             ovl=$(head -n 1 "$ROOT"/tmp/apkovls)
+#
+# `nlplug-findfs -a` writes every apkovl it finds across every block device, and
+# init takes the first line. So a seed on one partition and a committed overlay
+# on the other is two apkovls, and which machine comes up is probe order — the
+# first partition, usually.
+#
+# Neither outcome is broken, but they are different machines. Booted from the
+# seed, /etc/spore/.seeded is absent and the whole spore is applied again,
+# packages and all; booted from the committed overlay, the seed service finds
+# the stamp and goes straight through.
+inspect_seed_race() {
+    isr_boot=$1 isr_data=$2 isr_dev=${3:-/dev/sdX1}
+    [ -f "$isr_boot/spore-seed.apkovl.tar.gz" ] || return 0
+    find "$isr_data" -maxdepth 1 -name '*.apkovl.tar.gz' ! -name 'spore-seed.*' \
+        2>/dev/null | grep -q . || return 0
+    warn "there is also a committed overlay on the data partition, so this medium
+         holds two apkovls and the initramfs takes whichever it finds first.
+         Expect a full re-apply on most boots, fetching packages each time.
+         To hand the machine over to its own overlay, retire this copy:
+             sudo mount $isr_dev /mnt &&
+               sudo mv /mnt/spore-seed.apkovl.tar.gz /mnt/spore-seed.superseded.tar.gz &&
+               sudo umount /mnt
+         Keep it instead until you have seen the machine boot without it: it is
+         the only thing that recovers this medium if the initramfs turns out not
+         to be able to read the data partition, and \`spore install\` writes a
+         fresh one whenever it runs."
+}
+
 inspect_data() {
     id_dir=$1
     id_dev=${2-}
@@ -112,7 +147,14 @@ inspect_data() {
         printf '  %sset aside after a commit%s — spore-seed.superseded.tar.gz\n' \
             "$_c_green" "$_c_reset" >&2
         printf '  Its job was to get the first boot to apply the spore, and it did.\n' >&2
-        printf '  This machine now boots from its own committed overlay.\n' >&2
+        # And no further than that. Which apkovl the machine boots next is not
+        # decided here: the initramfs scans every block device, and this is one
+        # of them. Saying "it now boots from its own committed overlay" read as
+        # a verdict on the machine when it was only a fact about this directory
+        # — and it was wrong whenever a seed was still sitting on the boot
+        # partition, which is where install always puts a second copy. The
+        # boot-partition section below is where both halves are known.
+        printf '  Nothing on this partition competes with the committed overlay now.\n' >&2
     else
         warn "no spore-seed.apkovl.tar.gz here, so nothing would have run at all."
     fi
@@ -239,6 +281,7 @@ inspect_medium() {
         fi
         if [ -f "$SPORE_WORK/look1/spore-seed.apkovl.tar.gz" ]; then
             printf '  spore-seed.apkovl.tar.gz — the initramfs can certainly read this one\n' >&2
+            inspect_seed_race "$SPORE_WORK/look1" "$SPORE_WORK/look" "$im2_p1"
         else
             printf '  no seed here. If the machine boots without running spore, the\n' >&2
             printf '  initramfs could not read the data partition; put a copy here:\n' >&2
