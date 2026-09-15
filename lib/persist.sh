@@ -195,19 +195,30 @@ persist_clear_seed() {
 #
 # Invisible for as long as the machine keeps booting from the seed, which
 # carries the tool — and the seed is exactly what `spore retire` takes away.
-# File by file, not the tree. `lbu include` takes a directory without
-# complaining and then keeps nothing of it, so naming /usr/local/lib/spore was
-# a no-op that looked exactly like a fix. The tool is a few dozen small files
-# and they are all known, so listing them is cheap and it is the only form lbu
-# actually honours.
+#
+# The service is named here too, even though it is under /etc and /etc was
+# supposed to look after itself. An overlay came back from a real machine with
+# etc/runlevels/default/sshd in it and etc/init.d/spore-seed not — both new,
+# both owned by no package, both under /etc. lbu's list is `apk audit --backup`
+# plus the includes, and whatever the audit half decided about those two files,
+# it did not decide the same thing. Guessing at the rule cost three rounds; not
+# depending on it costs one line per path, and `lbu include` wins over any
+# exclude, since cmd_include does `list_delete -` for what it adds.
+#
+# File by file for the tree. Directories do survive an include on the version
+# that produced that overlay — /home and /usr/local are both in it — but
+# upstream's _gen_filelist drops a `+` entry that is a real directory, so naming
+# the files is the form that works either way.
 persist_tool_paths() {
     [ -f "$(rootpath /etc/init.d/spore-seed)" ] || return 0
-    for ptp_p in /usr/local/lib/spore /usr/local/bin/spore; do
+    for ptp_p in /etc/init.d/spore-seed /etc/runlevels/default/spore-seed \
+                 /etc/local.d/spore.start /usr/local/bin/spore \
+                 /usr/local/lib/spore; do
         ptp_r=$(rootpath "$ptp_p")
-        if [ -d "$ptp_r" ]; then
+        if [ -d "$ptp_r" ] && [ ! -L "$ptp_r" ]; then
             find "$ptp_r" \( -type f -o -type l \) 2>/dev/null |
                 sed "s|^$ptp_r|$ptp_p|"
-        elif [ -e "$ptp_r" ]; then
+        elif [ -e "$ptp_r" ] || [ -L "$ptp_r" ]; then
             printf '%s\n' "$ptp_p"
         fi
     done
@@ -233,12 +244,21 @@ persist_commit() {
             # the commit was the one stretch of this run with nothing in it —
             # and a boot that stopped somewhere in here looked exactly like a
             # boot that stopped at the counts.
+            # The /etc skip applies to what the spore owns, not to what spore
+            # itself installed: those config files are all in the archive, so
+            # the audit half does find them, and re-declaring a hundred of them
+            # would bury the handful that actually need naming.
             starting 'recording what to keep'
-            { plan_persist_paths; plan_all_owned_paths; persist_tool_paths; } |
-                sort -u > "$SPORE_WORK/persist.final"
+            { plan_persist_paths; plan_all_owned_paths; } |
+                while read -r pc_p; do
+                    [ -n "$pc_p" ] || continue
+                    case $pc_p in /etc|/etc/*) continue ;; esac
+                    printf '%s\n' "$pc_p"
+                done > "$SPORE_WORK/persist.want"
+            persist_tool_paths >> "$SPORE_WORK/persist.want"
+            sort -u "$SPORE_WORK/persist.want" > "$SPORE_WORK/persist.final"
             while read -r pc_p; do
                 [ -n "$pc_p" ] || continue
-                case $pc_p in /etc|/etc/*) continue ;; esac
                 run lbu include "$pc_p"
             done < "$SPORE_WORK/persist.final"
 
@@ -409,8 +429,7 @@ persist_verify_kept() {
     pvk_missing=''
     while read -r pvk_p; do
         [ -n "$pvk_p" ] || continue
-        case $pvk_p in /etc|/etc/*) continue ;; esac
-        [ -e "$(rootpath "$pvk_p")" ] || continue
+        [ -e "$(rootpath "$pvk_p")" ] || [ -L "$(rootpath "$pvk_p")" ] || continue
         # Tar paths are relative and may or may not carry a ./ — match the path
         # itself or anything under it.
         if ! grep -qE "^\.?/?${pvk_p#/}(/|\$)" "$pvk_list"; then

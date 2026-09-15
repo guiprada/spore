@@ -2199,6 +2199,8 @@ rm -rf "$TOOLW"
 TOOLP=$(mktemp -d /tmp/spore-toolkeep.XXXXXX)
 mkdir -p "$TOOLP/etc/init.d" "$TOOLP/usr/local/lib/spore" "$TOOLP/usr/local/bin"
 printf 'svc\n' > "$TOOLP/etc/init.d/spore-seed"
+mkdir -p "$TOOLP/etc/runlevels/default"
+ln -sf /etc/init.d/spore-seed "$TOOLP/etc/runlevels/default/spore-seed"
 printf 'run\n' > "$TOOLP/usr/local/lib/spore/seed-run"
 printf 'w\n'   > "$TOOLP/usr/local/bin/spore"
 TOOLPLOG=$(mktemp /tmp/spore-toolkeeplog.XXXXXX)
@@ -2210,12 +2212,21 @@ has 'the commit keeps the tool tree'   "$(cat "$TOOLPLOG")" 'lbu include /usr/lo
 # of it: _gen_filelist drops any + entry that is a real directory. So the tool
 # tree has to be named file by file, or the fix is a no-op that reads like a fix.
 has 'the tool is kept file by file'  "$(cat "$TOOLPLOG")" 'lbu include /usr/local/lib/spore/seed-run'
+# And the service is named too, though it lives under /etc and /etc was meant to
+# look after itself. A real machine's overlay came back with
+# etc/runlevels/default/sshd in it and etc/init.d/spore-seed not — both new,
+# both owned by no package, both under /etc. Whatever `apk audit --backup` makes
+# of those two, it does not make the same thing, and an include does not care.
+has 'the seed service is named, not assumed' "$(cat "$TOOLPLOG")" 'lbu include /etc/init.d/spore-seed'
 if grep -qx 'lbu include /usr/local/lib/spore' "$TOOLPLOG"; then
     t_fail 'not as a directory lbu drops' 'the tree was named, so nothing is kept'
 else
     t_ok 'not as a directory lbu drops'
 fi
 has 'and the wrapper beside it'        "$(cat "$TOOLPLOG")" 'lbu include /usr/local/bin/spore'
+# A dangling runlevel link is worse than no service: OpenRC errors on it every
+# boot. Both halves travel together or neither does.
+has 'with its runlevel link'          "$(cat "$TOOLPLOG")" 'lbu include /etc/runlevels/default/spore-seed'
 # But only on a machine that runs it at boot. A workstation applying a spore to
 # itself has no spore-seed service and no business keeping a copy of the tool.
 rm -f "$TOOLP/etc/init.d/spore-seed"

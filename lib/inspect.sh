@@ -137,7 +137,8 @@ inspect_ovl_contents() {
         "$(sed -n 's|^\./||; s|^/||; s|/.*||p' "$ioc_list" | sort -u | tr '\n' ' ')" >&2
     printf '  of the files spore itself writes:\n' >&2
     for ioc_p in etc/hostname etc/hosts etc/ssh/sshd_config etc/lbu/lbu.conf \
-                 etc/init.d/spore-seed etc/runlevels/default/sshd \
+                 etc/init.d/spore-seed etc/runlevels/default/spore-seed \
+                 etc/runlevels/default/sshd \
                  usr/local/lib/spore/seed-run; do
         if grep -qE "^\.?/?$ioc_p\$" "$ioc_list"; then
             printf '    %syes%s  %s\n' "$_c_green" "$_c_reset" "$ioc_p" >&2
