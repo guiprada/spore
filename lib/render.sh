@@ -320,6 +320,28 @@ if [ -f /etc/resolv.conf ]; then
              /etc/resolv.conf | tr '\n' ' ')
     if [ -n "$netdns" ]; then
         echo "spore: resolvers: $netdns"
+        # Named is not the same as working, and the difference cost twelve
+        # boots here. A gateway that answers a ping gets written in as the
+        # resolver as a matter of course and routinely does not serve DNS —
+        # after which the only thing that mentions it is apk, blaming the
+        # mirror for a name it could not look up. Ask it a question instead.
+        if command -v nslookup >/dev/null 2>&1; then
+            if command -v timeout >/dev/null 2>&1; then
+                netq="timeout 10 nslookup"
+            else
+                netq="nslookup"
+            fi
+            if $netq alpinelinux.org >/dev/null 2>&1; then
+                echo 'spore: and they resolve names'
+            else
+                echo 'spore: but none of them answers a query, so no name resolves.' >&2
+                echo 'spore: apk reports that as a problem with the mirror. Every' >&2
+                echo 'spore: package not already on the boot medium will fail, and' >&2
+                echo 'spore: so will anything else that looks a name up.' >&2
+                echo 'spore: Set NET_DNS in modules/net.conf to a resolver that' >&2
+                echo 'spore: answers — the gateway often is not one.' >&2
+            fi
+        fi
     else
         echo 'spore: /etc/resolv.conf names no resolver, so no name resolves.' >&2
     fi

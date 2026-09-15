@@ -57,7 +57,7 @@ users_plan() {
     # auth safe to turn on at all.
     users_plan_password root
 
-    [ -n "$users_list" ] || return 0
+    [ -n "$users_list" ] || { users_plan_root_lock no; return 0; }
 
     for users_u in $users_list; do
         # The key is installed by the same action that creates the account.
@@ -87,6 +87,7 @@ chmod 600 '/home/$users_u/.ssh/authorized_keys'"
         users_plan_password "$users_p"
     done
 
+    users_escalate=no
     users_admins=$(mconf USERS_DOAS '')
     if [ -n "$users_admins" ]; then
         plan_pkg doas
@@ -106,15 +107,66 @@ chmod 600 '/home/$users_u/.ssh/authorized_keys'"
          Set USERS_DOAS_NOPASS=no and give the account a password instead, if
          this box is not single-purpose."
                 users_rule="permit nopass $users_a as root"
+                users_escalate=yes
             else
                 users_rule="permit persist $users_a as root"
+                # `persist` prompts for this account's own password, so the rule
+                # is only a way back to root if the account has one to give.
+                if secret_exists "$users_a.password"; then
+                    users_escalate=yes
+                fi
             fi
             # doas refuses a config that is group- or world-writable.
             plan_file "/etc/doas.d/$users_a.conf" 0600 "$users_rule"
         done
     fi
 
+    users_plan_root_lock "$users_escalate"
+
     # Home directories live outside /etc, so on a diskless box they are lost
     # unless declared.
     plan_persist /home
+}
+
+# Root without a password is not root without a way in.
+#
+# A stock diskless Alpine leaves root's field in /etc/shadow empty, and an empty
+# field is a password: the console takes a bare Enter for it. Nothing here ever
+# closed that. The spore would seal a password for its user, enable sshd, refuse
+# root login over ssh — and leave the machine open to anybody standing in front
+# of it. The ssh module already reasons about "root has no password"; it just
+# never did anything about it one exposure earlier.
+#
+# Locked, not given a password: there is nothing to seal and nothing to
+# remember, and doas authenticates the caller rather than root, so escalation
+# keeps working untouched.
+#
+# And only when somebody else can still get back. Locking root on a machine with
+# no usable admin makes the next mistake unrecoverable without rebuilding the
+# medium, so where there is no way back this says so and changes nothing.
+users_plan_root_lock() {
+    uprl_escalate=$1
+    # A sealed root password is a deliberate answer to this question already.
+    secret_exists root.password && return 0
+    mconf_bool USERS_ROOT_LOCK yes || {
+        plan_note "users: USERS_ROOT_LOCK=no, so root keeps the empty password a
+         diskless Alpine boots with. Anyone at the console is root."
+        return 0
+    }
+    if [ "$uprl_escalate" != yes ]; then
+        plan_note "users: root has an empty password — the console accepts it — and
+         nothing else in this spore can become root, so it is left alone rather
+         than locking the machine against you. Give an account in USERS_DOAS a
+         sealed password (spore seal <user>.password), or seal root.password,
+         and root is locked on the next apply."
+        return 0
+    fi
+    plan_firstboot users-root-lock "case \$(awk -F: '\$1 == \"root\" { print \$2 }' /etc/shadow) in
+    '!'*|'*'*) exit 0 ;;
+esac
+if passwd -l root >/dev/null 2>&1; then
+    echo 'spore: root is locked; become root with doas'
+else
+    echo 'spore: could not lock root, so its empty password still works' >&2
+fi"
 }

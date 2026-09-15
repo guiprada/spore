@@ -2161,6 +2161,63 @@ else
 fi
 rm -rf "$NB"
 
+section 'root without a password is not root without a way in'
+# A stock diskless Alpine leaves root's field in /etc/shadow empty, and an empty
+# field is a password — the console takes a bare Enter. The spore would seal a
+# password for its user, enable sshd, refuse root over ssh, and leave the
+# machine open to anyone standing in front of it.
+RL=$(mktemp -d /tmp/spore-rootlock.XXXXXX)
+cp -r "$EX" "$RL/s"
+RLPLAN() { alpine "$SPORE" --spore "$RL/s" --root "$RL/r" plan 2>&1; }
+
+# No sealed password for the doas admin: `permit persist` prompts for a password
+# the account has not got, so locking root would strand the machine.
+RL_NONE=$(RLPLAN)
+hasnt 'root is not locked when nothing else can become it' "$RL_NONE" 'users-root-lock'
+has   'and it says why, and what would change it'          "$RL_NONE" 'sealed password'
+
+# With one, doas is a real way back and root gets locked.
+mkdir -p "$RL/s/secrets"
+printf 'ciphertext\n' > "$RL/s/secrets/gui.password.age"
+RL_SEALED=$(RLPLAN)
+has 'a sealed admin password is a way back, so root is locked' "$RL_SEALED" 'users-root-lock'
+
+# nopass is the other way back: no password needed, so the rule always works.
+rm -f "$RL/s/secrets/gui.password.age"
+printf 'USERS_DOAS_NOPASS=yes\n' >> "$RL/s/modules/users.conf"
+RL_NOPASS=$(RLPLAN)
+has 'as is doas without a password' "$RL_NOPASS" 'users-root-lock'
+sed -i '/USERS_DOAS_NOPASS=yes/d' "$RL/s/modules/users.conf"
+
+# A sealed root password is a deliberate answer to the same question.
+mkdir -p "$RL/s/secrets"
+printf 'ciphertext\n' > "$RL/s/secrets/root.password.age"
+RL_ROOT=$(RLPLAN)
+hasnt 'a sealed root password locks nothing'  "$RL_ROOT" 'users-root-lock'
+has   'it sets one instead'                   "$RL_ROOT" 'user-root-password'
+rm -f "$RL/s/secrets/root.password.age"
+
+# And it can be turned off, because locking root is the kind of thing that is
+# someone else's call on someone else's machine.
+printf 'ciphertext\n' > "$RL/s/secrets/gui.password.age"
+printf 'USERS_ROOT_LOCK=no\n' >> "$RL/s/modules/users.conf"
+RL_OFF=$(RLPLAN)
+hasnt 'USERS_ROOT_LOCK=no leaves it alone' "$RL_OFF" 'users-root-lock'
+has   'and says what that means'           "$RL_OFF" 'Anyone at the console is root'
+rm -rf "$RL"
+
+section 'a resolver that is named is not a resolver that answers'
+# Twelve boots logged "DNS: transient error" against the mirror while the report
+# above them said "resolvers: 172.16.100.1" and stopped there. The gateway gets
+# written in as the resolver as a matter of course and routinely does not serve
+# DNS; apk is then the only thing that mentions it, and it blames the mirror.
+NRSRC=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/render.sh"; render_net_report )
+has 'the report asks the resolver a question' "$NRSRC" '$netq alpinelinux.org'
+has 'and is bounded, like everything at boot' "$NRSRC" 'timeout 10 nslookup'
+has 'a working one is said so'                "$NRSRC" 'and they resolve names'
+has 'and a silent one names the setting'      "$NRSRC" 'Set NET_DNS in modules/net.conf'
+has 'and says what it will look like instead' "$NRSRC" 'as a problem with the mirror'
+
 section 'spore retire: handing the machine over to its own overlay'
 # The counterpart to the second seed `install` writes on the boot partition.
 # Once the machine has committed, that copy stops being insurance and starts
