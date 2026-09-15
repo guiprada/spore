@@ -245,9 +245,39 @@ check 'the apkovl name is gone' \
 # that is the only copy of the seed on the medium.
 check 'but the file is kept' \
     "$([ -f "$SD2/media/data/spore-seed.superseded.tar.gz" ] && echo yes || echo no)" yes
+# One destination per source. The glob also catches the encrypted variants, and
+# moving every match onto a single name kept only whichever went last.
+check 'and so is the other variant' \
+    "$(cat "$SD2/media/data/spore-seed.superseded.tar.gz.superseded" 2>/dev/null)" older
+check 'each under its own name' \
+    "$(cat "$SD2/media/data/spore-seed.superseded.tar.gz" 2>/dev/null)" 'not really an apkovl'
+has   'and each rename is named as it happens' "$(cat "$SD2/out")" '> renaming spore-seed.apkovl.tar.gz'
 has   'and lbu is still asked to commit' "$(cat "$SD2LOG")" 'lbu commit'
 hasnt 'but never with -d'               "$(cat "$SD2LOG")" 'lbu commit -d'
 rm -rf "$SD2"
+
+# The rename asked the console a question nobody could see, and waited for the
+# answer until the machine was switched off. busybox coreutils/mv.c:
+#
+#     if (dest_exists) {
+#         if (!(flags & OPT_FORCE)
+#          && ((access(dest, W_OK) < 0 && isatty(0)) || (flags & OPT_INTERACTIVE))
+#         ) {
+#             fprintf(stderr, "mv: overwrite '%s'? ", dest);
+#             if (!bb_ask_y_confirmation()) goto RET_0;
+#
+# access() reports EROFS on a read-only filesystem even to root; stdin at boot
+# is the console; and the question went to a stderr this code was sending to
+# /dev/null. All three had to hold, and on the second boot after an install they
+# did. Note what the EOF branch does — RET_0, success, nothing moved — so
+# closing stdin alone would have traded a hang for a silent no-op.
+PSRC=$(cat "$ROOT/lib/persist.sh")
+has   'the seed rename never asks'        "$PSRC" 'mv -f "$pcs_f" "$pcs_keep" < /dev/null'
+hasnt 'and its errors reach the console'  "$PSRC" 'mv -f "$pcs_f" "$pcs_keep" 2>/dev/null'
+has   'and it is bounded like the rest'   "$PSRC" 'persist_bounded 60 mv -f'
+SEEDSRC=$(cat "$ROOT/lib/seed.sh")
+has   'and the whole boot run has no keyboard to ask' \
+    "$SEEDSRC" '} < /dev/null 2>&1 |'
 
 # On the machine it is not that simple: the medium is mounted read-only until
 # lbu remounts it, and lbu does that inside `lbu commit` — after this runs. So
@@ -256,6 +286,10 @@ SD3=/tmp/spore-roseed.$$
 mkdir -p "$SD3"
 if [ "$(id -u)" = 0 ] && mount -t tmpfs tmpfs "$SD3" 2>/dev/null; then
     printf 'seed\n' > "$SD3/spore-seed.apkovl.tar.gz"
+    # And a destination already there, from the last boot that got this far.
+    # That is the combination that hung: read-only filesystem, existing
+    # destination, a console at stdin.
+    printf 'from an earlier boot\n' > "$SD3/spore-seed.superseded.tar.gz"
     if mount -o remount,ro "$SD3" 2>/dev/null; then
         SD3O=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/facts.sh"
                 . "$ROOT/lib/persist.sh"
@@ -264,14 +298,26 @@ if [ "$(id -u)" = 0 ] && mount -t tmpfs tmpfs "$SD3" 2>/dev/null; then
                 persist_clear_seed "$SD3" 2>&1 )
         has   'a read-only medium is remounted for it' "$SD3O" 'set the bootstrap seed aside'
         check 'and the seed is really renamed' \
-            "$([ -f "$SD3/spore-seed.superseded.tar.gz" ] && echo yes || echo no)" yes
+            "$(cat "$SD3/spore-seed.superseded.tar.gz" 2>/dev/null)" seed
         SD3LEFT=$(cd "$SD3" && ls -1 ./*.apkovl.tar.gz* 2>/dev/null | tr '\n' ' ')
         check 'with nothing lbu globs left' "${SD3LEFT:-none}" none
         # A remount touches the device, so it can wait on one — and it says
         # nothing while it works.
         has 'each remount is announced'   "$SD3O" '> remounting'
         PSRC3=$(cat "$ROOT/lib/persist.sh")
-        has 'and bounded'                 "$PSRC3" 'timeout "$pm_t" mount'
+        has 'and bounded'                 "$PSRC3" 'timeout "$pb_t" "$@"'
+        # Read-write first, then the rename — not the rename first and a remount
+        # only if it failed. That ordering is the fix: on a writable filesystem
+        # there is no unwritable destination, so there is nothing for mv to ask
+        # about in the first place.
+        SD3RW=$(printf '%s\n' "$SD3O" | grep -n 'remounting.*read-write' | head -1 | cut -d: -f1)
+        SD3MV=$(printf '%s\n' "$SD3O" | grep -n '> renaming'            | head -1 | cut -d: -f1)
+        if [ -n "$SD3RW" ] && [ -n "$SD3MV" ] && [ "$SD3RW" -lt "$SD3MV" ]; then
+            t_ok 'and the remount comes before the rename, not after it fails'
+        else
+            t_fail 'and the remount comes before the rename, not after it fails' \
+                "rw [$SD3RW], rename [$SD3MV]"
+        fi
         # Put back read-only, or the next power cut corrupts a USB stick.
         check 'and the medium is read-only again' \
             "$(awk -v d="$SD3" '$2 == d { print $4; exit }' /proc/mounts |

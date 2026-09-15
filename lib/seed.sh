@@ -149,8 +149,19 @@ else
 fi
 }
 
+# Output to the console, input from nowhere. OpenRC starts this service with
+# stdin on the console, so `isatty(0)` is true for everything the run invokes —
+# and a tool that decides to ask a question at boot waits for an answer from a
+# keyboard nobody is sitting at. That is not a slow boot, it is a stopped one,
+# with no error and nothing on the console to say what it is waiting for. This
+# already cost a week: busybox mv asks before overwriting a destination it
+# cannot write to, and the medium is read-only until lbu remounts it.
+#
+# /dev/null makes every such question answer itself. What it does not do is
+# make the answer right — EOF reads as "no", so a command that asks still has
+# to be told not to (`mv -f`); this only guarantees it is told something.
 : > "$SEED_RC" 2>/dev/null || true
-{ seed_main; printf '%s' "$?" > "$SEED_RC" 2>/dev/null; } 2>&1 |
+{ seed_main; printf '%s' "$?" > "$SEED_RC" 2>/dev/null; } < /dev/null 2>&1 |
     tee -a /dev/console 2>/dev/null >> /var/log/spore-seed.log
 exit "$(cat "$SEED_RC" 2>/dev/null || echo 1)"
 START

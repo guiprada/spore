@@ -16,18 +16,27 @@ persist_try() {
     "$@"
 }
 
-# A remount touches the device, so it can wait on one — a USB stick that has
-# gone slow or is failing takes the boot with it, silently, because mount says
-# nothing while it works. Bounded like everything else here.
-persist_mount() {
-    pm_t=$1
+# Anything that touches the medium can wait on it — a USB stick that has gone
+# slow or is failing takes the boot with it, silently, because none of these
+# tools say anything while they work. So they all get a deadline, and the
+# command is logged before it runs rather than after it returns, because the
+# ones that matter are the ones that do not return.
+#
+# It always runs: no dry-run or synthetic-root guard, deliberately. Those are
+# decisions about whether an action should happen at all, and every caller here
+# has already made one — `run` and `persist_try` are the guarded forms.
+persist_bounded() {
+    pb_t=$1
     shift
+    runlog "$*"
     if command -v timeout >/dev/null 2>&1; then
-        timeout "$pm_t" mount "$@" 2>/dev/null
+        timeout "$pb_t" "$@"
     else
-        mount "$@" 2>/dev/null
+        "$@"
     fi
 }
+
+persist_mount() { pm_t=$1; shift; persist_bounded "$pm_t" mount "$@" 2>/dev/null; }
 
 # The filesystem a path is on, which is not the path. /proc/mounts lists mount
 # points, so looking up /media/storage/data finds nothing at all and the caller
@@ -100,42 +109,69 @@ persist_clear_seed() {
         return 0
     fi
     starting "setting the bootstrap seed aside in $pcs_dir"
+
+    # Read-only first, before the move rather than after it has failed.
+    #
+    # The medium is mounted read-only at this point: lbu remounts it itself, and
+    # only inside `lbu commit`, which is after this runs. Trying the move anyway
+    # and remounting only if it failed is what hung a boot here for a week. By
+    # then the destination already existed, from the last boot that got this
+    # far, and busybox mv does this (coreutils/mv.c):
+    #
+    #     if (dest_exists) {
+    #         if (!(flags & OPT_FORCE)
+    #          && ((access(dest, W_OK) < 0 && isatty(0)) || ...
+    #             fprintf(stderr, "mv: overwrite '%s'? ", dest);
+    #             if (!bb_ask_y_confirmation()) goto RET_0;
+    #
+    # access() reports EROFS on a read-only filesystem even to root, stdin at
+    # boot is the console, and the question went to a stderr this code was
+    # sending to /dev/null. So the machine asked something nobody could see and
+    # waited for an answer until it was switched off — no error, no progress,
+    # nothing on the console but the line above this one.
+    #
+    # Three things settle it: the remount happens first, so there is nothing to
+    # ask about; `-f` means it would not ask anyway; and stdin is /dev/null, so
+    # anything else down here that decides to ask gets EOF instead of the
+    # keyboard. Errors go to the console now rather than to /dev/null — a
+    # question that cannot be seen is exactly what this cost.
+    #
+    # Only when it really is read-only, read off /proc/mounts rather than
+    # inferred from a failure. A move can fail for permissions on a perfectly
+    # writable filesystem, and "put it back read-only" would then be taking away
+    # something nobody gave. And it goes straight back afterwards rather than
+    # being left for lbu: lbu decides whether to restore read-only by checking
+    # whether the medium was read-only when it started, so leaving it writable
+    # here means it stays writable afterwards, and a USB stick mounted rw is a
+    # corruption risk at the next power cut.
+    pcs_mp=''
+    if pcs_ro=$(persist_is_ro "$pcs_dir"); then
+        starting "remounting $pcs_ro read-write"
+        persist_mount 60 -o remount,rw "$pcs_ro" && pcs_mp=$pcs_ro
+    fi
+
     # Kept, and kept legible: still a seed, no longer an apkovl. `spore install`
     # writes a fresh one whenever it runs, and `spore seed` rebuilds one from a
     # running machine, so this is a courtesy rather than the only copy.
     #
-    # The medium is mounted read-only at this point. lbu remounts it itself, and
-    # only inside `lbu commit` — which is after this runs, so the first attempt
-    # fails with EROFS. Remount around the move and put it straight back, rather
-    # than remounting for the whole commit: lbu decides whether to restore
-    # read-only by checking whether the medium was read-only when it started, so
-    # leaving it writable here means it stays writable afterwards, and a USB
-    # stick mounted rw is a corruption risk at the next power cut.
-    # And only when it really is read-only, read off /proc/mounts rather than
-    # inferred from the move having failed. A move can fail for permissions on a
-    # perfectly writable filesystem, and "put it back read-only" would then be
-    # taking away something nobody gave.
-    pcs_keep=$pcs_dir/spore-seed.superseded.tar.gz
-
-    persist_move_seeds() {
-        pms_ok=no
-        for pms_f in "$pcs_dir"/spore-seed.apkovl.tar.gz*; do
-            [ -f "$pms_f" ] || continue
-            mv "$pms_f" "$pcs_keep" 2>/dev/null && pms_ok=yes
-        done
-        [ "$pms_ok" = yes ]
-    }
-
+    # One destination per source, not one for all of them: the glob also catches
+    # the encrypted variants, and moving every match onto a single name would
+    # quietly leave only the last one.
     pcs_moved=no
-    if persist_move_seeds; then
-        pcs_moved=yes
-    elif pcs_mp=$(persist_is_ro "$pcs_dir"); then
-        starting "remounting $pcs_mp read-write"
-        if persist_mount 60 -o remount,rw "$pcs_mp"; then
-            persist_move_seeds && pcs_moved=yes
-            starting "remounting $pcs_mp read-only"
-            persist_mount 60 -o remount,ro "$pcs_mp" || true
-        fi
+    for pcs_f in "$pcs_dir"/spore-seed.apkovl.tar.gz*; do
+        [ -f "$pcs_f" ] || continue
+        pcs_name=${pcs_f##*/}
+        pcs_keep=$pcs_dir/spore-seed.superseded.tar.gz${pcs_name#spore-seed.apkovl.tar.gz}
+        # Named one at a time. When this stalled, the console had only that the
+        # step as a whole had begun — one line covering a glob, a stat, a
+        # remount and a rename, which is a week of boots to narrow down by hand.
+        starting "renaming $pcs_name"
+        persist_bounded 60 mv -f "$pcs_f" "$pcs_keep" < /dev/null && pcs_moved=yes
+    done
+
+    if [ -n "$pcs_mp" ]; then
+        starting "remounting $pcs_mp read-only"
+        persist_mount 60 -o remount,ro "$pcs_mp" || true
     fi
 
     if [ "$pcs_moved" = yes ]; then
