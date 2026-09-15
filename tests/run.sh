@@ -1870,6 +1870,24 @@ RACE_S=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
 check 'a retired seed is not a second apkovl' "${RACE_S:-quiet}" quiet
 rm -rf "$RACE"
 
+# The same question one step earlier: inspect can see it in the overlay, so it
+# should not take a retire attempt to find out.
+OVLT=$(mktemp -d /tmp/spore-ovltool.XXXXXX)
+mkdir -p "$OVLT/m/spore" "$OVLT/half/etc/init.d" \
+         "$OVLT/whole/etc/init.d" "$OVLT/whole/usr/local/lib/spore"
+printf 'FORMAT=1\nHOST=k\nMODULES="net"\n' > "$OVLT/m/spore/spore.conf"
+printf 'svc\n' > "$OVLT/half/etc/init.d/spore-seed"
+printf 'svc\n' > "$OVLT/whole/etc/init.d/spore-seed"
+printf 'run\n' > "$OVLT/whole/usr/local/lib/spore/seed-run"
+( cd "$OVLT/half" && tar -czf "$OVLT/m/k.apkovl.tar.gz" . )
+OVLT_H=$("$SPORE" inspect "$OVLT/m" 2>&1)
+has 'inspect calls out an overlay that cannot run its own service' \
+    "$OVLT_H" 'without the tool that'
+( cd "$OVLT/whole" && tar -czf "$OVLT/m/k.apkovl.tar.gz" . )
+OVLT_W=$("$SPORE" inspect "$OVLT/m" 2>&1)
+has 'and confirms one that can'  "$OVLT_W" 'it carries the tool'
+rm -rf "$OVLT"
+
 # Every file the seed carries, not a sample. This compared lib/seed.sh,
 # lib/plan.sh, modules/net.sh and bin/spore, and said "matches this tool" about
 # a medium whose persist.sh was two commits old — while persist.sh was the file
@@ -2134,6 +2152,54 @@ has   'a second run is a no-op, and says so' "$RET_T" 'already handed over'
 # cannot write to, and that question has hung a boot here already.
 RETSRC=$(cat "$ROOT/lib/bootstrap.sh")
 has   'the rename never asks' "$RETSRC" 'mv -f "$rs_f" "$rs_keep" < /dev/null'
+
+# An overlay that carries the spore-seed service but not the tool that service
+# runs is a machine that fails its own boot service every time and has no
+# `spore` on it. /etc/init.d/spore-seed is committed because it is under /etc;
+# /usr/local/lib/spore is only kept if the commit was told to. Invisible while
+# the machine still boots from the seed — which is what retire takes away.
+TOOLW=$(mktemp -d /tmp/spore-toolovl.XXXXXX)
+mkdir -p "$TOOLW/half/etc/init.d" "$TOOLW/whole/etc/init.d" \
+         "$TOOLW/whole/usr/local/lib/spore"
+printf 'svc\n' > "$TOOLW/half/etc/init.d/spore-seed"
+printf 'svc\n' > "$TOOLW/whole/etc/init.d/spore-seed"
+printf 'run\n' > "$TOOLW/whole/usr/local/lib/spore/seed-run"
+mkdir -p "$TOOLW/d"
+printf 'seed\n' > "$TOOLW/d/spore-seed.apkovl.tar.gz"
+( cd "$TOOLW/half" && tar -czf "$TOOLW/d/k.apkovl.tar.gz" . )
+TOOL_H=$("$SPORE" retire "$TOOLW/d" 2>&1 || true)
+has   'retire refuses an overlay missing the tool' "$TOOL_H" 'but not the tool it runs'
+check 'and leaves the seed alone' \
+    "$([ -f "$TOOLW/d/spore-seed.apkovl.tar.gz" ] && echo yes || echo no)" yes
+( cd "$TOOLW/whole" && tar -czf "$TOOLW/d/k.apkovl.tar.gz" . )
+TOOL_W=$("$SPORE" retire "$TOOLW/d" 2>&1)
+check 'one that carries it is retired' \
+    "$([ -f "$TOOLW/d/spore-seed.apkovl.tar.gz" ] && echo yes || echo no)" no
+rm -rf "$TOOLW"
+
+# And the commit keeps it, which is what makes that overlay whole. The service
+# is the tell: a host with /etc/init.d/spore-seed is one that runs the tool at
+# boot, so the tool has to survive the reboot with it.
+TOOLP=$(mktemp -d /tmp/spore-toolkeep.XXXXXX)
+mkdir -p "$TOOLP/etc/init.d" "$TOOLP/usr/local/lib/spore" "$TOOLP/usr/local/bin"
+printf 'svc\n' > "$TOOLP/etc/init.d/spore-seed"
+printf 'run\n' > "$TOOLP/usr/local/lib/spore/seed-run"
+printf 'w\n'   > "$TOOLP/usr/local/bin/spore"
+TOOLPLOG=$(mktemp /tmp/spore-toolkeeplog.XXXXXX)
+export SPORE_FACT_LBU_DEST=/media/data SPORE_RUN_LOG="$TOOLPLOG"
+alpine "$SPORE" --spore "$EX" --root "$TOOLP" persist >/dev/null 2>&1 || true
+unset SPORE_FACT_LBU_DEST SPORE_RUN_LOG
+has 'the commit keeps the tool tree'   "$(cat "$TOOLPLOG")" 'lbu include /usr/local/lib/spore'
+has 'and the wrapper beside it'        "$(cat "$TOOLPLOG")" 'lbu include /usr/local/bin/spore'
+# But only on a machine that runs it at boot. A workstation applying a spore to
+# itself has no spore-seed service and no business keeping a copy of the tool.
+rm -f "$TOOLP/etc/init.d/spore-seed"
+TOOLPLOG2=$(mktemp /tmp/spore-toolkeeplog2.XXXXXX)
+export SPORE_FACT_LBU_DEST=/media/data SPORE_RUN_LOG="$TOOLPLOG2"
+alpine "$SPORE" --spore "$EX" --root "$TOOLP" persist >/dev/null 2>&1 || true
+unset SPORE_FACT_LBU_DEST SPORE_RUN_LOG
+hasnt 'not where there is no seed service' "$(cat "$TOOLPLOG2")" 'lbu include /usr/local'
+rm -rf "$TOOLP" "$TOOLPLOG" "$TOOLPLOG2"
 
 RET_U=$("$SPORE" retire 2>&1 || true)
 has   'it needs a target'    "$RET_U" 'usage: spore retire'

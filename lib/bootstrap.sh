@@ -439,6 +439,33 @@ retire_seeds() {
          whether it has."
     fi
 
+    # And not before that overlay can run the service it carries.
+    # /etc/init.d/spore-seed is committed automatically because it is under
+    # /etc; what it runs lives in /usr/local, which is in the overlay only if
+    # the commit was told to keep it. An overlay with the service and not the
+    # program is a machine that fails spore-seed on every boot and has no
+    # `spore` on it — and it looks fine right up until the seed goes away,
+    # which is what this command does.
+    #
+    # Only when the overlay can actually be read. A tar that will not list is
+    # not evidence of anything, and refusing on it would block a medium that is
+    # perfectly fine.
+    for rs_ovl in "$rs_data"/*.apkovl.tar.gz; do
+        case ${rs_ovl##*/} in spore-seed.*|'*.apkovl.tar.gz') continue ;; esac
+        [ -f "$rs_ovl" ] || continue
+        tar -tzf "$rs_ovl" > "$SPORE_WORK/retire.ovl" 2>/dev/null || continue
+        grep -q 'etc/init.d/spore-seed' "$SPORE_WORK/retire.ovl" || continue
+        grep -q 'usr/local/lib/spore/seed-run' "$SPORE_WORK/retire.ovl" && continue
+        die "${rs_ovl##*/} carries the spore-seed service but not the tool it runs:
+         there is no usr/local/lib/spore/seed-run in it. Retiring the seed now
+         would leave a machine that fails that service on every boot and has no
+         \`spore\` command on it at all.
+         It was committed by a tool that did not know to keep /usr/local. Put a
+         current seed on the medium and let it commit once more:
+             spore install <dir> <device>
+         then boot it, then retire. The seed here still works in the meantime."
+    done
+
     rs_n=0
     for rs_d in "$rs_data" "$rs_boot"; do
         [ -n "$rs_d" ] && [ -d "$rs_d" ] || continue

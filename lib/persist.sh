@@ -184,6 +184,25 @@ persist_clear_seed() {
     fi
 }
 
+# The tool keeps itself, when the machine is one that runs it at boot.
+#
+# The seed puts the spore-seed service in /etc/init.d, so lbu commits it without
+# being asked — /etc is the one thing an apkovl always carries. What the service
+# runs is /usr/local/lib/spore/seed-run, and /usr/local is on the RAM root like
+# everything else outside /etc. So the overlay carried a service whose program
+# was not in it: a machine booted from that overlay fails spore-seed on every
+# boot and has no `spore` on it at all.
+#
+# Invisible for as long as the machine keeps booting from the seed, which
+# carries the tool — and the seed is exactly what `spore retire` takes away.
+persist_tool_paths() {
+    [ -f "$(rootpath /etc/init.d/spore-seed)" ] || return 0
+    for ptp_p in /usr/local/lib/spore /usr/local/bin/spore; do
+        [ -e "$(rootpath "$ptp_p")" ] && printf '%s\n' "$ptp_p"
+    done
+    return 0
+}
+
 persist_commit() {
     case $(persist_backend) in
         lbu)
@@ -204,7 +223,8 @@ persist_commit() {
             # and a boot that stopped somewhere in here looked exactly like a
             # boot that stopped at the counts.
             starting 'recording what to keep'
-            { plan_persist_paths; plan_all_owned_paths; } | sort -u > "$SPORE_WORK/persist.final"
+            { plan_persist_paths; plan_all_owned_paths; persist_tool_paths; } |
+                sort -u > "$SPORE_WORK/persist.final"
             while read -r pc_p; do
                 [ -n "$pc_p" ] || continue
                 case $pc_p in /etc|/etc/*) continue ;; esac

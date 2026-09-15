@@ -184,6 +184,23 @@ inspect_data() {
                      ! -name 'spore-seed.*' 2>/dev/null | head -1) && [ -n "$id_ovl" ]; then
         printf '  %s%s%s — it converged and committed at least once\n' \
             "$_c_green" "$(basename "$id_ovl")" "$_c_reset" >&2
+        # Whether that overlay is a whole machine or only most of one. The
+        # spore-seed service is under /etc, so it is committed whether or not
+        # anyone asked; the program it runs is under /usr/local, which is only
+        # kept if the commit was told to. The difference does not show while the
+        # machine still boots from the seed.
+        if tar -tzf "$id_ovl" > "$SPORE_WORK/ovl.files" 2>/dev/null &&
+           grep -q 'etc/init.d/spore-seed' "$SPORE_WORK/ovl.files"; then
+            if grep -q 'usr/local/lib/spore/seed-run' "$SPORE_WORK/ovl.files"; then
+                printf '  and it carries the tool, so it can boot on its own\n' >&2
+            else
+                warn "but it carries the spore-seed service without the tool that
+         service runs, so a machine booted from it fails spore-seed every time
+         and has no \`spore\` command on it. It cannot be retired to yet.
+         Re-install and let it commit once more; a current tool keeps
+         /usr/local/lib/spore in the overlay."
+            fi
+        fi
     else
         printf '  nothing. The machine never finished an apply --persist here.\n' >&2
     fi
