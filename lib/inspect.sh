@@ -159,7 +159,27 @@ inspect_data() {
         printf '  "spore: looking for a spore to germinate" — if that line is absent,\n' >&2
         printf '  the overlay did not load or OpenRC did not run the service.\n' >&2
     fi
+    inspect_vm_log "$id_dir"
     printf '\n' >&2
+}
+
+# The other log, the one on this side. `spore try` captures the guest's console
+# to spore-boot.log here, and under -snapshot that is the only record a VM boot
+# leaves — the medium's own log cannot change, by design. Looking at the medium
+# and being told nothing happened, while the answer sits in the working
+# directory, is a trap this command laid for its own user repeatedly.
+inspect_vm_log() {
+    ivl_dir=$1
+    ivl_log=${SPORE_TRY_LOG:-$PWD/spore-boot.log}
+    [ -f "$ivl_log" ] || return 0
+    # Only when it is the fresher of the two: an old boot log next to a current
+    # medium log would be the same confusion pointing the other way.
+    if [ -f "$ivl_dir/spore-seed.log" ] && [ "$ivl_dir/spore-seed.log" -nt "$ivl_log" ]; then
+        return 0
+    fi
+    printf '\nthe last VM boot\n\n' >&2
+    printf '  %s is newer than the log on the medium.\n' "$ivl_log" >&2
+    try_report "$ivl_log"
 }
 
 # inspect_medium <device|directory>

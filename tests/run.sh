@@ -1815,6 +1815,26 @@ hasnt 'a fresh log is not doubted'  "$INL" 'older than the seed'
 touch "$IN/m/spore-seed.apkovl.tar.gz"
 INA=$("$SPORE" inspect "$IN/m" 2>&1)
 has 'a log older than its seed is doubted' "$INA" 'older than the seed next to it'
+
+# The other log, on this side. Under -snapshot the medium's own log cannot
+# change, so the VM's console is the only record a try boot leaves — and being
+# told "nothing happened" while the answer sits in the working directory is a
+# trap this command laid for its own user, repeatedly.
+INV=$(mktemp -d /tmp/spore-vmlog.XXXXXX)
+mkdir -p "$INV/m/spore"
+printf 'FORMAT=1\nHOST=k\nMODULES="net"\n' > "$INV/m/spore/spore.conf"
+printf 'an older boot\n' > "$INV/m/spore-seed.log"
+sleep 1
+printf '[0.0] Linux version 6.18\n=== spore seed: now ===\n  > recording what to keep\n' \
+    > "$INV/boot.log"
+INVO=$(SPORE_TRY_LOG="$INV/boot.log" "$SPORE" inspect "$INV/m" 2>&1)
+has 'a newer VM log is read too'     "$INVO" 'the last VM boot'
+has 'and its verdict given'          "$INVO" 'recording what to keep'
+# The other way round would be the same confusion pointing backwards.
+touch "$INV/m/spore-seed.log"
+INVO2=$(SPORE_TRY_LOG="$INV/boot.log" "$SPORE" inspect "$INV/m" 2>&1)
+hasnt 'an older VM log is left alone' "$INVO2" 'the last VM boot'
+rm -rf "$INV"
 has 'and says to boot before reading it'   "$INA" 'boot the machine again'
 # The commonest reason it stays old is not that nobody booted: `spore try`
 # discards writes unless told otherwise, so the seed log never lands.
