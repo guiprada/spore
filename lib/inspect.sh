@@ -189,10 +189,17 @@ inspect_data() {
         # anyone asked; the program it runs is under /usr/local, which is only
         # kept if the commit was told to. The difference does not show while the
         # machine still boots from the seed.
-        if tar -tzf "$id_ovl" > "$SPORE_WORK/ovl.files" 2>/dev/null &&
-           grep -q 'etc/init.d/spore-seed' "$SPORE_WORK/ovl.files"; then
-            if grep -q 'usr/local/lib/spore/seed-run' "$SPORE_WORK/ovl.files"; then
-                printf '  and it carries the tool, so it can boot on its own\n' >&2
+        # Every branch says something. A silent one here was read as "the check
+        # found nothing wrong" when it meant "this tool has no such check" —
+        # which took a look at the git history to tell apart, on the one report
+        # where the whole question was whether the fix had landed.
+        if tar -tzf "$id_ovl" > "$SPORE_WORK/ovl.files" 2>/dev/null; then
+            if ! grep -q 'etc/init.d/spore-seed' "$SPORE_WORK/ovl.files"; then
+                printf '  it carries no spore-seed service, so a machine booted from it is\n' >&2
+                printf '  configured but inert — it will not apply this spore again.\n' >&2
+            elif grep -q 'usr/local/lib/spore/seed-run' "$SPORE_WORK/ovl.files"; then
+                printf '  %sand it carries the tool, so it can boot on its own%s\n' \
+                    "$_c_green" "$_c_reset" >&2
             else
                 warn "but it carries the spore-seed service without the tool that
          service runs, so a machine booted from it fails spore-seed every time
@@ -200,6 +207,8 @@ inspect_data() {
          Re-install and let it commit once more; a current tool keeps
          /usr/local/lib/spore in the overlay."
             fi
+        else
+            printf '  (it could not be listed, so whether it carries the tool is unknown)\n' >&2
         fi
     else
         printf '  nothing. The machine never finished an apply --persist here.\n' >&2

@@ -1886,6 +1886,15 @@ has 'inspect calls out an overlay that cannot run its own service' \
 ( cd "$OVLT/whole" && tar -czf "$OVLT/m/k.apkovl.tar.gz" . )
 OVLT_W=$("$SPORE" inspect "$OVLT/m" 2>&1)
 has 'and confirms one that can'  "$OVLT_W" 'it carries the tool'
+# An overlay with no seed service at all is a third answer, not the absence of
+# one. Printing nothing for it meant a report where the check had simply not
+# been installed yet read exactly like a clean bill of health.
+( cd "$OVLT/m" && rm -f k.apkovl.tar.gz )
+mkdir -p "$OVLT/bare/etc"
+printf 'x\n' > "$OVLT/bare/etc/hostname"
+( cd "$OVLT/bare" && tar -czf "$OVLT/m/k.apkovl.tar.gz" . )
+OVLT_B=$("$SPORE" inspect "$OVLT/m" 2>&1)
+has 'and says so when there is no seed service in it' "$OVLT_B" 'no spore-seed service'
 rm -rf "$OVLT"
 
 # Every file the seed carries, not a sample. This compared lib/seed.sh,
