@@ -87,14 +87,35 @@ inspect_stale() {
 # seed, /etc/spore/.seeded is absent and the whole spore is applied again,
 # packages and all; booted from the committed overlay, the seed service finds
 # the stamp and goes straight through.
+#
+# And the log says which of them it was, so this does not have to guess. /var/log
+# is on the RAM root, so the copy saved beside the spore is the last boot and
+# only the last boot: a full apply in it means that boot came up from a seed,
+# because the committed overlay carries /etc/spore/.seeded and the seed service
+# stops at it before applying anything.
 inspect_seed_race() {
     isr_boot=$1 isr_data=$2 isr_dev=${3:-/dev/sdX1}
     [ -f "$isr_boot/spore-seed.apkovl.tar.gz" ] || return 0
     find "$isr_data" -maxdepth 1 -name '*.apkovl.tar.gz' ! -name 'spore-seed.*' \
         2>/dev/null | grep -q . || return 0
+
+    isr_last=''
+    if [ -f "$isr_data/spore-seed.log" ]; then
+        if grep -q 'already converged; nothing to do' "$isr_data/spore-seed.log"; then
+            isr_last="
+         The last boot used the committed overlay: it found the stamp and
+         stopped before applying anything. So the scan has been landing on the
+         right one — which is probe order, not a setting."
+        elif grep -q 'changed,.*already correct' "$isr_data/spore-seed.log"; then
+            isr_last="
+         The last boot did not use it: its log is a full apply, and that only
+         happens when there was no stamp to find, so that boot came up from a
+         seed and did the whole spore again."
+        fi
+    fi
+
     warn "there is also a committed overlay on the data partition, so this medium
-         holds two apkovls and the initramfs takes whichever it finds first.
-         Expect a full re-apply on most boots, fetching packages each time.
+         holds two apkovls and the initramfs takes whichever it finds first.$isr_last
          To hand the machine over to its own overlay, retire this copy:
              sudo mount $isr_dev /mnt &&
                sudo mv /mnt/spore-seed.apkovl.tar.gz /mnt/spore-seed.superseded.tar.gz &&

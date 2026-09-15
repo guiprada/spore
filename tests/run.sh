@@ -1841,6 +1841,19 @@ RACE_W=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
           inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz1 2>&1 )
 has   'once one is committed, the race is called out' "$RACE_W" 'holds two apkovls'
 has   'with the command to settle it'                 "$RACE_W" 'sudo mount /dev/sdz1 /mnt'
+# The log settles which way it went, so this does not have to predict it. A full
+# apply can only happen when there was no /etc/spore/.seeded to find, and the
+# committed overlay carries one — so that boot came up from a seed.
+printf 'applying /media/sda2/spore\n25 changed, 3 already correct\n' > "$RACE/data/spore-seed.log"
+RACE_A=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
+          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz1 2>&1 )
+has   'and the last boot is read off the log'  "$RACE_A" 'did not use it: its log is a full apply'
+printf 'already converged; nothing to do\n' > "$RACE/data/spore-seed.log"
+RACE_C=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/inspect.sh"
+          inspect_seed_race "$RACE/boot" "$RACE/data" /dev/sdz1 2>&1 )
+has   'the other way round too'    "$RACE_C" 'last boot used the committed overlay'
+has   'still warning, since it is probe order either way' "$RACE_C" 'holds two apkovls'
+rm -f "$RACE/data/spore-seed.log"
 # And why you might not want to: that copy is the recovery path if the
 # initramfs cannot read the ext4 data partition at all.
 has   'and the reason to keep it'  "$RACE_W" 'until you have seen the machine boot without it'
