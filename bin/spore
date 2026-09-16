@@ -53,7 +53,8 @@ commands:
   diff           show drift under paths the spore owns
   persist        make the current state survive a reboot
   doctor         host facts and sanity checks
-  modules        list available modules
+  modules [add|rm NAME...]
+                 list available modules, or turn one on or off
   seed [FILE]    build a generic bootstrap apkovl (needs no spore)
   secrets        list the secrets this spore carries
   seal NAME [F]  encrypt F (or stdin) into the spore as NAME
@@ -461,6 +462,76 @@ cmd_passwd() {
 }
 
 cmd_modules() {
+    case ${1:-} in
+        ''|list) [ $# -le 1 ] || die "usage: spore modules [list | add NAME... | rm NAME...]"
+                 cmd_modules_list ;;
+        add|rm|remove) cmd_modules_edit "$@" ;;
+        *) die "usage: spore modules [list | add NAME... | rm NAME...]" ;;
+    esac
+}
+
+# MODULES lives in spore.conf, not in a module's own conf, so `spore set` could
+# not reach it: everything about a module was settable except whether it ran at
+# all. Enabling one meant opening spore.conf and editing a quoted list by hand,
+# which is where a typo becomes "that module silently does nothing".
+cmd_modules_edit() {
+    cme_op=$1
+    shift
+    [ $# -ge 1 ] || die "usage: spore modules $cme_op NAME..."
+    spore_load
+    cme_list=$SPORE_MODULE_LIST
+    for cme_n in "$@"; do
+        case $cme_n in
+            ''|*[!A-Za-z0-9_-]*) die "not a module name: '$cme_n'" ;;
+        esac
+        case " $cme_list " in
+            *" $cme_n "*) cme_on=yes ;;
+            *) cme_on=no ;;
+        esac
+        if [ "$cme_op" = add ]; then
+            [ -f "$SPORE_MODULES/$cme_n.sh" ] ||
+                die "no module called '$cme_n'. \`spore modules\` lists them."
+            [ "$cme_on" = no ] || { say "$cme_n is already enabled"; continue; }
+            cme_list="$cme_list $cme_n"
+        else
+            [ "$cme_on" = yes ] || { say "$cme_n is not enabled"; continue; }
+            cme_keep=''
+            for cme_x in $cme_list; do
+                [ "$cme_x" = "$cme_n" ] && continue
+                cme_keep="$cme_keep $cme_x"
+            done
+            cme_list=$cme_keep
+        fi
+    done
+
+    # Rebuilt word by word, so whatever spacing the file had comes out normal.
+    cme_new=''
+    for cme_x in $cme_list; do cme_new="$cme_new $cme_x"; done
+    cme_new=${cme_new# }
+    [ -n "$cme_new" ] ||
+        die "that would leave MODULES empty, and a spore with no modules plans
+         nothing at all. Remove the spore instead, if that is what you mean."
+    if [ "$cme_new" = "$SPORE_MODULE_LIST" ]; then
+        printf 'spore.conf: MODULES = %s (unchanged)\n' "$cme_new"
+        return 0
+    fi
+    if [ "$SPORE_DRYRUN" = 1 ]; then
+        say "would set MODULES=\"$cme_new\" in spore.conf"
+        return 0
+    fi
+    bootstrap_set "$SPORE_DIR/spore.conf" MODULES "\"$cme_new\""
+    cme_back=$(conf_get "$SPORE_DIR/spore.conf" MODULES '')
+    [ "$cme_back" = "$cme_new" ] ||
+        die "wrote MODULES into spore.conf, but it reads back as '$cme_back'."
+    printf 'spore.conf: MODULES = %s\n' "$cme_new"
+    if [ "$cme_op" = add ] && [ ! -f "$SPORE_DIR/modules/$1.conf" ]; then
+        say "there is no modules/$1.conf, so it runs on its defaults.
+         \`spore plan\` shows what those come to; \`spore set $1 KEY VALUE\`
+         changes them."
+    fi
+}
+
+cmd_modules_list() {
     for cm_m in $(module_available); do
         SPORE_DIR=${SPORE_DIR:-/nonexistent}
         module_load "$cm_m"
@@ -570,7 +641,7 @@ case $SPORE_CMD in
     diff)    cmd_noargs "$@"; cmd_diff ;;
     persist) cmd_noargs "$@"; cmd_persist ;;
     doctor)  cmd_noargs "$@"; cmd_doctor ;;
-    modules|module) cmd_noargs "$@"; cmd_modules ;;
+    modules|module) cmd_modules "$@" ;;
     secrets) cmd_noargs "$@"; cmd_secrets ;;
     seed)    cmd_seed "$@" ;;
     seal)    cmd_seal "$@" ;;

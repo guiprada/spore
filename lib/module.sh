@@ -26,6 +26,34 @@ module_available() {
     find "$SPORE_MODULES" -maxdepth 1 -name '*.sh' -type f -exec basename {} .sh \; | sort
 }
 
+# MOD_DATA is where a module keeps things that are not configuration — files
+# people upload, a database, a cache — and it was declared by two modules and
+# read by none.
+#
+# It matters most on exactly the kind of host this tool is for. A diskless
+# Alpine is a RAM root: everything outside a mounted medium is gone at the next
+# reboot. dufs defaults its serve path to /var/lib/dufs, which is a perfectly
+# ordinary place on a machine with a disk and a tmpfs on this one — so the
+# server works, uploads succeed, and the files are not there in the morning.
+# Nothing fails, which is what makes it worth saying at plan time.
+#
+# Not persisted for them: an apkovl is configuration, and `lbu include` on a
+# directory of uploads would put them in a tarball rewritten on every commit.
+# The fix is a mounted filesystem, which is a decision about the machine.
+module_data_warn() {
+    mdw_mod=$1 mdw_dir=$2
+    [ -n "$mdw_dir" ] || return 0
+    [ "$(fact_persist)" = lbu ] || return 0
+    case $mdw_dir in
+        /media/*|/mnt/*) return 0 ;;
+    esac
+    plan_note "$mdw_mod: $mdw_dir is on the RAM root of a diskless host, so
+         anything written there is gone at the next reboot — and nothing will
+         report it, because writing to it works. Point it at a mounted
+         filesystem (/media/... or /mnt/...) if the contents are meant to
+         outlast a boot."
+}
+
 # --- the planner -------------------------------------------------------------
 #
 # Pure: touches nothing on the target, needs no root, and runs anywhere.
@@ -56,6 +84,7 @@ plan_build() {
         SPORE_ALL_PORTS="$SPORE_ALL_PORTS $MOD_PORTS"
         SPORE_ALL_LOGINS="$SPORE_ALL_LOGINS $MOD_LOGINS"
         if [ "$MOD_ROOT_PASSWORD" = yes ]; then SPORE_ROOT_PASSWORD=yes; fi
+        module_data_warn "$pb_m" "$MOD_DATA"
     done
 
     # Pass 2 — emit actions.

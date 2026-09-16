@@ -2221,6 +2221,63 @@ has   'the service is still enabled for next boot' "$KMSRC" 'rc-update --quiet a
 has   'a load that failed says so'          "$KMSRC" 'could not be applied to this console now'
 has   'and says what that means'            "$KMSRC" 'about to type a password'
 
+section 'spore modules add/rm: MODULES lives in spore.conf, so set could not reach it'
+# Everything about a module was settable except whether it ran at all. Turning
+# one on meant opening spore.conf and editing a quoted list by hand, which is
+# where a typo becomes "that module silently does nothing".
+MD=$(mktemp -d /tmp/spore-mods.XXXXXX)
+cp -r "$EX" "$MD/s"
+sed -i 's/^MODULES=.*/MODULES="net users"/' "$MD/s/spore.conf"
+
+"$SPORE" -s "$MD/s" modules add dufs >/dev/null 2>&1
+check 'it turns a module on'  "$(conf_read "$MD/s/spore.conf" MODULES)" 'net users dufs'
+MD_TWICE=$("$SPORE" -s "$MD/s" modules add dufs 2>&1)
+has   'adding it twice says so'     "$MD_TWICE" 'already enabled'
+check 'and changes nothing'         "$(conf_read "$MD/s/spore.conf" MODULES)" 'net users dufs'
+"$SPORE" -s "$MD/s" modules rm users >/dev/null 2>&1
+check 'and off again'               "$(conf_read "$MD/s/spore.conf" MODULES)" 'net dufs'
+MD_GONE=$("$SPORE" -s "$MD/s" modules rm users 2>&1)
+has   'removing one that is off says so' "$MD_GONE" 'is not enabled'
+
+MD_NO=$("$SPORE" -s "$MD/s" modules add nosuch 2>&1 || true)
+has   'a module that does not exist is refused' "$MD_NO" "no module called 'nosuch'"
+check 'and the list is untouched' "$(conf_read "$MD/s/spore.conf" MODULES)" 'net dufs'
+
+# A spore with no modules plans nothing at all, which is not a state to leave
+# someone in by accident.
+MD_EMPTY=$("$SPORE" -s "$MD/s" modules rm net dufs 2>&1 || true)
+has 'emptying MODULES is refused' "$MD_EMPTY" 'would leave MODULES empty'
+
+MD_DRY=$("$SPORE" -n -s "$MD/s" modules add ssh 2>&1)
+has   'a dry run says what it would do' "$MD_DRY" 'would set MODULES='
+check 'and changes nothing'             "$(conf_read "$MD/s/spore.conf" MODULES)" 'net dufs'
+# Listing still takes no arguments and still works without a spore.
+MD_LIST=$("$SPORE" modules 2>&1)
+has 'listing still lists'               "$MD_LIST" 'dufs file server'
+rm -rf "$MD"
+
+section 'MOD_DATA: a module payload on the RAM root does not outlast the boot'
+# Declared by two modules and read by none. It matters most on exactly the host
+# this tool is for: a diskless Alpine is a RAM root, so dufs serving its default
+# /var/lib/dufs accepts uploads all day and has none of them in the morning —
+# and nothing reports it, because writing to it works.
+MDATA=$(mktemp -d /tmp/spore-moddata.XXXXXX)
+cp -r "$EX" "$MDATA/s"
+sed -i 's/^MODULES=.*/MODULES="dufs"/' "$MDATA/s/spore.conf"
+"$SPORE" -s "$MDATA/s" set dufs DUFS_SERVE /var/lib/dufs >/dev/null 2>&1
+MDATA_RAM=$(alpine "$SPORE" -s "$MDATA/s" -r "$MDATA/r" plan 2>&1)
+has 'a RAM-root payload is called out' "$MDATA_RAM" 'is on the RAM root of a diskless host'
+"$SPORE" -s "$MDATA/s" set dufs DUFS_SERVE /media/storage/files >/dev/null 2>&1
+MDATA_OK=$(alpine "$SPORE" -s "$MDATA/s" -r "$MDATA/r" plan 2>&1)
+hasnt 'one on a mounted filesystem is not' "$MDATA_OK" 'is on the RAM root'
+# And nothing to say on a host with a disk, where /var/lib is simply /var/lib.
+"$SPORE" -s "$MDATA/s" set dufs DUFS_SERVE /var/lib/dufs >/dev/null 2>&1
+MDATA_DISK=$(env SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=yes SPORE_FACT_PERSIST=rootfs \
+    SPORE_FACT_ARCH=x86_64 SPORE_FACT_ROOT=yes SPORE_FACT_ALPINE=3.20.0 \
+    "$SPORE" -s "$MDATA/s" -r "$MDATA/r" plan 2>&1)
+hasnt 'and a host with a disk is left alone' "$MDATA_DISK" 'is on the RAM root'
+rm -rf "$MDATA"
+
 section 'spore set: a module setting, checked'
 # The conf files are the format and stay authoritative — they are meant to be
 # read, diffed and committed. What a command adds is the checking: a module that
