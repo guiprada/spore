@@ -21,17 +21,42 @@ Every command is the tool pointed at a spore:
 
 `-s` always names the bundle, never this repository.
 
+Making a machine, in the order you do it:
+
 ```sh
 spore setup                            # asks, then offers to write the stick
 spore media /dev/sdX alpine.iso        # partition and write a boot medium
+spore install DIR /dev/sdX             # put the machine on it
 spore try /dev/sdX                     # boot it in a VM, medium untouched
 spore inspect /dev/sdX                 # what is on it, and what it logged
-spore install DIR /dev/sdX             # put the machine on it
+spore retire /dev/sdX                  # hand it over to its own overlay
+```
 
+Changing one afterwards. Every one of these edits a file you could open in an
+editor instead; what the command adds is the checking, and each exists because
+the file on its own let something through in silence:
+
+```sh
+spore set net NET_DNS 1.1.1.1          # a module setting, read back to confirm
+spore modules add dufs                 # MODULES is in spore.conf, not a module's
+spore passwd root                      # asks twice, hashes, seals the hash
+spore seal dufs-auth                   # any other secret, from stdin
+spore secrets                          # what this spore carries
+```
+
+On the machine itself:
+
+```sh
 spore apply          # converge this host to the spore
 spore persist        # make it survive a reboot
 spore status         # declared vs actual
+spore diff           # what drifted, under the paths the spore owns
+spore plan           # the action list, touching nothing
+spore doctor         # host facts, and the traps this host is in
 ```
+
+`spore --help` lists all of them. `init` scaffolds an empty spore, which is what
+`new` and `setup` do for you with a name and a keypair already in place.
 
 There is no *install* verb. `apply` converges to a declared state, so applying to
 a fresh box and re-applying to a running one are the same operation.
@@ -358,7 +383,9 @@ emit order.
 
 ### Storage
 
-Volumes are declared in `volumes.conf`, keyed by a stable identifier — the
+Two halves, one root.
+
+**Declared** volumes live in `volumes.conf`, keyed by a stable identifier — the
 interactive "which disk?" of a setup wizard has no place in something meant to
 produce the same machine twice.
 
@@ -389,6 +416,44 @@ Three things it will not let you get wrong:
 
 A volume whose name would escape the serve root, or whose spec is not a
 recognised identifier, is refused at plan time rather than written into fstab.
+
+**Discovered** volumes are the other half, for the thing a file server is
+actually for: plug a disk in and have it appear.
+
+```sh
+STORAGE_AUTO=yes            # mount everything this machine did not boot from
+STORAGE_AUTO_NAME=uuid      # uuid (default), label, or dev
+STORAGE_AUTO_EXCLUDE="backup-drive"   # devices, UUIDs or labels to leave alone
+```
+
+`uuid` is the default because letters move: the same stick was `sdb2` on one
+boot and `sdc2` on the next.
+
+This cannot be a plan action — the plan is built on a workstation, where what is
+attached is unknowable — and it cannot be a firstboot action either, because a
+machine booted from its committed overlay stops at `/etc/spore/.seeded` and
+applies nothing. So it is a service, which runs on every boot, which is when
+yesterday's disk needs to show up.
+
+"Not system" is decided by what is already mounted: the initramfs mounts
+whatever the machine booted from before any of this runs. That is true and it is
+not sufficient, so each volume is mounted, **looked at**, and unmounted again if
+it turns out to carry a spore, an identity or an apkovl:
+
+```
+spore: sharing /dev/sdb1 (ext4) at /media/storage/8b6df71c-…
+spore: /dev/sdc2 carries a spore or an apkovl, so it is this machine's
+spore: own medium and is not being shared.
+```
+
+One boot where the initramfs does not mount the data partition would otherwise
+put the spore's age key on a web server.
+
+Sharing everything attached is a decision with a blast radius, and `plan` says so
+rather than assuming: internal disks count, and so does anything plugged in
+later. With `DUFS_ALLOW_ALL=yes` all of it is writable by whoever reaches the
+port, which is what `DUFS_TLS_SELFSIGNED` and a sealed `DUFS_AUTH_SECRET` are
+for.
 
 ## Making the boot medium
 
@@ -620,6 +685,40 @@ reports itself finished.
 This is not `build`: the machine still converges itself a minute into its first
 boot by running the same `apply` path as everywhere else, rather than coming up
 already configured with nothing left to run.
+
+### And then retiring the seed
+
+After the first commit the medium holds **two** apkovls: the seed `install`
+wrote, and the overlay the machine wrote. Alpine's `initramfs-init` takes
+whichever `nlplug-findfs` found first —
+
+```sh
+if [ -z "$KOPT_apkovl" ]; then
+    # Not manually set, use the apkovl found by nlplug
+    if [ -e "$ROOT"/tmp/apkovls ]; then
+        ovl=$(head -n 1 "$ROOT"/tmp/apkovls)
+```
+
+— which is probe order, and usually the first partition. Neither outcome is
+broken and they are different machines: from the seed there is no
+`/etc/spore/.seeded`, so the whole spore is applied again, packages and all;
+from the overlay the seed service finds the stamp and goes straight through.
+
+```sh
+spore retire /dev/sdX
+```
+
+sets every live seed aside — renamed, not deleted, and `install` writes a fresh
+one whenever it runs. It refuses while there is nothing to retire *to*: no
+committed overlay, or an overlay carrying the `spore-seed` service without the
+tool that service runs. `inspect` says which of those you have before you try.
+
+Keep the seed until you have seen the machine boot without it. It is the only
+thing that recovers the medium if the initramfs turns out not to be able to read
+the data partition, and that is not knowable from the workstation.
+
+The loop after that is the same one each time: edit the spore, `install` (which
+puts a fresh seed back), boot, `retire`.
 
 ## Tests
 
