@@ -2303,6 +2303,46 @@ else
 fi
 rm -rf "$WZ"
 
+section 'try disk: something for STORAGE_AUTO to find'
+# Without a second drive the VM has nothing attached that it did not boot from,
+# so a boot proves only that the automount did not crash — and the only way to
+# test sharing was to plug a real disk into the real machine.
+TD=$(mktemp -d /tmp/spore-trydisk.XXXXXX)
+TDSRC=$(cat "$ROOT/lib/try.sh")
+has 'it attaches a second usb drive'  "$TDSRC" 'drive=sporeextra'
+has 'on the same controller as the medium' "$TDSRC" 'bus=xhci.0,drive=sporeextra'
+TD_BAD=$(SPORE_TRY_LOG=$TD/log "$SPORE" try /dev/null nonsense 2>&1 || true)
+has 'an unknown option still names the real ones' "$TD_BAD" '(write, bootloader, disk, disk=PATH)'
+TD_MISS=$("$SPORE" try /dev/null disk=/tmp/definitely-not-here.img 2>&1 || true)
+has 'and a disk that is not there is refused' "$TD_MISS" 'no such disk image or device'
+
+if command -v mkfs.ext4 >/dev/null 2>&1; then
+    TD_IMG=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/try.sh"
+              SPORE_WORK=$TD; try_scratch_disk "$TD/scratch.img" )
+    check 'a scratch disk is made' "$([ -s "$TD_IMG" ] && echo yes || echo no)" yes
+    # ext4 and labelled, so blkid on the guest gives the automount a type and a
+    # uuid to name it by — an image with no filesystem would simply be skipped.
+    check 'with a filesystem on it' "$(blkid -s TYPE -o value "$TD_IMG" 2>/dev/null)" ext4
+    check 'and a label that says where it came from' \
+        "$(blkid -s LABEL -o value "$TD_IMG" 2>/dev/null)" spore-try
+    # And something in it: "it mounted" and "it mounted and there is nothing in
+    # it" look identical from the console otherwise.
+    if [ "$(id -u)" = 0 ]; then
+        mkdir -p "$TD/m"
+        if mount -o loop "$TD_IMG" "$TD/m" 2>/dev/null; then
+            check 'carrying files you can recognise' \
+                "$([ -f "$TD/m/README.txt" ] && [ -f "$TD/m/holiday/beach.jpg" ] &&
+                   echo yes || echo no)" yes
+            umount "$TD/m"
+        else
+            t_skip 'scratch disk contents (could not loop-mount here)'
+        fi
+    fi
+else
+    t_skip 'scratch disk (mkfs.ext4 missing)'
+fi
+rm -rf "$TD"
+
 section 'storage: sharing whatever is attached'
 # volumes.conf is the declared half — name a disk by UUID and it lands in the
 # same place on any machine. That is right for a machine you are describing and

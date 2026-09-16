@@ -128,17 +128,48 @@ try_extract_kernel() {
     return 0
 }
 
-# try_boot <device|image> [write|bootloader ...]
+# try_scratch_disk <path> — an ext4 image with recognisable files in it.
+#
+# Populated with `mkfs.ext4 -d`, which fills the image from a directory without
+# mounting anything: a rehearsal that needs root to prepare its own scratch disk
+# is one more reason not to run it. The files are there so a boot that mounts
+# this shows something you can tell apart from an empty directory — "it mounted"
+# and "it mounted and there is nothing in it" look identical otherwise.
+try_scratch_disk() {
+    tsd_img=$1
+    command -v mkfs.ext4 >/dev/null 2>&1 ||
+        die "mkfs.ext4 is not installed, so a scratch disk cannot be made here.
+         On Debian or Ubuntu: apt install e2fsprogs
+         Or point at one you already have:  spore try DEV disk=/path/to.img"
+    tsd_seed=$SPORE_WORK/scratch
+    mkdir -p "$tsd_seed/holiday"
+    # shellcheck disable=SC2016  # backticks here are prose, not a command
+    printf 'This file is on the scratch disk that `spore try disk` attached.\n' \
+        > "$tsd_seed/README.txt"
+    printf 'not really a photo\n' > "$tsd_seed/holiday/beach.jpg"
+    dd if=/dev/zero of="$tsd_img" bs=1M count=64 status=none 2>/dev/null ||
+        die "could not create $tsd_img"
+    mkfs.ext4 -q -L spore-try -d "$tsd_seed" "$tsd_img" 2>/dev/null ||
+        die "could not put a filesystem on $tsd_img"
+    printf '%s' "$tsd_img"
+}
+
+# try_boot <device|image> [write|bootloader|disk|disk=PATH ...]
 try_boot() {
     tb_target=$1
     shift 2>/dev/null || true
-    tb_write=no tb_direct=yes
+    tb_write=no tb_direct=yes tb_disk=''
     for tb_a in "$@"; do
         case $tb_a in
             write)      tb_write='write' ;;
             bootloader) tb_direct='no' ;;
+            disk)       tb_disk=$(try_scratch_disk "$SPORE_WORK/scratch.img") ;;
+            disk=*)     tb_disk=${tb_a#disk=}
+                        [ -e "$tb_disk" ] ||
+                            die "no such disk image or device: $tb_disk" ;;
             '')         : ;;
-            *)          die "spore try: unknown option '$tb_a' (write, bootloader)" ;;
+            *)          die "spore try: unknown option '$tb_a'
+         (write, bootloader, disk, disk=PATH)" ;;
         esac
     done
     set -- "$tb_target"
@@ -218,6 +249,16 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
     set -- "$@" -device qemu-xhci,id=xhci \
         -drive "if=none,id=sporemedium,format=raw,file=$tb_target" \
         -device usb-storage,bus=xhci.0,drive=sporemedium
+
+    # A second stick, for the half of the machine that is about disks it did not
+    # boot from. Without one, STORAGE_AUTO has nothing to find and a boot proves
+    # only that it did not crash — so the only way to test sharing was to plug a
+    # real disk into the real machine, which is the wrong shape for a first try.
+    if [ -n "$tb_disk" ]; then
+        set -- "$@" \
+            -drive "if=none,id=sporeextra,format=raw,file=$tb_disk" \
+            -device usb-storage,bus=xhci.0,drive=sporeextra
+    fi
     # Writes land in a temporary file unless asked otherwise: a test boot that
     # can corrupt the medium it is testing is not much of a test.
     if [ "$tb_write" = write ]; then
