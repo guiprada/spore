@@ -23,6 +23,8 @@ check()      { if [ "$2" = "$3" ];                    then t_ok "$1"; else t_fai
 has()        { if printf '%s\n' "$2" | grep -qF -- "$3"; then t_ok "$1"; else t_fail "$1" "missing: $3"; fi; }
 hasnt()      { if printf '%s\n' "$2" | grep -qF -- "$3"; then t_fail "$1" "unexpected: $3"; else t_ok "$1"; fi; }
 file_mode()  { stat -c '%a' "$1" 2>/dev/null || echo missing; }
+conf_read()  { ( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; conf_get "$1" "$2" '' ); }
+
 
 # A diskless x86_64 Alpine box with NET_ADMIN.
 alpine() {
@@ -2160,6 +2162,53 @@ else
     umount "$MP" 2>/dev/null || true
 fi
 rm -rf "$NB"
+
+section 'spore set: a module setting, checked'
+# The conf files are the format and stay authoritative — they are meant to be
+# read, diffed and committed. What a command adds is the checking: a module that
+# does not exist, one that is not in MODULES and so reads nothing, and a value
+# that does not survive the round trip. All three are silent in an editor, and
+# the last one is silent until a boot.
+ST=$(mktemp -d /tmp/spore-set.XXXXXX)
+cp -r "$EX" "$ST/s"
+
+"$SPORE" -s "$ST/s" set net NET_DNS 1.1.1.1 >/dev/null 2>&1
+check 'it sets a value' "$(conf_read "$ST/s/modules/net.conf" NET_DNS)" '1.1.1.1'
+# Quoted on the way out, because a resolver list is two words and an unquoted
+# one would read back as the first.
+"$SPORE" -s "$ST/s" set net NET_DNS "1.1.1.1 1.0.0.1" >/dev/null 2>&1
+check 'and a value with spaces survives' \
+    "$(conf_read "$ST/s/modules/net.conf" NET_DNS)" '1.1.1.1 1.0.0.1'
+ST_AGAIN=$("$SPORE" -s "$ST/s" set net NET_DNS 9.9.9.9 2>&1)
+has 'a change says what it replaced' "$ST_AGAIN" '1.1.1.1 1.0.0.1 -> 9.9.9.9'
+
+# sed's replacement text treats \ and & specially, and every caller before this
+# passed a hostname or a keymap. This one passes whatever was typed at it.
+"$SPORE" -s "$ST/s" set net NET_DNS 'a&b\c|d' >/dev/null 2>&1
+check 'sed metacharacters come back as themselves' \
+    "$(conf_read "$ST/s/modules/net.conf" NET_DNS)" 'a&b\c|d'
+"$SPORE" -s "$ST/s" set net NET_DNS 1.1.1.1 >/dev/null 2>&1
+
+ST_NOMOD=$("$SPORE" -s "$ST/s" set nosuch KEY v 2>&1 || true)
+has 'a module that does not exist is refused' "$ST_NOMOD" "no module called 'nosuch'"
+ST_BADK=$("$SPORE" -s "$ST/s" set net 'not a key' v 2>&1 || true)
+has 'and so is a key that is not one'         "$ST_BADK" 'not a config key'
+ST_NL=$("$SPORE" -s "$ST/s" set net NET_DNS "$(printf 'a\nb')" 2>&1 || true)
+has 'and a value that spans lines'            "$ST_NL" 'a value is one line'
+ST_USAGE=$("$SPORE" -s "$ST/s" set net NET_DNS 2>&1 || true)
+has 'it takes three words'                    "$ST_USAGE" 'usage: spore set MODULE KEY VALUE'
+
+# A module that is off reads nothing, so the setting is written and said to be
+# inert rather than quietly doing nothing.
+ST_OFF=$("$SPORE" -s "$ST/s" set system SYSTEM_TIMEZONE UTC 2>&1)
+has 'a module not in MODULES is called out' "$ST_OFF" 'is not in MODULES'
+check 'but the setting is still written' \
+    "$(conf_read "$ST/s/modules/system.conf" SYSTEM_TIMEZONE)" 'UTC'
+
+ST_DRY=$("$SPORE" -n -s "$ST/s" set net NET_DNS 8.8.8.8 2>&1)
+has   'a dry run says what it would do' "$ST_DRY" 'would set NET_DNS=8.8.8.8'
+check 'and changes nothing'             "$(conf_read "$ST/s/modules/net.conf" NET_DNS)" '1.1.1.1'
+rm -rf "$ST"
 
 section 'spore passwd: one command, not a pipeline with a flag to remember'
 # `openssl passwd -6 | spore -s <spore> seal root.password` was the documented

@@ -58,6 +58,7 @@ commands:
   secrets        list the secrets this spore carries
   seal NAME [F]  encrypt F (or stdin) into the spore as NAME
   passwd USER    ask for a password, hash it, and seal it for USER
+  set MOD K V    set a module setting, checked (e.g. set net NET_DNS 1.1.1.1)
 
 options:
   -s, --spore DIR   the spore to use (default: $SPORE_DIR, ./spore,
@@ -385,6 +386,63 @@ seal_password_check() {
          (it asks twice and prints \$6\$...; the password never reaches a file)"
 }
 
+# A module setting, set rather than edited into place.
+#
+# The conf files are the format and stay authoritative — they are meant to be
+# read, diffed and committed, and opening one in an editor is not a workaround.
+# What this adds is the checking: a module that does not exist, a module that is
+# not in MODULES and so reads nothing, a value that does not survive the round
+# trip. All three are silent in an editor, and the last one is silent until a
+# boot.
+cmd_set() {
+    [ $# -eq 3 ] || die "usage: spore set MODULE KEY VALUE
+         e.g.  spore set net NET_DNS 1.1.1.1"
+    spore_load
+    cse_mod=$1 cse_key=$2 cse_val=$3
+    case $cse_mod in
+        ''|*[!A-Za-z0-9_-]*) die "not a module name: '$cse_mod'" ;;
+    esac
+    case $cse_key in
+        ''|*[!A-Za-z0-9_]*) die "not a config key: '$cse_key'" ;;
+    esac
+    case $cse_val in
+        *'
+'*) die "a value is one line; this one is not." ;;
+    esac
+
+    [ -f "$SPORE_MODULES/$cse_mod.sh" ] ||
+        die "no module called '$cse_mod'. \`spore modules\` lists them."
+    case " $SPORE_MODULE_LIST " in
+        *" $cse_mod "*) : ;;
+        *) warn "'$cse_mod' is not in MODULES in spore.conf, so nothing reads
+         this. The setting is written; the module stays off until you add it
+         there." ;;
+    esac
+
+    cse_f=$SPORE_DIR/modules/$cse_mod.conf
+    cse_was=$(conf_get "$cse_f" "$cse_key" '')
+    if [ "$SPORE_DRYRUN" = 1 ]; then
+        say "would set $cse_key=$cse_val in modules/$cse_mod.conf (now: ${cse_was:-unset})"
+        return 0
+    fi
+
+    mkdir -p "$SPORE_DIR/modules"
+    [ -f "$cse_f" ] || : > "$cse_f"
+    bootstrap_set "$cse_f" "$cse_key" "\"$cse_val\""
+
+    # Read it back through the same parser the planner uses. A value that needed
+    # quoting or tripped the rewrite is otherwise a boot away from being noticed.
+    cse_now=$(conf_get "$cse_f" "$cse_key" '')
+    [ "$cse_now" = "$cse_val" ] ||
+        die "wrote $cse_key into $cse_f, but it reads back as '$cse_now'.
+         The file is as it was left — look at it before applying anything."
+    if [ -n "$cse_was" ] && [ "$cse_was" != "$cse_val" ]; then
+        printf 'modules/%s.conf: %s  %s -> %s\n' "$cse_mod" "$cse_key" "$cse_was" "$cse_val"
+    else
+        printf 'modules/%s.conf: %s = %s\n' "$cse_mod" "$cse_key" "$cse_val"
+    fi
+}
+
 cmd_passwd() {
     [ $# -eq 1 ] || die "usage: spore passwd USER   (root, or a name in USERS)"
     spore_load
@@ -517,6 +575,7 @@ case $SPORE_CMD in
     seed)    cmd_seed "$@" ;;
     seal)    cmd_seal "$@" ;;
     passwd)  cmd_passwd "$@" ;;
+    set)     cmd_set "$@" ;;
     help)    usage ;;
     *)       die "unknown command: $SPORE_CMD (try: spore --help)" ;;
 esac

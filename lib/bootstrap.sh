@@ -14,8 +14,12 @@
 # bootstrap_set <file> <key> <value> — replace an assignment, or append one.
 bootstrap_set() {
     bs_f=$1 bs_k=$2 bs_v=$3
+    # The value lands in sed's replacement text, where a backslash, an ampersand
+    # and the delimiter are not literal. Every caller so far passed a hostname
+    # or a keymap; `spore set` passes whatever was typed at it.
+    bs_esc=$(printf '%s' "$bs_v" | sed 's/[\\&|]/\\&/g')
     if conf_has "$bs_f" "$bs_k"; then
-        if sed "s|^[[:space:]]*${bs_k}[[:space:]]*=.*|${bs_k}=${bs_v}|" "$bs_f" > "$bs_f.new"; then
+        if sed "s|^[[:space:]]*${bs_k}[[:space:]]*=.*|${bs_k}=${bs_esc}|" "$bs_f" > "$bs_f.new"; then
             # -f: the destination exists by definition here, and mv asks before
             # overwriting one it cannot write to — a question on a read-only
             # checkout, or under a stdin nobody is watching, that waits forever.
