@@ -51,24 +51,13 @@ wz_yn() {
 wz_say()  { printf '%s\n' "$*" >&2; }
 wz_head() { printf '\n%s%s%s\n' "$_c_bold" "$*" "$_c_reset" >&2; }
 
-# Seal a password, twice-confirmed, without it ever reaching the terminal or a
-# file. openssl hashes it and spore encrypts the hash, so what lands in the
-# spore is already useless to anyone without the identity.
+# The same thing `spore passwd` does, because it is the same thing: ask twice
+# with the echo off, hash it, encrypt the hash. What the wizard adds is only
+# that a refusal here is not fatal — the rest of the guided run is still worth
+# finishing, and the password can be set afterwards with the command.
 wz_seal_password() {
-    wz_who=$1
-    command -v openssl >/dev/null 2>&1 || {
-        warn "openssl is not installed, so no password could be set for $wz_who."
-        return 0
-    }
-    wz_hash=$(openssl passwd -6 2>/dev/null) || {
-        warn "no password set for $wz_who."
-        return 0
-    }
-    [ -n "$wz_hash" ] || { warn "no password set for $wz_who."; return 0; }
-    printf '%s' "$wz_hash" | "$SPORE_AGE" --encrypt -R "$SPORE_DIR/secrets/recipients" \
-        -o "$SPORE_DIR/secrets/$wz_who.password.age" ||
-        die "could not seal the password for $wz_who"
-    wz_say "  sealed secrets/$wz_who.password.age"
+    secret_seal_password "$1" || warn "no password set for $1. Set one later with:
+         spore -s $SPORE_DIR passwd $1"
 }
 
 wizard() {
@@ -247,8 +236,8 @@ CONF
         printf 'USERS_DOAS=%s\n' "$([ "$wz_doas" = yes ] && printf '"%s"' "$wz_user" || printf '""')"
         printf '\n'
         printf '# Passwords travel sealed, never in cleartext:\n'
-        printf '#   openssl passwd -6 | spore -s <spore> seal %s.password\n' "$wz_user"
-        printf '#   openssl passwd -6 | spore -s <spore> seal root.password\n'
+        printf '#   spore -s <spore> passwd %s\n' "$wz_user"
+        printf '#   spore -s <spore> passwd root\n'
     } > "$SPORE_DIR/modules/users.conf"
 
     {

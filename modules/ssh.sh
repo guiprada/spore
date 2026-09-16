@@ -36,7 +36,7 @@ ssh_plan() {
          PermitRootLogin yes with PasswordAuthentication yes, and root has no
          password: that is an unauthenticated root shell on the network.
          Give root a password before sshd starts — seal one into the spore:
-             openssl passwd -6 | spore -s $SPORE_DIR seal root.password
+             spore -s $SPORE_DIR passwd root
          which is applied in the firstboot pass, before any service is enabled.
          Or leave SSH_PERMIT_ROOT_LOGIN at no."
         fi

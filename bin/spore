@@ -57,6 +57,7 @@ commands:
   seed [FILE]    build a generic bootstrap apkovl (needs no spore)
   secrets        list the secrets this spore carries
   seal NAME [F]  encrypt F (or stdin) into the spore as NAME
+  passwd USER    ask for a password, hash it, and seal it for USER
 
 options:
   -s, --spore DIR   the spore to use (default: $SPORE_DIR, ./spore,
@@ -380,8 +381,25 @@ seal_password_check() {
          straight into /etc/shadow — so a plaintext here becomes a field no
          password matches, and the account is locked out with nothing said.
          Make the hash and pipe that instead:
-             openssl passwd -6 | $SPORE_SELF -s $SPORE_DIR seal $1
+             $SPORE_SELF -s $SPORE_DIR passwd ${1%.password}
          (it asks twice and prints \$6\$...; the password never reaches a file)"
+}
+
+cmd_passwd() {
+    [ $# -eq 1 ] || die "usage: spore passwd USER   (root, or a name in USERS)"
+    spore_load
+    # A password sealed under a name nothing applies is a password that silently
+    # does not exist. Said now rather than found at a login prompt.
+    cp_users=$(conf_get "$SPORE_DIR/modules/users.conf" USERS '' 2>/dev/null || true)
+    case " root $cp_users " in
+        *" $1 "*) : ;;
+        *) warn "'$1' is neither root nor in USERS in modules/users.conf, so no
+         account here will be given this password. Add it to USERS, or seal it
+         under a name that is already there." ;;
+    esac
+    secret_seal_password "$1" || exit 1
+    printf '\nIt is applied at the next boot that runs the spore. On a machine\n'
+    printf 'that already has its overlay:  spore install <dir> <device>\n'
 }
 
 cmd_modules() {
@@ -498,6 +516,7 @@ case $SPORE_CMD in
     secrets) cmd_noargs "$@"; cmd_secrets ;;
     seed)    cmd_seed "$@" ;;
     seal)    cmd_seal "$@" ;;
+    passwd)  cmd_passwd "$@" ;;
     help)    usage ;;
     *)       die "unknown command: $SPORE_CMD (try: spore --help)" ;;
 esac

@@ -453,7 +453,7 @@ if RPN=$(alpine "$SPORE" --spore "$RP" plan 2>&1); then
     t_fail 'without it the refusal returns' 'plan succeeded'
 else
     t_ok 'without it the refusal returns'
-    has 'and the refusal names the fix' "$RPN" 'seal root.password'
+    has 'and the refusal names the fix' "$RPN" 'passwd root'
 fi
 unset SPORE_FACT_ROOT_PASSWORD
 rm -rf "$RP"
@@ -2161,6 +2161,53 @@ else
 fi
 rm -rf "$NB"
 
+section 'spore passwd: one command, not a pipeline with a flag to remember'
+# `openssl passwd -6 | spore -s <spore> seal root.password` was the documented
+# way to set a password on a spore that already existed: a pipeline, a flag, and
+# a silent lockout if you forgot the flag.
+if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1 &&
+   command -v openssl >/dev/null 2>&1; then
+    PW=$(mktemp -d /tmp/spore-passwd.XXXXXX)
+    cp -r "$EX" "$PW/s"
+    mkdir -p "$PW/s/secrets"
+    age-keygen -o "$PW/identity" 2>"$PW/pub"
+    sed -n 's/^Public key: //p' "$PW/pub" > "$PW/s/secrets/recipients"
+
+    # Piped rather than typed: a script gets one line from stdin, and the
+    # plaintext still never becomes an argument anyone can see in ps.
+    printf 'hunter2\n' | "$SPORE" -s "$PW/s" passwd root >/dev/null 2>&1
+    check 'it seals a password for root' \
+        "$([ -f "$PW/s/secrets/root.password.age" ] && echo yes || echo no)" yes
+    # What comes out has to be a hash, because chpasswd -e writes it into
+    # /etc/shadow verbatim — the plaintext would be an account nobody can use.
+    PW_OUT=$(age --decrypt -i "$PW/identity" "$PW/s/secrets/root.password.age")
+    case $PW_OUT in
+        '$6$'*) t_ok 'and what is sealed is a hash, not the password' ;;
+        *)      t_fail 'and what is sealed is a hash, not the password' "got [$PW_OUT]" ;;
+    esac
+    hasnt 'the plaintext is nowhere in it' "$PW_OUT" 'hunter2'
+    # And the machine can actually use it: the same password must verify
+    # against the hash that travelled.
+    check 'and the password verifies against it' \
+        "$(openssl passwd -6 -salt "$(printf '%s' "$PW_OUT" | cut -d'$' -f3)" hunter2)" \
+        "$PW_OUT"
+
+    # A name nothing applies is a password that silently does not exist.
+    PW_TYPO=$(printf 'x\n' | "$SPORE" -s "$PW/s" passwd guiprada 2>&1 || true)
+    has 'a name not in USERS is called out' "$PW_TYPO" 'neither root nor in USERS'
+
+    PW_USAGE=$("$SPORE" -s "$PW/s" passwd 2>&1 || true)
+    has 'and it needs to be told who'       "$PW_USAGE" 'usage: spore passwd USER'
+
+    # Nothing on stdin is not an empty password, it is no answer at all.
+    printf '' | "$SPORE" -s "$PW/s" passwd root >/dev/null 2>&1 &&
+        t_fail 'an empty answer seals nothing' 'it returned success' ||
+        t_ok 'an empty answer seals nothing'
+    rm -rf "$PW"
+else
+    t_skip 'spore passwd (age, age-keygen or openssl missing)'
+fi
+
 section 'a sealed password is a hash, and seal says so'
 # The firstboot action feeds it to `chpasswd -e`, which writes its input into
 # /etc/shadow verbatim. Seal the plaintext by mistake and the account gets a
@@ -2176,7 +2223,7 @@ if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1 &&
 
     SP_NO=$(printf 'hunter2\n' | "$SPORE" -s "$SP/s" seal root.password 2>&1 || true)
     has   'a plaintext password is refused'   "$SP_NO" 'must hold a password *hash*'
-    has   'with the command that makes one'   "$SP_NO" 'openssl passwd -6'
+    has   'with the command that makes one'   "$SP_NO" 'passwd root'
     check 'and nothing is written' \
         "$([ -f "$SP/s/secrets/root.password.age" ] && echo yes || echo no)" no
 
