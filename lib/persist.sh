@@ -261,23 +261,28 @@ persist_commit() {
             # make_usb_writable was for writing certs and the apk cache to the
             # medium directly, which is a different operation.
 
-            # /etc is already in the overlay by default; everything else has to
-            # be declared. Owned paths come from the plan, so this can't drift.
-            # Announced as a phase, because the gap between "N changed" and
-            # the commit was the one stretch of this run with nothing in it —
-            # and a boot that stopped somewhere in here looked exactly like a
-            # boot that stopped at the counts.
-            # The /etc skip applies to what the spore owns, not to what spore
-            # itself installed: those config files are all in the archive, so
-            # the audit half does find them, and re-declaring a hundred of them
-            # would bury the handful that actually need naming.
+            # Every path the spore owns, /etc included.
+            #
+            # /etc was skipped here on the grounds that an apkovl is /etc. It is
+            # not: lbu's list is `apk audit --backup` plus the includes, and the
+            # audit half found /etc/hostname, /etc/ssh/sshd_config and
+            # /etc/runlevels/default/sshd on a real machine while missing
+            # /etc/init.d/spore-seed — all of them new or modified, all under
+            # /etc. Whatever rule separates those two, the spore's own files are
+            # not a good place to find out: /etc/init.d/dufs is written the same
+            # way, and a service in a runlevel whose script did not survive is a
+            # machine that errors on every boot.
+            #
+            # It is a handful of files, not a hundred, and naming them costs one
+            # `lbu include` each. What is left to the audit half is everything
+            # spore did not write — which is what that half is for.
+            #
+            # Announced as a phase, because the gap between "N changed" and the
+            # commit was the one stretch of this run with nothing in it, and a
+            # boot that stopped somewhere in here looked exactly like a boot
+            # that stopped at the counts.
             starting 'recording what to keep'
-            { plan_persist_paths; plan_all_owned_paths; } |
-                while read -r pc_p; do
-                    [ -n "$pc_p" ] || continue
-                    case $pc_p in /etc|/etc/*) continue ;; esac
-                    printf '%s\n' "$pc_p"
-                done > "$SPORE_WORK/persist.want"
+            { plan_persist_paths; plan_all_owned_paths; } > "$SPORE_WORK/persist.want"
             persist_tool_paths >> "$SPORE_WORK/persist.want"
             sort -u "$SPORE_WORK/persist.want" > "$SPORE_WORK/persist.final"
             while read -r pc_p; do

@@ -48,6 +48,158 @@ storage_fs_package() {
     esac
 }
 
+# --- sharing whatever is plugged in ------------------------------------------
+#
+# volumes.conf is the declared half: name a disk by UUID and it lands in the
+# same place on any machine. That is right for a machine you are describing, and
+# useless for the thing a file server is actually for — plug a disk in, have it
+# appear.
+#
+# So this half discovers instead, and it cannot be a plan action: the plan is
+# built on the workstation, and what is attached is not known there. Nor can it
+# be a firstboot action, because a machine booted from its committed overlay
+# stops at /etc/spore/.seeded and never applies anything. It is a service, which
+# runs on every boot the way the rest of the machine does.
+#
+# "Not system" is decided by what is already mounted. Whatever this machine
+# booted from is mounted by the time this runs — the boot medium at /media/sdX1,
+# the spore's partition at /media/sdX2 — so the rule is simply: mount what is
+# not. Then check what was mounted, because the rule is only as good as the
+# initramfs being consistent, and an unshared partition that turns up shared is
+# this spore's identity file on a web server.
+storage_automount_script() {
+    printf "root='%s'\nnaming='%s'\nexclude=' %s '\numask='%s'\n" \
+        "$1" "$2" "$3" "$4"
+    cat <<'SAM'
+mkdir -p "$root"
+
+# The device list is overridable so the decisions below can be exercised against
+# a real filesystem on a loop device. Nothing sets it on a machine, where the
+# globs are the whole point: loop and device-mapper nodes are deliberately not
+# among them, because a loop mount is something this machine already did.
+: "${SPORE_AUTOMOUNT_DEVS:=}"
+
+# A partition is a candidate; a whole disk only when it carries a filesystem
+# itself, which is why the disk globs come second and skip anything partitioned.
+for dev in ${SPORE_AUTOMOUNT_DEVS:-/dev/sd[a-z][0-9]* /dev/vd[a-z][0-9]* /dev/xvd[a-z][0-9]* \
+           /dev/nvme[0-9]n[0-9]p[0-9]* /dev/mmcblk[0-9]p[0-9]* \
+           /dev/sd[a-z] /dev/vd[a-z] /dev/xvd[a-z]}; do
+    [ -b "$dev" ] || continue
+    case $dev in
+        */sd[a-z]|*/vd[a-z]|*/xvd[a-z])
+            # Partitioned: its partitions were the candidates, not the disk.
+            for p in "$dev"[0-9]*; do [ -b "$p" ] && continue 2; done ;;
+    esac
+
+    # Mounted already is the whole definition of "this machine's own": the
+    # initramfs mounted what it booted from before anything here ran.
+    awk -v d="$dev" '$1 == d { found = 1 } END { exit !found }' /proc/mounts && continue
+
+    info=$(blkid "$dev" 2>/dev/null) || continue
+    ty=$(printf '%s' "$info" | sed -n 's/.*[[:space:]]TYPE="\([^"]*\)".*/\1/p')
+    [ -n "$ty" ] || continue
+    case $ty in swap|crypto_LUKS|linux_raid_member|LVM2_member) continue ;; esac
+    # The leading space is what tells UUID= from PARTUUID=.
+    uu=$(printf '%s' "$info" | sed -n 's/.*[[:space:]]UUID="\([^"]*\)".*/\1/p')
+    la=$(printf '%s' "$info" | sed -n 's/.*[[:space:]]LABEL="\([^"]*\)".*/\1/p')
+
+    short=${dev##*/}
+    case $exclude in
+        *" $short "*|*" $uu "*|*" $la "*) continue ;;
+    esac
+
+    case $naming in
+        dev)   name=$short ;;
+        label) name=${la:-${uu:-$short}} ;;
+        *)     name=${uu:-$short} ;;
+    esac
+    name=$(printf '%s' "$name" | sed 's/[^A-Za-z0-9_.-]/_/g')
+    [ -n "$name" ] || name=$short
+
+    tgt=$root/$name
+    if awk -v t="$tgt" '$2 == t { found = 1 } END { exit !found }' /proc/mounts; then
+        continue
+    fi
+    opts=noatime
+    case $ty in
+        vfat|msdos|exfat|ntfs|ntfs-3g) opts="noatime,umask=$umask" ;;
+    esac
+    mkdir -p "$tgt"
+    if ! mount -t "$ty" -o "$opts" "$dev" "$tgt" 2>/dev/null; then
+        rmdir "$tgt" 2>/dev/null || true
+        echo "spore: $dev is $ty and would not mount" >&2
+        continue
+    fi
+
+    # Now look at what was mounted. Everything above trusts the initramfs to
+    # have mounted this machine's own partitions first, and one boot where it
+    # does not would put the spore — identity file and all — on a file server.
+    # Cheap to check, and the only check that does not depend on that being
+    # true.
+    if [ -e "$tgt/identity" ] || [ -f "$tgt/spore/spore.conf" ] ||
+       [ -f "$tgt/.alpine-release" ] || ls "$tgt"/*.apkovl.tar.gz >/dev/null 2>&1; then
+        umount "$tgt" 2>/dev/null || true
+        rmdir "$tgt" 2>/dev/null || true
+        echo "spore: $dev carries a spore or an apkovl, so it is this machine's" >&2
+        echo "spore: own medium and is not being shared." >&2
+        continue
+    fi
+    echo "spore: sharing $dev ($ty) at $tgt"
+done
+SAM
+}
+
+storage_plan_automount() {
+    spa_root=$1
+    spa_umask=$2
+    spa_name=$(mconf STORAGE_AUTO_NAME uuid)
+    case $spa_name in
+        uuid|label|dev) : ;;
+        *) plan_note "storage: STORAGE_AUTO_NAME is uuid, label or dev — not '$spa_name'.
+         Using uuid, which is the one that does not move between boots."
+           spa_name=uuid ;;
+    esac
+    spa_excl=$(mconf STORAGE_AUTO_EXCLUDE '')
+
+    # Whatever turns up has to be mountable, and what turns up is not knowable
+    # from here, so the drivers travel rather than the guess.
+    for spa_p in e2fsprogs dosfstools exfatprogs ntfs-3g; do
+        plan_pkg "$spa_p"
+    done
+
+    plan_dir "$spa_root" 0755
+    plan_file /usr/local/sbin/spore-automount 0755 "#!/bin/sh
+# Managed by spore. Mounts every attached filesystem this machine did not boot
+# from, under $spa_root.
+set -u
+$(storage_automount_script "$spa_root" "$spa_name" "$spa_excl" "$spa_umask")"
+
+    plan_file /etc/init.d/spore-automount 0755 "#!/sbin/openrc-run
+# Managed by spore.
+description=\"Mount attached volumes this machine did not boot from\"
+
+depend() {
+    need localmount
+    before dufs
+}
+
+start() {
+    ebegin \"spore: looking for volumes to share\"
+    /usr/local/sbin/spore-automount
+    eend 0
+}
+
+stop() { return 0; }"
+    plan_svc spore-automount default on
+
+    plan_note "storage: STORAGE_AUTO=yes — every attached filesystem this machine
+         did not boot from is mounted under $spa_root at each boot, named by
+         $spa_name, and whatever serves that root serves all of it. That
+         includes internal disks and anything plugged in later. Name the ones
+         to leave alone in STORAGE_AUTO_EXCLUDE (device, UUID or label), or
+         use volumes.conf instead to mount only what you have declared."
+}
+
 storage_plan() {
     st_root=$(mconf STORAGE_ROOT /media/storage)
     st_umask=$(mconf STORAGE_FAT_UMASK 000)
@@ -55,9 +207,20 @@ storage_plan() {
     st_gid=$(mconf STORAGE_FAT_GID '')
     st_owner=$(mconf STORAGE_OWNER '')
 
+    st_auto=no
+    if mconf_bool STORAGE_AUTO no; then
+        st_auto=yes
+        storage_plan_automount "$st_root" "$st_umask"
+    fi
+
     storage_volumes > "$SPORE_WORK/volumes" || true
     if [ ! -s "$SPORE_WORK/volumes" ]; then
-        plan_note 'storage: no volumes.conf in this spore — nothing to mount'
+        # Declared and discovered are two halves of the same root, and having
+        # neither is the only case worth mentioning.
+        [ "$st_auto" = yes ] ||
+            plan_note 'storage: no volumes.conf in this spore, and STORAGE_AUTO is
+         not set, so nothing is mounted. Declare volumes by UUID in
+         volumes.conf, or set STORAGE_AUTO=yes to share whatever is attached.'
         return 0
     fi
 

@@ -1388,7 +1388,12 @@ has 'syncs after committing'      "$(cat "$PLOG")" 'sync'
 # lbu remounts the medium rw itself and restores ro on exit. Doing it first would
 # defeat that and leave a USB stick mounted writable.
 hasnt 'does not remount the medium itself' "$(cat "$PLOG")" 'mount -o remount,rw'
-hasnt 'does not include /etc (already in overlay)' "$(cat "$PLOG")" 'lbu include /etc'
+# /etc is NOT "already in the overlay": lbu's list is `apk audit --backup` plus
+# the includes, and on a real machine the audit half reported
+# etc/runlevels/default/sshd and etc/hostname while missing
+# etc/init.d/spore-seed. So the spore's own files are named, /etc included —
+# a service in a runlevel whose script did not survive errors on every boot.
+has 'the spore-owned /etc files are named too' "$(cat "$PLOG")" 'lbu include /etc/'
 
 PR2=$(env SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=no SPORE_FACT_PERSIST=rootfs \
           SPORE_FACT_ARCH=x86_64 SPORE_FACT_ROOT=yes \
@@ -2255,6 +2260,78 @@ check 'and changes nothing'             "$(conf_read "$MD/s/spore.conf" MODULES)
 MD_LIST=$("$SPORE" modules 2>&1)
 has 'listing still lists'               "$MD_LIST" 'dufs file server'
 rm -rf "$MD"
+
+section 'storage: sharing whatever is attached'
+# volumes.conf is the declared half — name a disk by UUID and it lands in the
+# same place on any machine. That is right for a machine you are describing and
+# useless for what a file server is for: plug a disk in, have it appear. This
+# half discovers, so it cannot be a plan action (the plan is built on a
+# workstation) nor a firstboot one (a machine on its own overlay stops at the
+# stamp and applies nothing). It is a service.
+AM=$(mktemp -d /tmp/spore-automount.XXXXXX)
+cp -r "$EX" "$AM/s"
+sed -i 's/^MODULES=.*/MODULES="storage"/' "$AM/s/spore.conf"
+"$SPORE" -s "$AM/s" set storage STORAGE_AUTO yes >/dev/null 2>&1
+AM_PLAN=$(alpine "$SPORE" -s "$AM/s" -r "$AM/r" plan 2>&1)
+has 'it ships a service, not a firstboot action' "$AM_PLAN" 'svc        spore-automount'
+has 'and the script it runs'                     "$AM_PLAN" '/usr/local/sbin/spore-automount'
+# Serving everything attached is a decision with a blast radius, so it is stated
+# rather than assumed.
+has 'and says what that means'    "$AM_PLAN" 'includes internal disks and anything plugged in later'
+# Whatever turns up has to be mountable, and what turns up is not knowable from
+# the workstation.
+has 'the filesystem drivers travel with it' "$AM_PLAN" 'exfatprogs'
+AM_OFF=$(alpine "$SPORE" -s "$AM/s" -r "$AM/r2" plan 2>&1)
+"$SPORE" -s "$AM/s" set storage STORAGE_AUTO no >/dev/null 2>&1
+AM_NONE=$(alpine "$SPORE" -s "$AM/s" -r "$AM/r3" plan 2>&1)
+hasnt 'and nothing of it when STORAGE_AUTO is off' "$AM_NONE" 'spore-automount'
+
+# The decisions, against real filesystems on loop devices rather than by reading
+# the script.
+if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null 2>&1 &&
+   command -v mkfs.ext4 >/dev/null 2>&1 && command -v blkid >/dev/null 2>&1; then
+    AMR=$AM/run
+    mkdir -p "$AMR"
+    ( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
+      . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
+      printf '#!/bin/sh\nset -u\n'
+      storage_automount_script "$AMR/root" uuid 'skipme' 000 ) > "$AM/am.sh"
+    chmod 755 "$AM/am.sh"
+
+    for n in data mine skipme; do
+        dd if=/dev/zero of="$AM/$n.img" bs=1M count=8 status=none 2>/dev/null
+        mkfs.ext4 -q -L "$n" "$AM/$n.img"
+    done
+    AM_D=$(losetup --show -f "$AM/data.img")
+    AM_M=$(losetup --show -f "$AM/mine.img")
+    AM_X=$(losetup --show -f "$AM/skipme.img")
+    mkdir -p "$AM/tmp"
+    mount "$AM_M" "$AM/tmp" && mkdir -p "$AM/tmp/spore" &&
+        printf 'FORMAT=1\n' > "$AM/tmp/spore/spore.conf" &&
+        printf 'KEY\n' > "$AM/tmp/identity" && umount "$AM/tmp"
+
+    AM_OUT=$(SPORE_AUTOMOUNT_DEVS="$AM_D $AM_M $AM_X" sh "$AM/am.sh" 2>&1)
+    AM_UU=$(blkid -s UUID -o value "$AM_D")
+    check 'an attached disk is shared, named by its uuid' \
+        "$([ -d "$AMR/root/$AM_UU" ] && echo yes || echo no)" yes
+    # The one check that does not depend on the initramfs having mounted this
+    # machine's own partitions first. Getting it wrong puts the spore's identity
+    # file on a web server.
+    has   'a disk carrying a spore is refused'  "$AM_OUT" "carries a spore or an apkovl"
+    check 'and is left unmounted'               "$(awk -v d="$AM_M" '$1 == d { print "mounted" }' /proc/mounts)" ''
+    # By label, because that is what STORAGE_AUTO_EXCLUDE takes as well as a
+    # device or a uuid.
+    hasnt 'an excluded volume is never shared'  "$AM_OUT" "sharing $AM_X"
+    check 'and not mounted'                     "$(awk -v d="$AM_X" '$1 == d { print "mounted" }' /proc/mounts)" ''
+
+    for m in "$AMR/root"/*; do
+        [ -d "$m" ] && umount "$m" 2>/dev/null
+    done
+    losetup -d "$AM_D" "$AM_M" "$AM_X" 2>/dev/null || true
+else
+    t_skip 'automount against real filesystems (needs root, losetup, mkfs.ext4)'
+fi
+rm -rf "$AM"
 
 section 'MOD_DATA: a module payload on the RAM root does not outlast the boot'
 # Declared by two modules and read by none. It matters most on exactly the host
