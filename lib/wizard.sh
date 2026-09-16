@@ -120,7 +120,17 @@ INTRO
             while [ -z "$wz_addr" ]; do wz_ask wz_addr 'IP address' ''; done
             wz_ask wz_mask 'Netmask' '255.255.255.0'
             wz_ask wz_gw 'Gateway' ''
-            wz_ask wz_dns 'DNS servers, space separated' "${wz_gw:-1.1.1.1}"
+            # Not the gateway. It was the default here, and it is the obvious
+            # answer — the box that routes usually resolves too. When it does
+            # not, everything else works, the gateway answers a ping, and the
+            # only thing that complains is apk, blaming the mirror for a name
+            # it could not look up. That took twelve boots to see.
+            wz_say ''
+            wz_say 'A gateway is often also a resolver, and often is not. If it is not,'
+            wz_say 'nothing says so: the route works, the gateway pings, and only apk'
+            wz_say 'complains — about the mirror. 1.1.1.1 always answers; add the'
+            wz_say 'gateway first if it is a resolver you would rather use.'
+            wz_ask wz_dns 'DNS servers, space separated' '1.1.1.1'
             ;;
         *) wz_mode=dhcp ;;
     esac
@@ -174,6 +184,28 @@ INTRO
     wz_port=22
     [ "$wz_ssh" = yes ] && wz_ask wz_port 'ssh port' 22
 
+    # --- files ---------------------------------------------------------------
+    wz_head 'Files'
+    wz_say 'A web file server over every disk this machine did not boot from:'
+    wz_say 'plug one in, it appears. The machine mounts them by UUID, because'
+    wz_say 'letters move between boots, and it refuses to share anything carrying'
+    wz_say 'a spore or an apkovl — that would put this identity file on the web.'
+    wz_yn wz_share 'Share attached disks?' n
+    wz_dufs_tls=no wz_dufs_write=no wz_dufs_port=443 wz_share_root=/media/storage
+    if [ "$wz_share" = yes ]; then
+        wz_ask wz_share_root 'Mount them under' '/media/storage'
+        wz_ask wz_dufs_port  'Port' 443
+        wz_say ''
+        wz_say 'Read-only serves what is there. Read-write also accepts uploads and'
+        wz_say 'deletions from anyone who can reach the port.'
+        wz_yn wz_dufs_write 'Allow writing?' n
+        wz_say ''
+        wz_say 'Without TLS the traffic — and any password below — crosses the'
+        wz_say 'network in the clear. The certificate is generated on the machine at'
+        wz_say 'first boot and never travels in the spore.'
+        wz_yn wz_dufs_tls 'HTTPS with a self-signed certificate?' y
+    fi
+
     # --- write ---------------------------------------------------------------
     # Built in a staging area first, so where it ends up is still an open
     # question at this point: onto a disk, or into a directory if there is no
@@ -188,7 +220,7 @@ INTRO
     cat > "$SPORE_DIR/spore.conf" <<CONF
 FORMAT=1
 HOST=$wz_host
-MODULES="repos system net users ssh apkovl"
+MODULES="repos system net users ssh apkovl$([ "$wz_share" = yes ] && printf ' storage dufs')"
 # The private key that decrypts this spore's secrets. Relative, so it resolves
 # against the spore itself — the same line is correct here and on the target.
 SECRETS_IDENTITY=../identity
@@ -253,6 +285,41 @@ CONF
         printf '# on the partition it was found on, which is what you want here.\n'
         printf '# APKOVL_BACKUPDIR=/media/storage/data\n'
     } > "$SPORE_DIR/modules/apkovl.conf"
+
+    if [ "$wz_share" = yes ]; then
+        {
+            printf '# Every attached filesystem this machine did not boot from is\n'
+            printf '# mounted here at each boot, named by UUID — letters move.\n'
+            printf 'STORAGE_AUTO=yes\n'
+            printf 'STORAGE_AUTO_NAME=uuid\n'
+            printf 'STORAGE_ROOT=%s\n' "$wz_share_root"
+            printf '# Devices, UUIDs or labels to leave alone:\n'
+            printf '# STORAGE_AUTO_EXCLUDE="backup-drive"\n'
+        } > "$SPORE_DIR/modules/storage.conf"
+
+        {
+            printf 'DUFS_ENABLED=yes\n'
+            printf 'DUFS_SERVE=%s\n' "$wz_share_root"
+            printf 'DUFS_BIND=0.0.0.0\n'
+            printf 'DUFS_PORT=%s\n' "$wz_dufs_port"
+            if [ "$wz_dufs_write" = yes ]; then
+                printf 'DUFS_ALLOW_ALL=yes\n'
+            else
+                printf '# Read-only. DUFS_ALLOW_ALL=yes also accepts uploads and deletes.\n'
+            fi
+            if [ "$wz_dufs_tls" = yes ]; then
+                printf '\n'
+                printf '# Generated on the machine at first boot; never travels in the spore.\n'
+                printf 'DUFS_TLS_CERT=/etc/dufs/tls/server.crt\n'
+                printf 'DUFS_TLS_KEY=/etc/dufs/tls/server.key\n'
+                printf 'DUFS_TLS_SELFSIGNED=yes\n'
+            fi
+            printf '\n'
+            printf '# A password, sealed rather than written here:\n'
+            printf '#   spore -s <spore> seal dufs-auth   (type e.g. admin:s3cret@/:rw)\n'
+            printf '#   DUFS_AUTH_SECRET=dufs-auth\n'
+        } > "$SPORE_DIR/modules/dufs.conf"
+    fi
 
     : > "$SPORE_DIR/packages"
 

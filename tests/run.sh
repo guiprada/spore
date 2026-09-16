@@ -1413,7 +1413,7 @@ printf '%s\n' \
     'wizhost' 'br br-abnt2' 'America/Sao_Paulo' 'chrony' 'eth0' 'static' \
     '192.168.1.50' '255.255.255.0' '192.168.1.1' '192.168.1.1 1.1.1.1' \
     'https://mirror.ufpr.br/alpine' \
-    'tester' 'y' "$WZ/id.pub" 'y' '2222' 'n' |
+    'tester' 'y' "$WZ/id.pub" 'y' '2222' 'n' 'n' |
     SPORE_PUBKEY="$WZ/id.pub" "$SPORE" setup "$WZ/m" >"$WZ/out" 2>&1 || true
 WZOUT=$(cat "$WZ/out")
 WZS=$WZ/m/spore
@@ -1432,7 +1432,7 @@ check 'the keymap, as setup-keymap takes it' "$(grep '^SYSTEM_KEYMAP=' "$WZS/mod
 # Asked once. A validation loop here was a prompt you could not get past, which
 # is a worse thing to be caught in than the problem it was avoiding.
 WZK=$(mktemp -d /tmp/spore-wizkm.XXXXXX)
-printf '%s\n' 'kmhost' 'br' 'UTC' 'none' 'auto' 'dhcp' '' 'tester' 'n' '' 'n' |
+printf '%s\n' 'kmhost' 'br' 'UTC' 'none' 'auto' 'dhcp' '' 'tester' 'n' '' 'n' 'n' |
     env HOME="$WZK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZK/out" 2>&1 || true
 check 'a layout alone is taken as given' \
     "$(grep '^SYSTEM_KEYMAP=' "$WZK/spores/kmhost/spore/modules/system.conf")" \
@@ -1443,7 +1443,7 @@ rm -rf "$WZK"
 # And there has to be a way to say "leave it alone" that is not a blank line,
 # because a blank line is how you take the default.
 WZD=$(mktemp -d /tmp/spore-wizdash.XXXXXX)
-printf '%s\n' 'dashhost' '-' 'UTC' 'none' 'auto' 'dhcp' '' 'tester' 'n' '' 'n' |
+printf '%s\n' 'dashhost' '-' 'UTC' 'none' 'auto' 'dhcp' '' 'tester' 'n' '' 'n' 'n' |
     env HOME="$WZD" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZD/out" 2>&1 || true
 check 'a dash leaves the layout alone' \
     "$(grep -c '^SYSTEM_KEYMAP=' "$WZD/spores/dashhost/spore/modules/system.conf" || true)" 0
@@ -1582,7 +1582,7 @@ has 'and the apkovl has a destination'  "$WZP" 'file       /etc/lbu/lbu.conf'
 # An existing machine is offered up for replacement rather than refused — but
 # only a machine, and only when the answer is yes. Its identity is in there.
 WZE=$(mktemp -d /tmp/spore-wizexist.XXXXXX)
-printf '%s\n' 'again' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' 'n' |
+printf '%s\n' 'again' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' 'n' 'n' |
     "$SPORE" setup "$WZE/m" >/dev/null 2>&1 || true
 WZE_ID=$WZE/m/spore/spore.conf
 check 'a machine was created' "$([ -f "$WZE_ID" ] && echo yes || echo no)" yes
@@ -1593,7 +1593,7 @@ check 'declining leaves it untouched' \
     "$([ -f "$WZE/m/spore/keys/marker" ] && echo yes || echo no)" yes
 has 'and points at editing instead' "$(cat "$WZE/decline")" 'edit the file rather than'
 # Accepting replaces it.
-printf '%s\n' 'again' 'y' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' 'n' |
+printf '%s\n' 'again' 'y' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' 'n' 'n' |
     "$SPORE" setup "$WZE/m" >/dev/null 2>&1 || true
 check 'accepting replaces it' \
     "$([ -f "$WZE/m/spore/keys/marker" ] && echo stale || echo fresh)" fresh
@@ -1612,7 +1612,7 @@ rm -rf "$WZE"
 # when there is no disk in your hand, and the answers must survive declining it.
 WZH=$(mktemp -d /tmp/spore-wizhome.XXXXXX)
 printf '%s\n' 'homehost' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' \
-    'tester' 'n' '' 'n' |
+    'tester' 'n' '' 'n' 'n' |
     env HOME="$WZH" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZH/out" 2>&1 || true
 has 'the disk is offered, not a directory' "$(cat "$WZH/out")" 'Write a USB stick now'
 check 'declining still keeps the answers' \
@@ -1644,7 +1644,7 @@ rm -rf "$WZX"
 # A mistyped device path costs a retry, not the answers to fifteen questions.
 WZR=$(mktemp -d /tmp/spore-wizretry.XXXXXX)
 printf '%s\n' 'retryhost' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' \
-    'y' '/dev/definitely-not-here' '' |
+    'n' 'y' '/dev/definitely-not-here' '' |
     env HOME="$WZR" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZR/out" 2>&1 || true
 has 'a bad device path is told, not fatal' "$(cat "$WZR/out")" 'is not a block device'
 has 'and it asks again'                    "$(cat "$WZR/out")" 'blank to skip'
@@ -2260,6 +2260,48 @@ check 'and changes nothing'             "$(conf_read "$MD/s/spore.conf" MODULES)
 MD_LIST=$("$SPORE" modules 2>&1)
 has 'listing still lists'               "$MD_LIST" 'dufs file server'
 rm -rf "$MD"
+
+section 'spore setup asks about files, so the answer is one command'
+# Sharing disks took eight `spore set` calls and two `modules add`. The guided
+# command is where that belongs: a second verb for it would be a parallel way to
+# express configuration, and the conf files are already the format.
+WZ=$(mktemp -d /tmp/spore-wizshare.XXXXXX)
+printf 'coisas\n\n\n\n\n\n\n\n\n\ny\n\n\ny\ny\n' |
+    "$SPORE" setup "$WZ/m" >/dev/null 2>&1 || true
+if [ -f "$WZ/m/spore/spore.conf" ]; then
+    has   'answering yes turns both modules on' \
+        "$(conf_read "$WZ/m/spore/spore.conf" MODULES)" 'storage dufs'
+    check 'and shares what is attached' \
+        "$(conf_read "$WZ/m/spore/modules/storage.conf" STORAGE_AUTO)" 'yes'
+    # By UUID, because the same stick was sdb2 on one boot and sdc2 the next.
+    check 'named by uuid'  "$(conf_read "$WZ/m/spore/modules/storage.conf" STORAGE_AUTO_NAME)" 'uuid'
+    check 'served from the same root' \
+        "$(conf_read "$WZ/m/spore/modules/dufs.conf" DUFS_SERVE)" \
+        "$(conf_read "$WZ/m/spore/modules/storage.conf" STORAGE_ROOT)"
+    check 'over TLS when asked' \
+        "$(conf_read "$WZ/m/spore/modules/dufs.conf" DUFS_TLS_SELFSIGNED)" 'yes'
+    # And the result has to be a spore that plans, not just files that parse.
+    WZ_PLAN=$(alpine "$SPORE" -s "$WZ/m/spore" -r "$WZ/r" plan 2>&1)
+    has 'and the spore it wrote plans the service' "$WZ_PLAN" 'spore-automount'
+
+    # Answering no leaves both out entirely rather than writing them off.
+    printf 'coisas\n\n\n\n\n\n\n\n\n\nn\n' |
+        "$SPORE" setup "$WZ/m2" >/dev/null 2>&1 || true
+    hasnt 'answering no leaves them out' \
+        "$(conf_read "$WZ/m2/spore/spore.conf" MODULES)" 'dufs'
+    check 'and writes no config for them' \
+        "$([ -f "$WZ/m2/spore/modules/dufs.conf" ] && echo yes || echo no)" no
+
+    # The gateway was the default resolver here, and a gateway that routes
+    # without resolving is invisible: the route works, it answers a ping, and
+    # only apk complains — about the mirror.
+    WZSRC=$(cat "$ROOT/lib/wizard.sh")
+    hasnt 'the gateway is not offered as the resolver' "$WZSRC" "'DNS servers, space separated' \"\${wz_gw:-1.1.1.1}\""
+    has   'a resolver that answers is'                 "$WZSRC" "'DNS servers, space separated' '1.1.1.1'"
+else
+    t_skip 'wizard file-sharing section (setup did not produce a spore here)'
+fi
+rm -rf "$WZ"
 
 section 'storage: sharing whatever is attached'
 # volumes.conf is the declared half — name a disk by UUID and it lands in the
