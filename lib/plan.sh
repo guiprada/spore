@@ -48,7 +48,29 @@ content_put() {
 
 content_path() { printf '%s' "$SPORE_WORK/content/$1"; }
 
-_emit() { printf '%s\t%s\n' "${SPORE_MOD:-spore}" "$(printf '%s\t' "$@" | sed 's/\t$//')" >> "$SPORE_PLAN"; }
+# A line already in the plan is not written twice. Content is addressed by hash
+# here, so two identical lines are the same action by construction — and the
+# executor duly ran the first and reported the second as already correct:
+#
+#     > bootstrap age-available
+#     spore: using the age carried on the boot medium
+#     + bootstrap age-available
+#     . bootstrap age-available
+#
+# which is what a spore that seals two passwords looks like, because each one
+# asks for age. Nothing was wrong with the machine — the plan was, and the plan
+# is the thing that is supposed to be readable and diffable. It also inflated
+# the counts, so "4 already correct" included an action that was only itself.
+#
+# Identical, not same-name: two modules planning the same path with different
+# content disagree about something, and that still shows up as two lines.
+_emit() {
+    _em_line="${SPORE_MOD:-spore}	$(printf '%s\t' "$@" | sed 's/\t$//')"
+    if [ -s "$SPORE_PLAN" ] && grep -qxF -- "$_em_line" "$SPORE_PLAN"; then
+        return 0
+    fi
+    printf '%s\n' "$_em_line" >> "$SPORE_PLAN"
+}
 
 plan_pkg()     { _emit pkg "$1"; }
 plan_dir()     { _emit dir "$1" "${2:-0755}"; }

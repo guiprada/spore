@@ -2163,6 +2163,64 @@ else
 fi
 rm -rf "$NB"
 
+section 'the plan does not carry the same action twice'
+# Two sealed passwords each ask for age, so `bootstrap age-available` was
+# emitted twice — the executor ran the first and reported the second as already
+# correct, in the same run:
+#
+#     + bootstrap age-available
+#     . bootstrap age-available
+#
+# Nothing was wrong with the machine; the plan was, and it inflated the counts.
+DUP=$(mktemp -d /tmp/spore-dup.XXXXXX)
+DUPP=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
+        SPORE_WORK=$DUP; SPORE_PLAN=$DUP/plan.tsv; mkdir -p "$DUP/content"
+        plan_reset
+        SPORE_MOD=users
+        plan_bootstrap age-available 'echo hi'
+        plan_bootstrap age-available 'echo hi'
+        plan_pkg doas; plan_pkg doas
+        wc -l < "$DUP/plan.tsv" | tr -d ' ' )
+check 'an identical line is emitted once' "$DUPP" 2
+# Same name, different content, is a disagreement between two modules and not
+# something to quietly drop.
+DUPD=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
+        SPORE_WORK=$DUP; SPORE_PLAN=$DUP/plan2.tsv; mkdir -p "$DUP/content"
+        plan_reset
+        SPORE_MOD=users
+        plan_bootstrap age-available 'echo hi'
+        plan_bootstrap age-available 'echo something else'
+        wc -l < "$DUP/plan2.tsv" | tr -d ' ' )
+check 'but a differing one still shows' "$DUPD" 2
+rm -rf "$DUP"
+
+section 'the keymap is loaded, not handed to a service that will refuse it'
+# loadkmap.initd declares `need localmount`, and localmount is in the boot
+# runlevel, which has finished by the time the spore-seed service runs in
+# default. So `rc-service loadkmap restart` fails exactly the way chronyd does —
+# and the failure went to /dev/null with a `|| true` after it. Every later boot
+# picked the map up off the overlay, so the only boot with the wrong keyboard
+# was the one that had just configured the machine, and it printed
+# "keymap us dvorak" while doing it.
+KMSRC=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/render.sh"; render_keymap us dvorak )
+# The call, not the word: the comment above it names rc-service too, and an
+# assertion that matches its own explanation tests nothing.
+if printf '%s\n' "$KMSRC" | grep -v '^[[:space:]]*#' | grep -q 'rc-service loadkmap'; then
+    t_fail 'it does not go through rc-service' 'the call is still there'
+else
+    t_ok 'it does not go through rc-service'
+fi
+has   'it loads the map itself'             "$KMSRC" 'loadkmap'
+has   'decompressing it the way the service does' "$KMSRC" 'zcat "$km" 2>/dev/null | loadkmap'
+has   'and reading a plain one directly'    "$KMSRC" 'loadkmap < "$km"'
+# Still added to the boot runlevel: that is where it belongs, and where every
+# boot after this one gets it from.
+has   'the service is still enabled for next boot' "$KMSRC" 'rc-update --quiet add loadkmap boot'
+# The old line claimed success unconditionally. A console that did not take the
+# map matters most when the next thing you do is type a password at it.
+has   'a load that failed says so'          "$KMSRC" 'could not be applied to this console now'
+has   'and says what that means'            "$KMSRC" 'about to type a password'
+
 section 'spore set: a module setting, checked'
 # The conf files are the format and stay authoritative — they are meant to be
 # read, diffed and committed. What a command adds is the checking: a module that

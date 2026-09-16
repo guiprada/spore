@@ -418,13 +418,38 @@ if [ -z "$f" ]; then
 fi
 
 mkdir -p /etc/keymap /etc/conf.d
-cp "$f" "/etc/keymap/${f##*/}"
+km=/etc/keymap/${f##*/}
+cp "$f" "$km"
 if [ -f /etc/conf.d/loadkmap ]; then
     sed -i '/^KEYMAP=/d' /etc/conf.d/loadkmap
 fi
-printf 'KEYMAP=%s\n' "/etc/keymap/${f##*/}" >> /etc/conf.d/loadkmap
+printf 'KEYMAP=%s\n' "$km" >> /etc/conf.d/loadkmap
 rc-update --quiet add loadkmap boot 2>/dev/null || true
-rc-service loadkmap restart >/dev/null 2>&1 || true
-echo "spore: keymap $layout $variant"
+
+# Loaded here rather than through the service. loadkmap.initd declares
+# `need localmount`, and localmount belongs to the boot runlevel, which has
+# already finished by the time the spore-seed service runs in default — so
+# `rc-service loadkmap restart` fails the same way chronyd does, and this
+# swallowed the error with `>/dev/null 2>&1 || true`. The map was written
+# correctly and every later boot picked it up off the overlay, so the only boot
+# that ever had the wrong keyboard was the one that had just configured it, and
+# it said "keymap us dvorak" while doing so.
+#
+# What the service does with it is `zcat $KEYMAP | loadkmap`, so do that.
+kmok=no
+if command -v loadkmap >/dev/null 2>&1; then
+    case $km in
+        *.gz) zcat "$km" 2>/dev/null | loadkmap 2>/dev/null && kmok=yes ;;
+        *)    loadkmap < "$km" 2>/dev/null && kmok=yes ;;
+    esac
+fi
+if [ "$kmok" = yes ]; then
+    echo "spore: keymap $layout $variant"
+else
+    echo "spore: keymap $layout $variant is set and loads at the next boot, but" >&2
+    echo "spore: could not be applied to this console now. Until you reboot, the" >&2
+    echo "spore: keyboard is whatever Alpine came up with — which matters if you" >&2
+    echo "spore: are about to type a password at it." >&2
+fi
 RKM
 }
