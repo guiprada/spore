@@ -2303,6 +2303,37 @@ else
 fi
 rm -rf "$WZ"
 
+section 'a privileged port needs its capability at every start, not once'
+# setcap was a firstboot action, which is the wrong shape twice over here. A
+# diskless Alpine installs its world packages into a RAM root at every boot, so
+# /usr/bin/dufs is a new file each time with no xattrs on it; and a machine
+# booted from its committed overlay stops at /etc/spore/.seeded and runs no
+# firstboot action at all. Port 443 would have worked on the boot that
+# configured the machine and failed on every boot after.
+PP=$(mktemp -d /tmp/spore-privport.XXXXXX)
+cp -r "$EX" "$PP/s"
+sed -i 's/^MODULES=.*/MODULES="dufs"/' "$PP/s/spore.conf"
+"$SPORE" -s "$PP/s" set dufs DUFS_PORT 443 >/dev/null 2>&1
+alpine "$SPORE" -s "$PP/s" -r "$PP/r" apply >/dev/null 2>&1
+PP_INIT=$(cat "$PP/r/etc/init.d/dufs" 2>/dev/null)
+has   'the capability is set in start_pre' "$PP_INIT" "setcap 'cap_net_bind_service=+ep'"
+has   'and a failure to set it stops the start' "$PP_INIT" 'could not give dufs permission to bind'
+# Not as a firstboot action any more: that runs once, and once is not enough.
+PPLOG=$(mktemp /tmp/spore-privlog.XXXXXX)
+export SPORE_RUN_LOG="$PPLOG"
+alpine "$SPORE" -s "$PP/s" -r "$PP/r3" plan > "$PP/plan.out" 2>&1
+unset SPORE_RUN_LOG
+hasnt 'and not as a one-off firstboot action' "$(cat "$PP/plan.out")" 'dufs-setcap'
+# libcap still travels, or setcap is not there to run.
+has   'libcap travels with it'                "$(cat "$PP/plan.out")" 'libcap'
+
+# An unprivileged port needs none of it, and the init script stays plain.
+"$SPORE" -s "$PP/s" set dufs DUFS_PORT 5000 >/dev/null 2>&1
+alpine "$SPORE" -s "$PP/s" -r "$PP/r2" apply >/dev/null 2>&1
+hasnt 'an unprivileged port sets no capability' \
+    "$(cat "$PP/r2/etc/init.d/dufs" 2>/dev/null)" 'setcap'
+rm -rf "$PP" "$PPLOG"
+
 section 'dufs on loopback is indistinguishable from dufs being broken'
 # DUFS_BIND defaults to 127.0.0.1, which is a defensible default — enabling a
 # module should not open a file server to the network. It is also exactly what a

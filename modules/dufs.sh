@@ -135,9 +135,26 @@ chmod 600 '$dufs_key' 2>/dev/null || true"
 
     # Binding below 1024 as a non-root user needs the capability, or the service
     # starts and immediately fails.
+    #
+    # Applied at every start, not once. It was a firstboot action, which is the
+    # wrong shape twice over on the machines this is for: a diskless Alpine
+    # installs its world packages into a RAM root at every boot, so /usr/bin/dufs
+    # is a new file each time with no xattrs on it; and a machine booted from its
+    # committed overlay stops at /etc/spore/.seeded and runs no firstboot action
+    # at all. Port 443 would have worked on the boot that configured the machine
+    # and failed on every boot after it — the same trap the automount service
+    # exists to avoid, in code I had already read.
+    dufs_setcap=''
     if [ "$dufs_port" -lt 1024 ] 2>/dev/null; then
         plan_pkg libcap
-        plan_firstboot dufs-setcap "setcap 'cap_net_bind_service=+ep' /usr/bin/dufs"
+        dufs_setcap="
+    # $dufs_port is privileged and \$command_user is not root, so the binary
+    # needs the capability — and it is a fresh binary on every diskless boot.
+    if ! setcap 'cap_net_bind_service=+ep' /usr/bin/dufs 2>/dev/null; then
+        eerror \"could not give dufs permission to bind port $dufs_port\"
+        eerror 'a port below 1024 needs cap_net_bind_service; is libcap installed?'
+        return 1
+    fi"
     fi
 
     plan_file /etc/init.d/dufs 0755 "#!/sbin/openrc-run
@@ -163,7 +180,7 @@ start_pre() {
     # supervise-daemon opens the log as command_user, and /var/log is root-owned,
     # so the daemon fails to start before it ever runs. start_pre runs as root:
     # create the file with the right owner first.
-    checkpath -f -m 0644 -o \"\$command_user\" \"\$output_log\"
+    checkpath -f -m 0644 -o \"\$command_user\" \"\$output_log\"$dufs_setcap
 }"
 
     # The package does not necessarily create the account the service runs as,
