@@ -2303,6 +2303,47 @@ else
 fi
 rm -rf "$WZ"
 
+section 'the service user exists before anything is given to it'
+# firstboot actions run in the order they are planned, and dufs-tls came first.
+# It chowned the private key to an account dufs-user had not created yet: the
+# chown failed, `2>/dev/null || true` swallowed it, chmod 600 left the key
+# root-owned, and dufs — running as dufs:dufs — could not read its own key. It
+# started and died, and the only complaint in the chain was the silenced one.
+UO=$(mktemp -d /tmp/spore-dufsorder.XXXXXX)
+cp -r "$EX" "$UO/s"
+sed -i 's/^MODULES=.*/MODULES="dufs"/' "$UO/s/spore.conf"
+"$SPORE" -s "$UO/s" set dufs DUFS_TLS_SELFSIGNED yes >/dev/null 2>&1
+alpine env SPORE_WORK="$UO/w" "$SPORE" -s "$UO/s" -r "$UO/r" plan >/dev/null 2>&1
+UO_USER=$(grep -n 'dufs-user' "$UO/w/plan.tsv" | head -1 | cut -d: -f1)
+UO_TLS=$(grep -n 'dufs-tls'  "$UO/w/plan.tsv" | head -1 | cut -d: -f1)
+if [ -n "$UO_USER" ] && [ -n "$UO_TLS" ] && [ "$UO_USER" -lt "$UO_TLS" ]; then
+    t_ok 'the account is created before the certificate'
+else
+    t_fail 'the account is created before the certificate' "user [$UO_USER], tls [$UO_TLS]"
+fi
+
+if command -v openssl >/dev/null 2>&1; then
+    UO_SHA=$(awk -F'\t' '$2=="firstboot" && $3=="dufs-tls" {print $4}' "$UO/w/plan.tsv")
+    sed "s|/etc/dufs/tls|$UO/tls|g" "$UO/w/content/$UO_SHA" > "$UO/gen.sh"
+    # With no such account — which is every seed boot, since the seed's /etc is
+    # generic — the key cannot be handed over, and that has to be fatal rather
+    # than tolerated: a root-owned key is a service that exits on startup.
+    UO_OUT=$(sh "$UO/gen.sh" 2>&1 || true)
+    # Not $( ...; echo $? ): set -e kills the subshell at the failing command
+    # and the echo never runs, which empties the variable and takes the suite
+    # down with it.
+    UO_RC=0
+    sh "$UO/gen.sh" >/dev/null 2>&1 || UO_RC=$?
+    has   'a key that cannot be handed over is fatal' "$UO_OUT" 'could not give the TLS key'
+    check 'and the action fails rather than continuing' "$UO_RC" 1
+fi
+# The serve directory keeps its tolerance — that one can be on vfat, which
+# carries no ownership at all.
+DSRC=$(cat "$ROOT/modules/dufs.sh")
+has   'the serve directory chown is still tolerated' "$DSRC" "chown -R '\$dufs_user:\$dufs_user' '\$dufs_serve' 2>/dev/null || true"
+hasnt 'but the key chown is not'                     "$DSRC" "chown '\$dufs_user:\$dufs_user' '\$dufs_key' '\$dufs_cert' 2>/dev/null"
+rm -rf "$UO"
+
 section 'https on a port that means https'
 # SSL_ERROR_RX_RECORD_TOO_LONG: plain bytes where the browser expected a
 # handshake. It is the one TLS failure Firefox will not let you click past —

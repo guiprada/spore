@@ -81,6 +81,23 @@ dufs_plan() {
     plan_pkg dufs
     plan_dir "$dufs_serve" 0755
 
+    # First, because everything below hands files to this account and firstboot
+    # actions run in the order they are planned. The certificate action used to
+    # come first and chown the private key to a user that did not exist yet: the
+    # chown failed, `2>/dev/null || true` swallowed it, chmod 600 left the key
+    # root-owned, and dufs — running as dufs:dufs — could not read its own key.
+    # It started and died, and the only complaint in the whole chain was the one
+    # that had been silenced.
+    #
+    # The package does not necessarily create the account, and busybox
+    # `adduser -S` does not create a matching group — the account lands in
+    # nogroup and supervise-daemon then fails looking up the group, not the
+    # user. Create both, and repair an account that predates this.
+    plan_firstboot dufs-user "grep -q '^$dufs_user:' /etc/group || addgroup -S '$dufs_user'
+id -u '$dufs_user' >/dev/null 2>&1 ||
+    adduser -S -D -H -s /sbin/nologin -G '$dufs_user' -g '$dufs_user' '$dufs_user'
+addgroup '$dufs_user' '$dufs_user' 2>/dev/null || true"
+
     dufs_yaml="# Managed by spore. Consumed by the packaged init script via -c.
 serve-path: '$dufs_serve'
 bind: $dufs_bind
@@ -188,8 +205,17 @@ if [ ! -f '$dufs_cert' ] || [ ! -f '$dufs_key' ]; then
     fi
     echo \"spore: self-signed certificate for \$cn (\$san)\"
 fi
-chown dufs:dufs '$dufs_key' '$dufs_cert' 2>/dev/null || true
-chmod 600 '$dufs_key' 2>/dev/null || true"
+# Not tolerated. The serve directory's chown is allowed to fail because it may
+# be on vfat, which carries no ownership; this is /etc on the root filesystem,
+# which does, and this file's owner is the difference between a service that
+# starts and one that exits the moment it tries to read its own key.
+if ! chown '$dufs_user:$dufs_user' '$dufs_key' '$dufs_cert'; then
+    echo 'spore: could not give the TLS key to $dufs_user, so dufs will not be' >&2
+    echo 'spore: able to read it and will exit as soon as it starts.' >&2
+    exit 1
+fi
+chmod 640 '$dufs_cert'
+chmod 600 '$dufs_key'"
         fi
     fi
 
@@ -248,15 +274,6 @@ start_pre() {
     # create the file with the right owner first.
     checkpath -f -m 0644 -o \"\$command_user\" \"\$output_log\"$dufs_setcap
 }"
-
-    # The package does not necessarily create the account the service runs as,
-    # and busybox adduser -S does not create a matching group — the account lands
-    # in nogroup and supervise-daemon then fails looking up the group, not the
-    # user. Create both, and repair an account that predates this.
-    plan_firstboot dufs-user "grep -q '^$dufs_user:' /etc/group || addgroup -S '$dufs_user'
-id -u '$dufs_user' >/dev/null 2>&1 ||
-    adduser -S -D -H -s /sbin/nologin -G '$dufs_user' -g '$dufs_user' '$dufs_user'
-addgroup '$dufs_user' '$dufs_user' 2>/dev/null || true"
 
     # chown is tolerant because vfat/exfat/ntfs cannot carry Unix ownership.
     plan_firstboot dufs-serve-owner \
