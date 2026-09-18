@@ -2280,9 +2280,25 @@ if [ -f "$WZ/m/spore/spore.conf" ]; then
         "$(conf_read "$WZ/m/spore/modules/storage.conf" STORAGE_ROOT)"
     check 'over TLS when asked' \
         "$(conf_read "$WZ/m/spore/modules/dufs.conf" DUFS_TLS_SELFSIGNED)" 'yes'
+    # "Allow writing?" is answered once, and it takes two settings to be true:
+    # the server has to offer it and the filesystem has to permit it. Answering
+    # yes and getting only the first is a server with an upload button that
+    # refuses every upload.
+    check 'answering yes to writing lets the server offer it' \
+        "$(conf_read "$WZ/m/spore/modules/dufs.conf" DUFS_ALLOW_ALL)" 'yes'
+    check 'and hands it the disks so the writes land' \
+        "$(conf_read "$WZ/m/spore/modules/storage.conf" STORAGE_OWNER)" 'dufs'
     # And the result has to be a spore that plans, not just files that parse.
     WZ_PLAN=$(alpine "$SPORE" -s "$WZ/m/spore" -r "$WZ/r" plan 2>&1)
     has 'and the spore it wrote plans the service' "$WZ_PLAN" 'spore-automount'
+
+    # Read-only is the default, and it must not hand the disks over anyway.
+    printf 'coisas\n\n\n\n\n\n\n\n\n\ny\n\n\nn\ny\n' |
+        "$SPORE" setup "$WZ/m3" >/dev/null 2>&1 || true
+    check 'a read-only share sets no owner' \
+        "$(conf_read "$WZ/m3/spore/modules/storage.conf" STORAGE_OWNER)" ''
+    has   'and says what to set if that changes' \
+        "$(cat "$WZ/m3/spore/modules/storage.conf")" 'refuse every upload'
 
     # Answering no leaves both out entirely rather than writing them off.
     printf 'coisas\n\n\n\n\n\n\n\n\n\nn\n' |
@@ -2607,6 +2623,37 @@ has 'and says what that means'    "$AM_PLAN" 'includes internal disks and anythi
 # Whatever turns up has to be mountable, and what turns up is not knowable from
 # the workstation.
 has 'the filesystem drivers travel with it' "$AM_PLAN" 'exfatprogs'
+# Sharing disks a server cannot write to is the failure that costs a boot to
+# find: nothing errors, the browser just refuses every upload. The example spore
+# sets an owner, so this half has to unset it to see the note at all.
+sed -i '/^STORAGE_OWNER=/d' "$AM/s/modules/storage.conf"
+AM_NOOWN=$(alpine "$SPORE" -s "$AM/s" -r "$AM/rn" plan 2>&1)
+has 'no STORAGE_OWNER is called out at plan time' "$AM_NOOWN" \
+    'only root can write to them'
+has 'and it names the account to use'             "$AM_NOOWN" 'STORAGE_OWNER=dufs for this one'
+"$SPORE" -s "$AM/s" set storage STORAGE_OWNER dufs >/dev/null 2>&1
+AM_OWN=$(alpine "$SPORE" -s "$AM/s" -r "$AM/ro" plan 2>&1)
+hasnt 'set, and the warning goes away'  "$AM_OWN" 'only root can write to them'
+has   'replaced by what it does cover'  "$AM_OWN" 'not the whole tree'
+has   'and how to cover the rest'       "$AM_OWN" 'STORAGE_OWNER_DEEP=yes'
+"$SPORE" -s "$AM/s" set storage STORAGE_OWNER_DEEP yes >/dev/null 2>&1
+AM_DEEP=$(alpine "$SPORE" -s "$AM/s" -r "$AM/rd" plan 2>&1)
+hasnt 'and with DEEP set, neither note' "$AM_DEEP" 'not the whole tree'
+"$SPORE" -s "$AM/s" set storage STORAGE_OWNER_DEEP no >/dev/null 2>&1
+# It is spliced into a chown in a generated script, so it is checked here rather
+# than written into a script that will not parse — or worse, one that will.
+"$SPORE" -s "$AM/s" set storage STORAGE_OWNER "dufs'; rm -rf /" >/dev/null 2>&1
+AM_BAD=$(alpine "$SPORE" -s "$AM/s" -r "$AM/rb" plan 2>&1)
+has 'an owner that is not an account is refused' "$AM_BAD" 'is not an account name'
+has 'and the mounts keep what they had'          "$AM_BAD" 'ownership their disks carry'
+# The note quotes the value back, so the plan is not where to look — the script
+# that gets written is.
+alpine "$SPORE" -s "$AM/s" -r "$AM/rb2" apply >/dev/null 2>&1 || true
+AM_BADSH=$(cat "$AM/rb2/usr/local/sbin/spore-automount" 2>/dev/null || echo MISSING)
+hasnt 'and none of it reaches the script'        "$AM_BADSH" 'rm -rf /'
+has   'which is written with no owner at all'    "$AM_BADSH" "owner=''"
+"$SPORE" -s "$AM/s" set storage STORAGE_OWNER dufs >/dev/null 2>&1
+
 AM_OFF=$(alpine "$SPORE" -s "$AM/s" -r "$AM/r2" plan 2>&1)
 "$SPORE" -s "$AM/s" set storage STORAGE_AUTO no >/dev/null 2>&1
 AM_NONE=$(alpine "$SPORE" -s "$AM/s" -r "$AM/r3" plan 2>&1)
@@ -2621,7 +2668,7 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null 2>&1 &&
     ( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
       . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
       printf '#!/bin/sh\nset -u\n'
-      storage_automount_script "$AMR/root" uuid 'skipme' 000 ) > "$AM/am.sh"
+      storage_automount_script "$AMR/root" uuid 'skipme' 000 '' no ) > "$AM/am.sh"
     chmod 755 "$AM/am.sh"
 
     for n in data mine skipme busy; do
@@ -2700,7 +2747,7 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null 2>&1 &&
     ( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
       . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
       printf '#!/bin/sh\nset -u\n'
-      storage_automount_script "$AMR/two" uuid '' 000 ) > "$AM/am2.sh"
+      storage_automount_script "$AMR/two" uuid '' 000 '' no ) > "$AM/am2.sh"
     AM_OUT2=$(SPORE_AUTOMOUNT_DEVS="$AM_D $AM_B" sh "$AM/am2.sh" 2>&1)
     has 'no exclusions excludes nothing'    "$AM_OUT2" "sharing $AM_B"
     has 'the labelled one included'         "$AM_OUT2" "sharing $AM_D"
@@ -2733,6 +2780,68 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null 2>&1 &&
     has 'no device at all says that'   "$AM_OUT5" 'no block device matched at all'
     has 'and names what it looks at'   "$AM_OUT5" 'nvme* and mmcblk*'
 
+    # Ownership. A server running as its own account cannot write to a disk
+    # owned by root, so "the server allows uploads" and "an upload lands" are
+    # two different settings — and nothing errors when only the first is set.
+    ( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
+      . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
+      printf '#!/bin/sh\nset -u\n'
+      storage_automount_script "$AMR/own" uuid '' 000 nobody no ) > "$AM/am3.sh"
+    AM_OUT6=$(SPORE_AUTOMOUNT_DEVS="$AM_D" sh "$AM/am3.sh" 2>&1)
+    has   'a shared disk is handed to STORAGE_OWNER' "$AM_OUT6" 'owned by nobody'
+    check 'and the mount point really changes hands' \
+        "$(stat -c '%U' "$AMR/own/$AM_UU" 2>/dev/null)" nobody
+    # Not recursive by default: a disk that came with data keeps the ownership
+    # it came with, and the boot does not walk the whole tree.
+    AM_SUB=$(find "$AMR/own/$AM_UU" -mindepth 1 -maxdepth 1 -type d ! -name 'lost+found' 2>/dev/null | head -1)
+    if [ -n "$AM_SUB" ]; then
+        check 'but not what was already on it' "$(stat -c '%U' "$AM_SUB")" root
+    else
+        check 'lost+found keeps its owner' "$(stat -c '%U' "$AMR/own/$AM_UU/lost+found" 2>/dev/null)" root
+    fi
+    for m in "$AMR/own"/*; do
+        [ ! -d "$m" ] || umount "$m" 2>/dev/null || true
+    done
+
+    # And with STORAGE_OWNER_DEEP, everything under it.
+    ( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
+      . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
+      printf '#!/bin/sh\nset -u\n'
+      storage_automount_script "$AMR/deep" uuid '' 000 nobody yes ) > "$AM/am4.sh"
+    SPORE_AUTOMOUNT_DEVS="$AM_D" sh "$AM/am4.sh" >/dev/null 2>&1
+    check 'DEEP chowns what was already there too' \
+        "$(stat -c '%U' "$AMR/deep/$AM_UU/lost+found" 2>/dev/null)" nobody
+    for m in "$AMR/deep"/*; do
+        [ ! -d "$m" ] || umount "$m" 2>/dev/null || true
+    done
+
+    # A filesystem that cannot hold ownership must not be chowned: the umask on
+    # the mount is what grants access there, and the chown would fail for a real
+    # reason and read as a fault.
+    if command -v mkfs.vfat >/dev/null 2>&1; then
+        dd if=/dev/zero of="$AM/fat.img" bs=1M count=8 status=none 2>/dev/null
+        mkfs.vfat -n FATDISK "$AM/fat.img" >/dev/null 2>&1
+        AM_F=$(losetup --show -f "$AM/fat.img")
+        AM_OUT7=$(SPORE_AUTOMOUNT_DEVS="$AM_F" sh "$AM/am3.sh" 2>&1)
+        hasnt 'a vfat disk is never chowned' "$AM_OUT7" 'could not chown'
+        has   'it is shared all the same'    "$AM_OUT7" "sharing $AM_F (vfat)"
+        for m in "$AMR/own"/*; do
+            [ ! -d "$m" ] || umount "$m" 2>/dev/null || true
+        done
+        losetup -d "$AM_F" 2>/dev/null || true
+    else
+        t_skip 'vfat is not chowned (mkfs.vfat missing)'
+    fi
+
+    # A read-only mount looks, from a browser, exactly like a server that was
+    # never told to accept uploads. It says which it is.
+    AM_SRC_RO=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
+                 . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
+                 storage_automount_script /media/storage uuid '' 000 dufs no )
+    has 'a read-only mount is called out' "$AM_SRC_RO" 'is mounted READ-ONLY'
+    has 'and says the server cannot help' "$AM_SRC_RO" \
+        'whatever the server is configured to allow'
+
     umount "$AM/busy" 2>/dev/null
     losetup -d "$AM_D" "$AM_M" "$AM_X" "$AM_B" "$AM_E" "$AM_P" "$AM_U" 2>/dev/null || true
 else
@@ -2743,7 +2852,7 @@ fi
 # device — the point being that it has one at all.
 AM_SRC=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
           . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
-          storage_automount_script /media/storage uuid '' 000 )
+          storage_automount_script /media/storage uuid '' 000 '' no )
 has 'a partitioned whole disk says why it was passed over' "$AM_SRC" \
     'echo "spore: $dev is partitioned, so its partitions were the"'
 has 'and it leaves the device loop, not just the partition scan' "$AM_SRC" \

@@ -295,6 +295,24 @@ CONF
             printf 'STORAGE_ROOT=%s\n' "$wz_share_root"
             printf '# Devices, UUIDs or labels to leave alone:\n'
             printf '# STORAGE_AUTO_EXCLUDE="backup-drive"\n'
+            printf '\n'
+            # "Allow writing" and "a write lands" are two different settings.
+            # Answering yes to the first without knowing about the second is a
+            # server that offers an upload button and refuses every upload.
+            if [ "$wz_dufs_write" = yes ]; then
+                printf '# The server writes as its own account, so the top of each shared\n'
+                printf '# disk is handed to it. Without this the filesystem refuses every\n'
+                printf '# upload, whatever the server is configured to allow.\n'
+                printf 'STORAGE_OWNER=dufs\n'
+                printf '# Directories already on a disk keep their own ownership. To take\n'
+                printf '# those over too (a walk of the whole tree on every boot):\n'
+                printf '# STORAGE_OWNER_DEEP=yes\n'
+            else
+                printf '# Read-only, so the mounts keep the ownership their disks carry.\n'
+                printf '# If you make the server writable, set STORAGE_OWNER to its account\n'
+                printf '# or the filesystem will refuse every upload:\n'
+                printf '# STORAGE_OWNER=dufs\n'
+            fi
         } > "$SPORE_DIR/modules/storage.conf"
 
         {

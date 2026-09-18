@@ -68,8 +68,8 @@ storage_fs_package() {
 # initramfs being consistent, and an unshared partition that turns up shared is
 # this spore's identity file on a web server.
 storage_automount_script() {
-    printf "root='%s'\nnaming='%s'\nexclude=' %s '\numask='%s'\n" \
-        "$1" "$2" "$3" "$4"
+    printf "root='%s'\nnaming='%s'\nexclude=' %s '\numask='%s'\nowner='%s'\ndeep='%s'\n" \
+        "$1" "$2" "$3" "$4" "$5" "$6"
     cat <<'SAM'
 mkdir -p "$root"
 
@@ -192,8 +192,42 @@ for dev in ${SPORE_AUTOMOUNT_DEVS:-/dev/sd[a-z][0-9]* /dev/vd[a-z][0-9]* /dev/xv
         echo "spore: own medium and is not being shared." >&2
         continue
     fi
+
+    # A file server running as its own account cannot write to a disk owned by
+    # root, so "allow uploads" and "uploads work" are two different settings.
+    # Only the mount point by default: a recursive chown over a disk that
+    # already has data on it rewrites ownership the disk may have come with, and
+    # costs a walk of the whole tree on every boot. The top is enough for
+    # anything the server creates from now on.
+    if [ -n "$owner" ]; then
+        case $ty in
+            vfat|msdos|exfat|ntfs|ntfs-3g)
+                # No Unix ownership to hold; the umask above is what grants
+                # access on these, and chown would fail for a real reason.
+                ;;
+            *)
+                if [ "$deep" = yes ]; then
+                    chown -R "$owner" "$tgt" 2>/dev/null ||
+                        echo "spore: could not chown $tgt to $owner" >&2
+                else
+                    chown "$owner" "$tgt" 2>/dev/null ||
+                        echo "spore: could not chown $tgt to $owner" >&2
+                fi ;;
+        esac
+    fi
+
+    # Read back how it actually mounted rather than how it was asked to. A disk
+    # the kernel decided to protect comes up read-only, which from a browser
+    # looks the same as a server that was never told to accept uploads.
+    how=$(awk -v t="$tgt" '$2 == t { print $4; exit }' /proc/mounts)
+    case ,$how, in
+        *,ro,*)
+            echo "spore: $tgt is mounted READ-ONLY ($how), so nothing can be" >&2
+            echo "spore: written to it whatever the server is configured to allow." >&2 ;;
+    esac
+
     shared=$((shared + 1))
-    echo "spore: sharing $dev ($ty) at $tgt"
+    echo "spore: sharing $dev ($ty) at $tgt${owner:+, owned by $owner}"
 done
 
 if [ "$seen" -eq 0 ]; then
@@ -211,6 +245,9 @@ SAM
 storage_plan_automount() {
     spa_root=$1
     spa_umask=$2
+    spa_owner=$3
+    spa_deep=no
+    mconf_bool STORAGE_OWNER_DEEP no && spa_deep=yes
     spa_name=$(mconf STORAGE_AUTO_NAME uuid)
     case $spa_name in
         uuid|label|dev) : ;;
@@ -231,7 +268,8 @@ storage_plan_automount() {
 # Managed by spore. Mounts every attached filesystem this machine did not boot
 # from, under $spa_root.
 set -u
-$(storage_automount_script "$spa_root" "$spa_name" "$spa_excl" "$spa_umask")"
+$(storage_automount_script "$spa_root" "$spa_name" "$spa_excl" "$spa_umask" \
+                           "$spa_owner" "$spa_deep")"
 
     plan_file /etc/init.d/spore-automount 0755 "#!/sbin/openrc-run
 # Managed by spore.
@@ -257,6 +295,24 @@ stop() { return 0; }"
          includes internal disks and anything plugged in later. Name the ones
          to leave alone in STORAGE_AUTO_EXCLUDE (device, UUID or label), or
          use volumes.conf instead to mount only what you have declared."
+
+    # The one that costs a boot to discover: a server told to accept uploads,
+    # writing as its own account, to disks owned by root. Nothing errors at plan
+    # time and nothing errors at mount time — it just refuses every upload.
+    if [ -z "$spa_owner" ]; then
+        plan_note "storage: these mounts keep whatever ownership the disks carry,
+         which is usually root, so only root can write to them. A server that
+         runs as its own account (dufs does) will be refused every upload and
+         delete however it is configured. Set STORAGE_OWNER to that account —
+         STORAGE_OWNER=dufs for this one — to hand it the top of each disk."
+    elif [ "$spa_deep" = no ]; then
+        plan_note "storage: STORAGE_OWNER=$spa_owner is given the top of each
+         shared disk, not the whole tree. Anything the server creates from now
+         on is its own; directories already on a disk keep their ownership and
+         stay read-only to it. STORAGE_OWNER_DEEP=yes chowns everything instead,
+         which rewrites ownership the disk came with and walks the whole tree on
+         every boot."
+    fi
 }
 
 storage_plan() {
@@ -265,11 +321,22 @@ storage_plan() {
     st_uid=$(mconf STORAGE_FAT_UID '')
     st_gid=$(mconf STORAGE_FAT_GID '')
     st_owner=$(mconf STORAGE_OWNER '')
+    # It is spliced into a chown in a generated script, so it is an account name
+    # (optionally user:group) or it is refused here rather than at 3am on a box
+    # with no console.
+    case $st_owner in
+        ''|*[!A-Za-z0-9_.:-]*)
+            [ -z "$st_owner" ] || {
+                plan_note "storage: STORAGE_OWNER='$st_owner' is not an account name.
+         Expected user, or user:group. Ignoring it, so the mounts keep the
+         ownership their disks carry."
+                st_owner='' ; } ;;
+    esac
 
     st_auto=no
     if mconf_bool STORAGE_AUTO no; then
         st_auto=yes
-        storage_plan_automount "$st_root" "$st_umask"
+        storage_plan_automount "$st_root" "$st_umask" "$st_owner"
     fi
 
     storage_volumes > "$SPORE_WORK/volumes" || true

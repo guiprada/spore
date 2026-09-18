@@ -424,10 +424,39 @@ actually for: plug a disk in and have it appear.
 STORAGE_AUTO=yes            # mount everything this machine did not boot from
 STORAGE_AUTO_NAME=uuid      # uuid (default), label, or dev
 STORAGE_AUTO_EXCLUDE="backup-drive"   # devices, UUIDs or labels to leave alone
+STORAGE_OWNER=dufs          # who owns the top of each shared disk
+STORAGE_OWNER_DEEP=no       # yes to take over directories already on it
 ```
 
 `uuid` is the default because letters move: the same stick was `sdb2` on one
 boot and `sdc2` on the next.
+
+**`STORAGE_OWNER` is what makes a writable share actually writable.** A disk
+arrives owned by root, and a server that runs as its own account — dufs does —
+is refused every upload however it is configured. Nothing errors along the way:
+the mount succeeds, the service starts, the browser says no. So `plan` says it,
+before the boot rather than after:
+
+```
+storage: these mounts keep whatever ownership the disks carry, which is
+         usually root, so only root can write to them. […] Set STORAGE_OWNER
+         to that account — STORAGE_OWNER=dufs for this one […]
+```
+
+Only the top of each disk by default. Anything the server creates from then on
+is its own, while directories a disk arrived with keep the ownership they came
+with: a recursive chown rewrites ownership the disk may be carrying for another
+machine, and walks the whole tree on every boot. `STORAGE_OWNER_DEEP=yes` when
+that is what you want. On vfat/exfat/ntfs neither applies — those hold no Unix
+ownership, and `STORAGE_FAT_UMASK` is what grants access there.
+
+And because a read-only mount and a read-only *server* look identical from a
+browser, the mount says which it is:
+
+```
+spore: /media/storage/8b6df71c-… is mounted READ-ONLY (ro,noatime), so nothing
+spore: can be written to it whatever the server is configured to allow.
+```
 
 This cannot be a plan action — the plan is built on a workstation, where what is
 attached is unknowable — and it cannot be a firstboot action either, because a
@@ -441,19 +470,27 @@ not sufficient, so each volume is mounted, **looked at**, and unmounted again if
 it turns out to carry a spore, an identity or an apkovl:
 
 ```
-spore: sharing /dev/sdb1 (ext4) at /media/storage/8b6df71c-…
+spore: sharing /dev/sdb1 (ext4) at /media/storage/8b6df71c-…, owned by dufs
 spore: /dev/sdc2 carries a spore or an apkovl, so it is this machine's
 spore: own medium and is not being shared.
+spore: looked at 5 device(s), shared 1
 ```
+
+Every branch says which device it was about and why it passed over it — the
+exclusion list, a disk with no filesystem (repeating back what `blkid` did say),
+one the machine is already using, a whole disk whose partitions were the real
+candidates. A run that shares nothing has to account for itself; the alternative
+is a service that prints nothing and a boot spent guessing which of six silent
+skips took the disk.
 
 One boot where the initramfs does not mount the data partition would otherwise
 put the spore's age key on a web server.
 
 Sharing everything attached is a decision with a blast radius, and `plan` says so
 rather than assuming: internal disks count, and so does anything plugged in
-later. With `DUFS_ALLOW_ALL=yes` all of it is writable by whoever reaches the
-port, which is what `DUFS_TLS_SELFSIGNED` and a sealed `DUFS_AUTH_SECRET` are
-for.
+later. With `DUFS_ALLOW_ALL=yes` and `STORAGE_OWNER` set, all of it is writable
+by whoever reaches the port, which is what `DUFS_TLS_SELFSIGNED` and a sealed
+`DUFS_AUTH_SECRET` are for.
 
 ## Making the boot medium
 
