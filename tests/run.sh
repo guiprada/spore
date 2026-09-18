@@ -2303,6 +2303,30 @@ else
 fi
 rm -rf "$WZ"
 
+section 'dufs on loopback is indistinguishable from dufs being broken'
+# DUFS_BIND defaults to 127.0.0.1, which is a defensible default — enabling a
+# module should not open a file server to the network. It is also exactly what a
+# broken one looks like: the service starts, rc-service says started, the port
+# is open on the machine, and nothing off it connects. Nothing failed, so
+# nothing said anything.
+DB=$(mktemp -d /tmp/spore-dufsbind.XXXXXX)
+cp -r "$EX" "$DB/s"
+sed -i 's/^MODULES=.*/MODULES="dufs"/' "$DB/s/spore.conf"
+rm -f "$DB/s/modules/dufs.conf"          # enabled with `modules add`, nothing else
+DB_LOOP=$(alpine "$SPORE" -s "$DB/s" -r "$DB/r" plan 2>&1)
+has 'the default bind is called out'   "$DB_LOOP" 'which is the loopback address'
+has 'and what it means in practice'    "$DB_LOOP" 'nothing on the network will reach it'
+has 'and what opening it up costs'     "$DB_LOOP" 'DUFS_AUTH_SECRET'
+"$SPORE" -s "$DB/s" set dufs DUFS_BIND 0.0.0.0 >/dev/null 2>&1
+DB_OPEN=$(alpine "$SPORE" -s "$DB/s" -r "$DB/r2" plan 2>&1)
+hasnt 'and nothing to say once it serves the network' "$DB_OPEN" 'loopback address'
+# A module that is off is not a file server nobody can reach; it is off.
+"$SPORE" -s "$DB/s" set dufs DUFS_BIND 127.0.0.1 >/dev/null 2>&1
+"$SPORE" -s "$DB/s" set dufs DUFS_ENABLED no >/dev/null 2>&1
+DB_OFF=$(alpine "$SPORE" -s "$DB/s" -r "$DB/r3" plan 2>&1)
+hasnt 'nor when the service is disabled' "$DB_OFF" 'loopback address'
+rm -rf "$DB"
+
 section 'a service whose deps ran in an earlier runlevel still starts'
 # "cannot start dufs as localmount would not start" does not mean localmount is
 # down — the boot runlevel ran it minutes earlier. It means localmount is not in

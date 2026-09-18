@@ -30,6 +30,24 @@ dufs_plan() {
 
     dufs_user=$(mconf DUFS_USER dufs)
 
+    # Loopback is the default on purpose — a file server that turns itself on to
+    # the whole network because somebody enabled the module is not a default
+    # worth having. But it is also indistinguishable from a broken one: the
+    # service starts, `rc-service dufs status` says started, the port is open on
+    # the machine, and nothing off it can connect. Nothing failed, so nothing
+    # said anything.
+    if mconf_bool DUFS_ENABLED yes; then
+        case $dufs_bind in
+            127.*|::1|localhost)
+                plan_note "dufs: DUFS_BIND is $dufs_bind, which is the loopback address,
+         so this serves only the machine it runs on. It will start, it will
+         listen, and nothing on the network will reach it.
+         Set DUFS_BIND=0.0.0.0 to serve the network — with DUFS_ALLOW_ALL that
+         is every attached disk, writable, to anyone who can reach port
+         $dufs_port, so TLS and a sealed DUFS_AUTH_SECRET belong with it." ;;
+        esac
+    fi
+
     plan_pkg dufs
     plan_dir "$dufs_serve" 0755
 
@@ -166,4 +184,23 @@ addgroup '$dufs_user' '$dufs_user' 2>/dev/null || true"
     else
         plan_svc dufs default off
     fi
+}
+
+# Shown under `spore status`, because "is it actually reachable" is not something
+# the plan can answer — and the gap between "the service started" and "you can
+# open it" is where a loopback bind lives.
+dufs_status_extra() {
+    dse_port=$(mconf DUFS_PORT 5000)
+    dse_want=$(mconf DUFS_BIND 127.0.0.1)
+    dse_on=$( { netstat -lnt 2>/dev/null || ss -lnt 2>/dev/null; } |
+              awk '{ print $4 }' | grep -E "[:.]${dse_port}\$" | tr '\n' ' ')
+    if [ -z "$dse_on" ]; then
+        printf 'nothing is listening on port %s\n' "$dse_port"
+        return 0
+    fi
+    printf 'listening on %s\n' "${dse_on% }"
+    case $dse_on in
+        127.*|'::1'*|*' 127.'*)
+            printf 'which is loopback only — set DUFS_BIND=0.0.0.0 to serve the network\n' ;;
+    esac
 }
