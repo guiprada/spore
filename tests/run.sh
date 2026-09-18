@@ -2303,6 +2303,38 @@ else
 fi
 rm -rf "$WZ"
 
+section 'what was declared, against what is actually listening'
+# "The service started" and "you can reach it" are different claims, and every
+# gap between them has cost a round trip here: a loopback bind, a port meaning
+# https while serving http, a key the service could not read, a daemon
+# supervise-daemon launched that exited a moment later. Each time the log said
+# the service had started, because it had.
+RPSRC=$(cat "$ROOT/lib/exec_live.sh")
+has 'apply asks the kernel what is listening' "$RPSRC" 'netstat -lnt 2>/dev/null || ss -lnt'
+has 'and says when a declared port is not'   "$RPSRC" 'and nothing is listening on it'
+has 'and when it is only on loopback'        "$RPSRC" 'bound to the loopback address'
+has 'it is called from apply'                "$(cat "$ROOT/bin/spore")" 'report_ports'
+# MOD_PORTS already existed for the firewall; this reads the same declaration.
+RP=$(mktemp -d /tmp/spore-ports.XXXXXX)
+cp -r "$EX" "$RP/s"
+sed -i 's/^MODULES=.*/MODULES="dufs"/' "$RP/s/spore.conf"
+"$SPORE" -s "$RP/s" set dufs DUFS_PORT 8080 >/dev/null 2>&1
+RP_OUT=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/facts.sh"
+          . "$ROOT/lib/plan.sh"; . "$ROOT/lib/module.sh"; . "$ROOT/lib/exec_live.sh"
+          SPORE_ROOT=/; SPORE_DRYRUN=0; SPORE_ALL_PORTS='8080/tcp'
+          report_ports 2>&1 )
+has 'a declared port nothing serves is reported' "$RP_OUT" 'declared port 8080'
+# And a port something is on comes back with the address, which is the whole
+# point: 0.0.0.0 and 127.0.0.1 are different answers to "is it reachable".
+hasnt 'without inventing a listener'             "$RP_OUT" 'port 8080: '
+# Nothing to say when no module declared a port at all.
+RP_NONE=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/facts.sh"
+           . "$ROOT/lib/plan.sh"; . "$ROOT/lib/module.sh"; . "$ROOT/lib/exec_live.sh"
+           SPORE_ROOT=/; SPORE_DRYRUN=0; SPORE_ALL_PORTS=''
+           report_ports 2>&1 )
+check 'and silence when none was declared' "${RP_NONE:-quiet}" quiet
+rm -rf "$RP"
+
 section 'the service user exists before anything is given to it'
 # firstboot actions run in the order they are planned, and dufs-tls came first.
 # It chowned the private key to an account dufs-user had not created yet: the

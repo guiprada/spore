@@ -284,3 +284,38 @@ el_script() {
     printf '%s\n' "$es_sha" > "$es_stamp"
     changed "$es_kind $es_id"
 }
+
+# What is actually listening, against what the modules said they would serve.
+#
+# "The service started" and "you can reach it" are different claims, and every
+# gap between them has cost a round trip: a loopback bind, a port meaning https
+# while serving http, a private key the service could not read, a daemon that
+# supervise-daemon launched and that exited a moment later. Each time the boot
+# log said the service had started, because it had.
+#
+# MOD_PORTS is already collected for the firewall, so the declaration exists.
+# Asking the kernel what came of it costs one command and puts the answer in the
+# log that gets read after the fact, rather than in a netstat nobody ran.
+report_ports() {
+    synthetic && return 0
+    [ "$SPORE_DRYRUN" = 1 ] && return 0
+    rp_want=$(printf '%s' "${SPORE_ALL_PORTS:-}" | tr ' ' '\n' |
+              sed -n 's|/tcp$||p' | grep -E '^[0-9]+$' | sort -un)
+    [ -n "$rp_want" ] || return 0
+    rp_have=$( { netstat -lnt 2>/dev/null || ss -lnt 2>/dev/null; } | awk '{ print $4 }')
+    for rp_p in $rp_want; do
+        rp_on=$(printf '%s\n' "$rp_have" | grep -E "[:.]${rp_p}\$" | tr '\n' ' ')
+        if [ -z "$rp_on" ]; then
+            warn "a module declared port $rp_p and nothing is listening on it.
+         The service may have started and exited — supervise-daemon reports a
+         launch, not a running program. Its own log says why."
+            continue
+        fi
+        say "port $rp_p: $(printf '%s' "${rp_on% }")"
+        case $rp_on in
+            127.*|'::1'*)
+                warn "port $rp_p is bound to the loopback address, so this machine can
+         reach it and nothing else can." ;;
+        esac
+    done
+}
