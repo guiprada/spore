@@ -113,14 +113,50 @@ tls-key: $dufs_key"
             fi
         elif mconf_bool DUFS_TLS_SELFSIGNED no; then
             plan_pkg openssl
+            # The address goes in the SAN, and getting it wrong writes no
+            # certificate at all rather than a wrong one:
+            #
+            #     openssl req ... -addext "subjectAltName=IP:localhost"
+            #     error:11000076:X509 V3 routines:a2i_GENERAL_NAME:bad ip address
+            #
+            # Two ways that used to happen. `ip route get 1` prints
+            #     1.0.0.0 via 172.16.100.1 dev eth0 src 172.16.100.100 uid 0
+            # on iproute2 and the same line without the uid on busybox, so the
+            # last field is an address on one and `0` on the other — and `IP:0`
+            # is refused too. And the fallback was the literal word `localhost`,
+            # which is a name, not an address, so the path meant to rescue the
+            # other one could never work either.
+            #
+            # So: the word after `src`, an address off the interface if there is
+            # no route, and a SAN that says DNS: for a name and IP: for an
+            # address. The hostname goes in as well, because a machine reached
+            # by name and a machine reached by address are the same machine.
             plan_firstboot dufs-tls "set -e
 if [ ! -f '$dufs_cert' ] || [ ! -f '$dufs_key' ]; then
     mkdir -p \"\$(dirname '$dufs_cert')\" \"\$(dirname '$dufs_key')\"
-    cn=\$(ip route get 1 2>/dev/null | awk '{print \$NF; exit}')
-    [ -n \"\$cn\" ] || cn=localhost
-    openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \\
+    addr=\$(ip route get 1 2>/dev/null |
+           awk '{ for (i = 1; i < NF; i++) if (\$i == \"src\") { print \$(i+1); exit } }')
+    [ -n \"\$addr\" ] || addr=\$(ip -4 addr show 2>/dev/null |
+        awk '/inet /{ split(\$2, a, \"/\"); if (a[1] != \"127.0.0.1\") { print a[1]; exit } }')
+    host=\$(hostname 2>/dev/null) || host=''
+    [ -n \"\$host\" ] || host=alpine
+    san=\"DNS:\$host\"
+    cn=\$host
+    case \$addr in
+        [0-9]*.[0-9]*.[0-9]*.[0-9]*) san=\"IP:\$addr,DNS:\$host\"; cn=\$addr ;;
+    esac
+    if ! openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \\
         -keyout '$dufs_key' -out '$dufs_cert' \\
-        -subj \"/CN=\$cn\" -addext \"subjectAltName=IP:\$cn\"
+        -subj \"/CN=\$cn\" -addext \"subjectAltName=\$san\" 2>/tmp/dufs-tls.err
+    then
+        echo 'spore: could not generate a certificate for dufs:' >&2
+        sed 's/^/spore:   /' /tmp/dufs-tls.err >&2
+        echo 'spore: dufs is configured for TLS, so it will not serve until this' >&2
+        echo 'spore: works. Set DUFS_TLS_SELFSIGNED=no to serve plain http, or' >&2
+        echo 'spore: seal a certificate with DUFS_TLS_CERT_SECRET.' >&2
+        exit 1
+    fi
+    echo \"spore: self-signed certificate for \$cn (\$san)\"
 fi
 chown dufs:dufs '$dufs_key' '$dufs_cert' 2>/dev/null || true
 chmod 600 '$dufs_key' 2>/dev/null || true"

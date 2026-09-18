@@ -2303,6 +2303,63 @@ else
 fi
 rm -rf "$WZ"
 
+section 'the self-signed certificate, against both shapes of ip(1)'
+# Getting the address wrong here writes no certificate at all, not a wrong one:
+#   openssl req ... -addext "subjectAltName=IP:localhost"
+#   error:11000076:X509 V3 routines:a2i_GENERAL_NAME:bad ip address
+# Two ways that happened. `ip route get 1` ends the line with `uid 0` on
+# iproute2 and with the address on busybox, so the last field was `0` on one of
+# them; and the fallback was the word `localhost`, which is a name. IP:0 is
+# refused too, so the path meant to rescue the other one could not work either.
+if command -v openssl >/dev/null 2>&1; then
+    TL=$(mktemp -d /tmp/spore-dufstls.XXXXXX)
+    cp -r "$EX" "$TL/s"
+    sed -i 's/^MODULES=.*/MODULES="dufs"/' "$TL/s/spore.conf"
+    "$SPORE" -s "$TL/s" set dufs DUFS_TLS_SELFSIGNED yes >/dev/null 2>&1
+    alpine env SPORE_WORK="$TL/w" "$SPORE" -s "$TL/s" -r "$TL/r" plan >/dev/null 2>&1
+    TL_SHA=$(awk -F'\t' '$2=="firstboot" && $3=="dufs-tls" {print $4}' "$TL/w/plan.tsv")
+    sed "s|/etc/dufs/tls|$TL/tls|g" "$TL/w/content/$TL_SHA" > "$TL/gen.sh"
+    mkdir -p "$TL/bin"
+
+    # iproute2: the line ends `uid 0`, which is what used to become the CN.
+    printf '#!/bin/sh\n[ "$1 $2" = "route get" ] && { echo "1.0.0.0 via 10.0.0.1 dev eth0 src 10.0.0.5 uid 0"; exit 0; }\nexit 1\n' \
+        > "$TL/bin/ip"
+    chmod 755 "$TL/bin/ip"
+    TL_OUT=$(PATH="$TL/bin:$PATH" sh "$TL/gen.sh" 2>&1 || true)
+    check 'a certificate is written at all' \
+        "$([ -s "$TL/tls/server.crt" ] && echo yes || echo no)" yes
+    has 'with the address after src, not the uid' \
+        "$(openssl x509 -in "$TL/tls/server.crt" -noout -ext subjectAltName 2>/dev/null)" \
+        'IP Address:10.0.0.5'
+    # And the hostname too: a machine reached by name and one reached by address
+    # are the same machine.
+    has 'and the hostname beside it' \
+        "$(openssl x509 -in "$TL/tls/server.crt" -noout -ext subjectAltName 2>/dev/null)" 'DNS:'
+
+    # busybox: the same line without the uid, which used to be the working case.
+    rm -rf "$TL/tls"
+    printf '#!/bin/sh\n[ "$1 $2" = "route get" ] && { echo "1.0.0.0 via 10.0.0.1 dev eth0  src 10.0.0.5"; exit 0; }\nexit 1\n' \
+        > "$TL/bin/ip"
+    PATH="$TL/bin:$PATH" sh "$TL/gen.sh" >/dev/null 2>&1 || true
+    has 'busybox output still works' \
+        "$(openssl x509 -in "$TL/tls/server.crt" -noout -ext subjectAltName 2>/dev/null)" \
+        'IP Address:10.0.0.5'
+
+    # No route at all: a name is a DNS SAN, never an IP one, or openssl refuses
+    # and the machine is left configured for TLS with no certificate.
+    rm -rf "$TL/tls"
+    printf '#!/bin/sh\nexit 1\n' > "$TL/bin/ip"
+    PATH="$TL/bin:$PATH" sh "$TL/gen.sh" >/dev/null 2>&1 || true
+    check 'with no address, a certificate is still written' \
+        "$([ -s "$TL/tls/server.crt" ] && echo yes || echo no)" yes
+    hasnt 'and the hostname is not claimed to be an IP' \
+        "$(openssl x509 -in "$TL/tls/server.crt" -noout -ext subjectAltName 2>/dev/null)" \
+        'IP Address'
+    rm -rf "$TL"
+else
+    t_skip 'dufs self-signed certificate (openssl missing)'
+fi
+
 section 'a privileged port needs its capability at every start, not once'
 # setcap was a firstboot action, which is the wrong shape twice over here. A
 # diskless Alpine installs its world packages into a RAM root at every boot, so
