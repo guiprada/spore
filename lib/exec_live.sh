@@ -141,11 +141,36 @@ el_svc() {
                 # "cannot start chronyd as fsck would not start". The service is
                 # in the runlevel and comes up on the next boot regardless, so
                 # dying here would trade a working machine for a timing detail.
-                if ! rc-service "$es_name" start; then
+                es_started=no
+                if rc-service "$es_name" start; then
+                    es_started=yes
+                elif rc-service --nodeps "$es_name" start; then
+                    # "cannot start dufs as localmount would not start" does not
+                    # mean localmount is not up. It is: the boot runlevel ran it
+                    # minutes ago. It means localmount is not in *this* runlevel's
+                    # graph, and OpenRC will not re-enter a runlevel that has
+                    # finished — so it refuses rather than checks.
+                    #
+                    # -D skips that check (rc-service(8): "ignores dependencies
+                    # when running the service"). It is the right tool for this
+                    # one case and the wrong one in general, so it is a fallback
+                    # and never the first attempt: if a dependency really is
+                    # missing, the daemon fails, and the verification below
+                    # reports it as not running rather than as started.
+                    #
+                    # Without this, a machine that had just installed a file
+                    # server served nothing until somebody rebooted it, and the
+                    # log said so in a line nobody had a reason to read.
+                    es_started=yes
+                    say "$es_name started with its dependency check skipped —
+         they belong to the boot runlevel, which finished before this ran."
+                fi
+                if [ "$es_started" = no ]; then
                     warn "$es_name is enabled but would not start now.
          OpenRC refuses a service whose dependencies belong to a runlevel that
          has already passed, which is usual when applying from inside the boot
-         it is configuring. It starts on the next boot. If it still does not:
+         it is configuring, and starting it without that check did not work
+         either. It starts on the next boot. If it still does not:
              rc-service $es_name start"
                     changed "service $es_name enabled, starts next boot"
                     return 0

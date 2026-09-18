@@ -2303,6 +2303,32 @@ else
 fi
 rm -rf "$WZ"
 
+section 'a service whose deps ran in an earlier runlevel still starts'
+# "cannot start dufs as localmount would not start" does not mean localmount is
+# down — the boot runlevel ran it minutes earlier. It means localmount is not in
+# this runlevel's graph, and OpenRC will not re-enter a finished runlevel, so it
+# refuses rather than checks. chronyd hit this on every boot of this machine's
+# life, and when dufs hit it the machine served nothing until someone rebooted.
+ELSRC=$(cat "$ROOT/lib/exec_live.sh")
+has 'a refused start is retried without the check' "$ELSRC" 'rc-service --nodeps "$es_name" start'
+# The call, not the word: the comment above it says --nodeps too.
+EL_FIRST=$(printf '%s\n' "$ELSRC" | grep -vn '^[[:space:]]*#' |
+           grep -n 'rc-service "\$es_name" start' | head -1 | cut -d: -f1)
+EL_DEPS=$(printf '%s\n' "$ELSRC" | grep -vn '^[[:space:]]*#' |
+          grep -n 'rc-service --nodeps' | head -1 | cut -d: -f1)
+if [ -n "$EL_FIRST" ] && [ -n "$EL_DEPS" ] && [ "$EL_FIRST" -lt "$EL_DEPS" ]; then
+    t_ok 'and only as a fallback, never the first attempt'
+else
+    t_fail 'and only as a fallback, never the first attempt' "plain [$EL_FIRST], nodeps [$EL_DEPS]"
+fi
+# Skipping the check is not the same as the dependency being met, so the start
+# is still verified — a daemon that dies immediately must not read as started.
+has 'the start is still verified afterwards'  "$ELSRC" 'reported a successful start but is not running'
+has 'and it says the check was skipped'       "$ELSRC" 'dependency check skipped'
+# The old message told you to wait for a reboot. It is only true now when both
+# attempts failed.
+has 'the reboot advice survives both failing' "$ELSRC" 'starting it without that check did not work'
+
 section 'try disk: something for STORAGE_AUTO to find'
 # Without a second drive the VM has nothing attached that it did not boot from,
 # so a boot proves only that the automount did not crash — and the only way to
