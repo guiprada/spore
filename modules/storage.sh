@@ -79,34 +79,81 @@ mkdir -p "$root"
 # among them, because a loop mount is something this machine already did.
 : "${SPORE_AUTOMOUNT_DEVS:=}"
 
+# An identifier a disk does not have is not a match for anything. Testing it
+# inline reads fine and is wrong: with no exclusions configured $exclude is two
+# spaces, and a disk with no LABEL turns *" $la "* into those same two spaces,
+# so every unlabelled filesystem excludes itself. Empty means "no such
+# identifier", never "matches".
+in_exclude() {
+    [ -n "$1" ] || return 1
+    case $exclude in *" $1 "*) return 0 ;; esac
+    return 1
+}
+
+# Every branch below says why it passed a device over. A run that shares nothing
+# has to account for itself, or the only way to find out what it decided is to
+# re-derive the script by hand.
+seen=0
+shared=0
+
 # A partition is a candidate; a whole disk only when it carries a filesystem
 # itself, which is why the disk globs come second and skip anything partitioned.
 for dev in ${SPORE_AUTOMOUNT_DEVS:-/dev/sd[a-z][0-9]* /dev/vd[a-z][0-9]* /dev/xvd[a-z][0-9]* \
            /dev/nvme[0-9]n[0-9]p[0-9]* /dev/mmcblk[0-9]p[0-9]* \
            /dev/sd[a-z] /dev/vd[a-z] /dev/xvd[a-z]}; do
     [ -b "$dev" ] || continue
+    seen=$((seen + 1))
     case $dev in
         */sd[a-z]|*/vd[a-z]|*/xvd[a-z])
             # Partitioned: its partitions were the candidates, not the disk.
-            for p in "$dev"[0-9]*; do [ -b "$p" ] && continue 2; done ;;
+            for p in "$dev"[0-9]*; do
+                [ -b "$p" ] || continue
+                echo "spore: $dev is partitioned, so its partitions were the"
+                echo "spore: candidates and the whole disk is not one."
+                continue 2
+            done ;;
     esac
 
     # Mounted already is the whole definition of "this machine's own": the
-    # initramfs mounted what it booted from before anything here ran.
-    awk -v d="$dev" '$1 == d { found = 1 } END { exit !found }' /proc/mounts && continue
+    # initramfs mounted what it booted from before anything here ran. Except
+    # under the serve root, where the thing that mounted it was this script on an
+    # earlier pass — a restart must not report the disks it is serving as the one
+    # it booted from.
+    at=$(awk -v d="$dev" '$1 == d { print $2; exit }' /proc/mounts)
+    if [ -n "$at" ]; then
+        case $at in
+            "$root"/*)
+                shared=$((shared + 1))
+                echo "spore: $dev is shared already, at $at" ;;
+            *)
+                echo "spore: $dev is mounted at $at, so this machine is using it" ;;
+        esac
+        continue
+    fi
 
-    info=$(blkid "$dev" 2>/dev/null) || continue
+    info=$(blkid "$dev" 2>/dev/null) || info=''
     ty=$(printf '%s' "$info" | sed -n 's/.*[[:space:]]TYPE="\([^"]*\)".*/\1/p')
-    [ -n "$ty" ] || continue
-    case $ty in swap|crypto_LUKS|linux_raid_member|LVM2_member) continue ;; esac
+    if [ -z "$ty" ]; then
+        echo "spore: $dev has no filesystem blkid recognises, so there is nothing"
+        echo "spore: to share on it — an empty disk, or one whose partition table"
+        echo "spore: is the only thing on it."
+        [ -z "$info" ] || echo "spore:   blkid said: $info"
+        continue
+    fi
+    case $ty in
+        swap|crypto_LUKS|linux_raid_member|LVM2_member)
+            echo "spore: $dev is $ty, which is not a filesystem to serve"
+            continue ;;
+    esac
     # The leading space is what tells UUID= from PARTUUID=.
     uu=$(printf '%s' "$info" | sed -n 's/.*[[:space:]]UUID="\([^"]*\)".*/\1/p')
     la=$(printf '%s' "$info" | sed -n 's/.*[[:space:]]LABEL="\([^"]*\)".*/\1/p')
 
     short=${dev##*/}
-    case $exclude in
-        *" $short "*|*" $uu "*|*" $la "*) continue ;;
-    esac
+    if in_exclude "$short" || in_exclude "$uu" || in_exclude "$la"; then
+        echo "spore: $dev is named in STORAGE_AUTO_EXCLUDE, so it is not shared"
+        continue
+    fi
 
     case $naming in
         dev)   name=$short ;;
@@ -118,6 +165,7 @@ for dev in ${SPORE_AUTOMOUNT_DEVS:-/dev/sd[a-z][0-9]* /dev/vd[a-z][0-9]* /dev/xv
 
     tgt=$root/$name
     if awk -v t="$tgt" '$2 == t { found = 1 } END { exit !found }' /proc/mounts; then
+        echo "spore: $tgt is mounted already, so $dev is left as it is"
         continue
     fi
     opts=noatime
@@ -144,8 +192,19 @@ for dev in ${SPORE_AUTOMOUNT_DEVS:-/dev/sd[a-z][0-9]* /dev/vd[a-z][0-9]* /dev/xv
         echo "spore: own medium and is not being shared." >&2
         continue
     fi
+    shared=$((shared + 1))
     echo "spore: sharing $dev ($ty) at $tgt"
 done
+
+if [ "$seen" -eq 0 ]; then
+    echo "spore: no block device matched at all. This looks at sd*, vd*, xvd*,"
+    echo "spore: nvme* and mmcblk* — not loop or device-mapper nodes, which are"
+    echo "spore: mounts this machine made itself."
+elif [ "$shared" -eq 0 ]; then
+    echo "spore: looked at $seen device(s) and shared none; the lines above say why."
+else
+    echo "spore: looked at $seen device(s), shared $shared under $root"
+fi
 SAM
 }
 

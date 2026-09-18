@@ -2624,22 +2624,47 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null 2>&1 &&
       storage_automount_script "$AMR/root" uuid 'skipme' 000 ) > "$AM/am.sh"
     chmod 755 "$AM/am.sh"
 
-    for n in data mine skipme; do
+    for n in data mine skipme busy; do
         dd if=/dev/zero of="$AM/$n.img" bs=1M count=8 status=none 2>/dev/null
         mkfs.ext4 -q -L "$n" "$AM/$n.img"
     done
+    # No label, which is what a disk you formatted and never named looks like —
+    # and the shape that a bug lived in until a real machine shared nothing.
+    dd if=/dev/zero of="$AM/bare.img" bs=1M count=8 status=none 2>/dev/null
+    mkfs.ext4 -q "$AM/bare.img"
+    # No filesystem at all: eight megabytes of zeros.
+    dd if=/dev/zero of="$AM/empty.img" bs=1M count=8 status=none 2>/dev/null
+    # A partition table and nothing else, which blkid answers with a PTTYPE and
+    # no TYPE — a disk that has been partitioned but never formatted.
+    dd if=/dev/zero of="$AM/ptonly.img" bs=1M count=8 status=none 2>/dev/null
+    printf '\125\252' | dd of="$AM/ptonly.img" bs=1 seek=510 conv=notrunc status=none 2>/dev/null
+    printf '\200\040\041\000\203\020\202\020\000\010\000\000\000\070\000\000' |
+        dd of="$AM/ptonly.img" bs=1 seek=446 conv=notrunc status=none 2>/dev/null
+
     AM_D=$(losetup --show -f "$AM/data.img")
     AM_M=$(losetup --show -f "$AM/mine.img")
     AM_X=$(losetup --show -f "$AM/skipme.img")
+    AM_B=$(losetup --show -f "$AM/bare.img")
+    AM_E=$(losetup --show -f "$AM/empty.img")
+    AM_P=$(losetup --show -f "$AM/ptonly.img")
+    AM_U=$(losetup --show -f "$AM/busy.img")
     mkdir -p "$AM/tmp"
     mount "$AM_M" "$AM/tmp" && mkdir -p "$AM/tmp/spore" &&
         printf 'FORMAT=1\n' > "$AM/tmp/spore/spore.conf" &&
         printf 'KEY\n' > "$AM/tmp/identity" && umount "$AM/tmp"
+    # Mounted before the run, the way the initramfs mounts the boot medium.
+    mkdir -p "$AM/busy" && mount "$AM_U" "$AM/busy"
 
-    AM_OUT=$(SPORE_AUTOMOUNT_DEVS="$AM_D $AM_M $AM_X" sh "$AM/am.sh" 2>&1)
+    AM_OUT=$(SPORE_AUTOMOUNT_DEVS="$AM_D $AM_M $AM_X $AM_B $AM_E $AM_P $AM_U" sh "$AM/am.sh" 2>&1)
     AM_UU=$(blkid -s UUID -o value "$AM_D")
+    AM_BU=$(blkid -s UUID -o value "$AM_B")
     check 'an attached disk is shared, named by its uuid' \
         "$([ -d "$AMR/root/$AM_UU" ] && echo yes || echo no)" yes
+    # The regression. STORAGE_AUTO_EXCLUDE tested inline expanded to *"  "* for a
+    # disk with no LABEL, which matched the two spaces an empty exclude list is,
+    # so every unlabelled filesystem excluded itself — in silence.
+    check 'a disk with no label is shared too'  \
+        "$([ -d "$AMR/root/$AM_BU" ] && echo yes || echo no)" yes
     # The one check that does not depend on the initramfs having mounted this
     # machine's own partitions first. Getting it wrong puts the spore's identity
     # file on a web server.
@@ -2650,13 +2675,79 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null 2>&1 &&
     hasnt 'an excluded volume is never shared'  "$AM_OUT" "sharing $AM_X"
     check 'and not mounted'                     "$(awk -v d="$AM_X" '$1 == d { print "mounted" }' /proc/mounts)" ''
 
+    # Every skip accounts for itself. A run that shares nothing was indist-
+    # inguishable from a run that never looked, and cost several boots of a real
+    # machine to tell apart.
+    has 'an exclusion says it was an exclusion' "$AM_OUT" \
+        "$AM_X is named in STORAGE_AUTO_EXCLUDE"
+    has 'a disk with no filesystem says so'     "$AM_OUT" \
+        "$AM_E has no filesystem blkid recognises"
+    # Partitioned but never formatted is the same skip for a different reason, so
+    # it repeats back what blkid did answer rather than leaving you to run it.
+    has 'and shows what blkid did say'          "$AM_OUT" "blkid said: $AM_P: PTTYPE=\"dos\""
+    has 'one this machine is using says where'  "$AM_OUT" "$AM_U is mounted at $AM/busy"
+    hasnt 'and does not call that sharing'      "$AM_OUT" "sharing $AM_U"
+    has 'and the run totals what it did'        "$AM_OUT" 'looked at 7 device(s), shared 2'
+
     for m in "$AMR/root"/*; do
-        [ -d "$m" ] && umount "$m" 2>/dev/null
+        # A leftover empty directory from an earlier pass is not a mountpoint,
+        # and umount exits 32 on one — which under set -eu ends the suite.
+        [ ! -d "$m" ] || umount "$m" 2>/dev/null || true
     done
-    losetup -d "$AM_D" "$AM_M" "$AM_X" 2>/dev/null || true
+
+    # With nothing excluded at all, which is the default and the configuration
+    # the real machine was running.
+    ( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
+      . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
+      printf '#!/bin/sh\nset -u\n'
+      storage_automount_script "$AMR/two" uuid '' 000 ) > "$AM/am2.sh"
+    AM_OUT2=$(SPORE_AUTOMOUNT_DEVS="$AM_D $AM_B" sh "$AM/am2.sh" 2>&1)
+    has 'no exclusions excludes nothing'    "$AM_OUT2" "sharing $AM_B"
+    has 'the labelled one included'         "$AM_OUT2" "sharing $AM_D"
+    hasnt 'and nothing claims an exclusion' "$AM_OUT2" 'STORAGE_AUTO_EXCLUDE'
+    for m in "$AMR/two"/*; do
+        # A leftover empty directory from an earlier pass is not a mountpoint,
+        # and umount exits 32 on one — which under set -eu ends the suite.
+        [ ! -d "$m" ] || umount "$m" 2>/dev/null || true
+    done
+
+    # A second pass over what it already shared is a no-op that says so, rather
+    # than an error or a silent one. It also must not call a disk it is itself
+    # serving one the machine booted from, which is what "already mounted" meant
+    # before there was a second pass to read.
+    AM_OUT3=$(SPORE_AUTOMOUNT_DEVS="$AM_D" sh "$AM/am.sh" 2>&1)
+    has 'the first pass shares it'      "$AM_OUT3" "sharing $AM_D"
+    AM_OUT4=$(SPORE_AUTOMOUNT_DEVS="$AM_D" sh "$AM/am.sh" 2>&1)
+    has 'a second pass says it is shared already' "$AM_OUT4" \
+        "$AM_D is shared already, at $AMR/root/$AM_UU"
+    hasnt 'not that the machine is using it'      "$AM_OUT4" 'this machine is using it'
+    has 'and it still counts as shared'           "$AM_OUT4" 'looked at 1 device(s), shared 1'
+    for m in "$AMR/root"/*; do
+        # A leftover empty directory from an earlier pass is not a mountpoint,
+        # and umount exits 32 on one — which under set -eu ends the suite.
+        [ ! -d "$m" ] || umount "$m" 2>/dev/null || true
+    done
+
+    # Nothing attached is its own answer, not an empty one.
+    AM_OUT5=$(SPORE_AUTOMOUNT_DEVS="/dev/spore-no-such-device" sh "$AM/am.sh" 2>&1)
+    has 'no device at all says that'   "$AM_OUT5" 'no block device matched at all'
+    has 'and names what it looks at'   "$AM_OUT5" 'nvme* and mmcblk*'
+
+    umount "$AM/busy" 2>/dev/null
+    losetup -d "$AM_D" "$AM_M" "$AM_X" "$AM_B" "$AM_E" "$AM_P" "$AM_U" 2>/dev/null || true
 else
     t_skip 'automount against real filesystems (needs root, losetup, mkfs.ext4)'
 fi
+# The partitioned-disk branch needs a partition table to exercise, so its
+# message is checked in the script it generates rather than against a loop
+# device — the point being that it has one at all.
+AM_SRC=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
+          . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
+          storage_automount_script /media/storage uuid '' 000 )
+has 'a partitioned whole disk says why it was passed over' "$AM_SRC" \
+    'echo "spore: $dev is partitioned, so its partitions were the"'
+has 'and it leaves the device loop, not just the partition scan' "$AM_SRC" \
+    'continue 2'
 rm -rf "$AM"
 
 section 'MOD_DATA: a module payload on the RAM root does not outlast the boot'
