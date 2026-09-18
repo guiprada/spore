@@ -30,6 +30,36 @@ dufs_plan() {
 
     dufs_user=$(mconf DUFS_USER dufs)
 
+    # `DUFS_TLS_SELFSIGNED=yes` on its own did nothing whatsoever. The entire TLS
+    # block is gated on the certificate paths, and those default to empty — so
+    # asking for a self-signed certificate got you plain http and no word about
+    # it. Nobody means that, so the paths come with it.
+    if [ -z "$dufs_cert" ] && [ -z "$dufs_key" ] &&
+       { mconf_bool DUFS_TLS_SELFSIGNED no || [ -n "$(mconf DUFS_TLS_KEY_SECRET '')" ]; }; then
+        dufs_cert=/etc/dufs/tls/server.crt
+        dufs_key=/etc/dufs/tls/server.key
+        plan_note "dufs: TLS was asked for without DUFS_TLS_CERT or DUFS_TLS_KEY,
+         so the certificate goes to $dufs_cert and the key to $dufs_key.
+         Set them to put it somewhere else."
+    fi
+
+    # A port that means https, serving http, is the one combination a browser
+    # will not let you past: plain bytes where it expected a handshake is
+    # SSL_ERROR_RX_RECORD_TOO_LONG, and Firefox offers no "continue anyway" for
+    # it the way it does for a self-signed certificate. The service is up, the
+    # port is open, the page never loads.
+    if [ -z "$dufs_cert" ] && mconf_bool DUFS_ENABLED yes; then
+        case $dufs_port in
+            443|8443)
+                plan_note "dufs: port $dufs_port with no TLS configured. Every browser
+         treats that port as https, and plain http there gives
+         SSL_ERROR_RX_RECORD_TOO_LONG — which Firefox will not let you click
+         past, unlike a self-signed certificate.
+         Set DUFS_TLS_SELFSIGNED=yes, or serve http on a port that does not
+         mean https." ;;
+        esac
+    fi
+
     # Loopback is the default on purpose — a file server that turns itself on to
     # the whole network because somebody enabled the module is not a default
     # worth having. But it is also indistinguishable from a broken one: the

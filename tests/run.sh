@@ -2303,6 +2303,39 @@ else
 fi
 rm -rf "$WZ"
 
+section 'https on a port that means https'
+# SSL_ERROR_RX_RECORD_TOO_LONG: plain bytes where the browser expected a
+# handshake. It is the one TLS failure Firefox will not let you click past —
+# unlike a self-signed certificate, which it will — so a file server on 443
+# with no TLS is a page that simply never loads.
+TW=$(mktemp -d /tmp/spore-tlswarn.XXXXXX)
+cp -r "$EX" "$TW/s"
+sed -i 's/^MODULES=.*/MODULES="dufs"/' "$TW/s/spore.conf"
+rm -f "$TW/s/modules/dufs.conf"          # enabled with `modules add`, nothing else
+"$SPORE" -s "$TW/s" set dufs DUFS_PORT 443 >/dev/null 2>&1
+TW_443=$(alpine "$SPORE" -s "$TW/s" -r "$TW/r" plan 2>&1)
+has 'a tls port serving plain http is called out' "$TW_443" 'port 443 with no TLS configured'
+has 'by the error the browser will give'          "$TW_443" 'SSL_ERROR_RX_RECORD_TOO_LONG'
+has 'and says Firefox offers no way past it'      "$TW_443" 'will not let you click'
+
+# The whole TLS block is gated on the certificate paths, and those default to
+# empty — so asking for a self-signed certificate and nothing else did nothing
+# at all, silently. Nobody means that.
+"$SPORE" -s "$TW/s" set dufs DUFS_TLS_SELFSIGNED yes >/dev/null 2>&1
+TW_SS=$(alpine env SPORE_WORK="$TW/w" "$SPORE" -s "$TW/s" -r "$TW/r2" plan 2>&1)
+has   'asking for TLS alone now supplies the paths' "$TW_SS" 'TLS was asked for without'
+hasnt 'and the port warning goes with it'           "$TW_SS" 'port 443 with no TLS'
+check 'and a certificate is actually planned' \
+    "$(awk -F'\t' '$2=="firstboot" && $3=="dufs-tls"' "$TW/w/plan.tsv" | wc -l | tr -d ' ')" 1
+has   'and the config names it'  "$TW_SS" 'tls'
+
+# An ordinary port serving http is not a mistake, and says nothing.
+"$SPORE" -s "$TW/s" set dufs DUFS_TLS_SELFSIGNED no >/dev/null 2>&1
+"$SPORE" -s "$TW/s" set dufs DUFS_PORT 5000 >/dev/null 2>&1
+TW_PLAIN=$(alpine "$SPORE" -s "$TW/s" -r "$TW/r3" plan 2>&1)
+hasnt 'plain http on an ordinary port is left alone' "$TW_PLAIN" 'with no TLS configured'
+rm -rf "$TW"
+
 section 'the self-signed certificate, against both shapes of ip(1)'
 # Getting the address wrong here writes no certificate at all, not a wrong one:
 #   openssl req ... -addext "subjectAltName=IP:localhost"
