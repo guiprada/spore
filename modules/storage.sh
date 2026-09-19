@@ -68,8 +68,8 @@ storage_fs_package() {
 # initramfs being consistent, and an unshared partition that turns up shared is
 # this spore's identity file on a web server.
 storage_automount_script() {
-    printf "root='%s'\nnaming='%s'\nexclude=' %s '\numask='%s'\nowner='%s'\ndeep='%s'\n" \
-        "$1" "$2" "$3" "$4" "$5" "$6"
+    printf "root='%s'\nnaming='%s'\nexclude=' %s '\numask='%s'\nowner='%s'\n" \
+        "$1" "$2" "$3" "$4" "$5"
     cat <<'SAM'
 mkdir -p "$root"
 
@@ -195,10 +195,14 @@ for dev in ${SPORE_AUTOMOUNT_DEVS:-/dev/sd[a-z][0-9]* /dev/vd[a-z][0-9]* /dev/xv
 
     # A file server running as its own account cannot write to a disk owned by
     # root, so "allow uploads" and "uploads work" are two different settings.
-    # Only the mount point by default: a recursive chown over a disk that
-    # already has data on it rewrites ownership the disk may have come with, and
-    # costs a walk of the whole tree on every boot. The top is enough for
-    # anything the server creates from now on.
+    #
+    # One directory, never the tree. This runs at every boot against whatever
+    # happens to be plugged in, so a recursive chown here would rewrite the
+    # ownership of a disk nobody was thinking about when the setting was chosen —
+    # irreversibly, with no record of what it changed, every boot. The top is
+    # what the server needs to start writing; the rest is a decision to make with
+    # the disk in front of you, and the note below hands you the command for it.
+    was=''
     if [ -n "$owner" ]; then
         case $ty in
             vfat|msdos|exfat|ntfs|ntfs-3g)
@@ -206,12 +210,16 @@ for dev in ${SPORE_AUTOMOUNT_DEVS:-/dev/sd[a-z][0-9]* /dev/vd[a-z][0-9]* /dev/xv
                 # access on these, and chown would fail for a real reason.
                 ;;
             *)
-                if [ "$deep" = yes ]; then
-                    chown -R "$owner" "$tgt" 2>/dev/null ||
-                        echo "spore: could not chown $tgt to $owner" >&2
+                # Recorded before it changes, so the line below is enough to put
+                # it back. A chown with no record of what it replaced is the part
+                # that makes one hard to undo.
+                was=$(stat -c '%U:%G' "$tgt" 2>/dev/null) || was=''
+                if chown "$owner" "$tgt" 2>/dev/null; then
+                    :
                 else
-                    chown "$owner" "$tgt" 2>/dev/null ||
-                        echo "spore: could not chown $tgt to $owner" >&2
+                    was=''
+                    echo "spore: could not chown $tgt to $owner — is that account" >&2
+                    echo "spore: on this machine? Uploads to it will be refused." >&2
                 fi ;;
         esac
     fi
@@ -227,7 +235,23 @@ for dev in ${SPORE_AUTOMOUNT_DEVS:-/dev/sd[a-z][0-9]* /dev/vd[a-z][0-9]* /dev/xv
     esac
 
     shared=$((shared + 1))
-    echo "spore: sharing $dev ($ty) at $tgt${owner:+, owned by $owner}"
+    echo "spore: sharing $dev ($ty) at $tgt${was:+, owner $was -> $owner}"
+
+    # What the disk arrived with is still the disk's. Rather than a setting that
+    # takes it over on every boot of every disk, say that it is there and hand
+    # over the one command — run once, on a disk you are looking at, by someone
+    # who decided to. -h so it cannot follow a symlink off the disk, which is not
+    # a hypothetical on media you did not format.
+    if [ -n "$was" ]; then
+        theirs=$(find "$tgt" -mindepth 1 -maxdepth 1 ! -user "$owner" \
+                      ! -name 'lost+found' 2>/dev/null | head -n 1)
+        if [ -n "$theirs" ]; then
+            echo "spore: $tgt came with directories $owner does not own, starting"
+            echo "spore: at ${theirs##*/} — those stay read-only to it. Uploads land, and"
+            echo "spore: what was already there does not move. To hand the rest over,"
+            echo "spore: once, with the disk in front of you:  chown -Rh $owner $tgt"
+        fi
+    fi
 done
 
 if [ "$seen" -eq 0 ]; then
@@ -246,8 +270,6 @@ storage_plan_automount() {
     spa_root=$1
     spa_umask=$2
     spa_owner=$3
-    spa_deep=no
-    mconf_bool STORAGE_OWNER_DEEP no && spa_deep=yes
     spa_name=$(mconf STORAGE_AUTO_NAME uuid)
     case $spa_name in
         uuid|label|dev) : ;;
@@ -269,7 +291,7 @@ storage_plan_automount() {
 # from, under $spa_root.
 set -u
 $(storage_automount_script "$spa_root" "$spa_name" "$spa_excl" "$spa_umask" \
-                           "$spa_owner" "$spa_deep")"
+                           "$spa_owner")"
 
     plan_file /etc/init.d/spore-automount 0755 "#!/sbin/openrc-run
 # Managed by spore.
@@ -305,13 +327,19 @@ stop() { return 0; }"
          runs as its own account (dufs does) will be refused every upload and
          delete however it is configured. Set STORAGE_OWNER to that account —
          STORAGE_OWNER=dufs for this one — to hand it the top of each disk."
-    elif [ "$spa_deep" = no ]; then
+    else
+        # There is deliberately no setting that chowns the whole tree. This runs
+        # at every boot against whatever is plugged in, and a recursive chown
+        # there rewrites the ownership of disks nobody had in mind when the
+        # setting was chosen, with no record of what it replaced. The service
+        # names the command instead, for a disk you are looking at.
         plan_note "storage: STORAGE_OWNER=$spa_owner is given the top of each
-         shared disk, not the whole tree. Anything the server creates from now
-         on is its own; directories already on a disk keep their ownership and
-         stay read-only to it. STORAGE_OWNER_DEEP=yes chowns everything instead,
-         which rewrites ownership the disk came with and walks the whole tree on
-         every boot."
+         shared disk, and only that. Anything the server creates from then on is
+         its own; a disk that arrives with directories on it keeps them, and they
+         stay read-only to the server. That is not a setting, on purpose — this
+         runs on every boot against whatever is attached, and a recursive chown
+         there would rewrite disks you were not thinking about. The service
+         prints the one-off command when it finds such a disk."
     fi
 }
 

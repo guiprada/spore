@@ -425,7 +425,6 @@ STORAGE_AUTO=yes            # mount everything this machine did not boot from
 STORAGE_AUTO_NAME=uuid      # uuid (default), label, or dev
 STORAGE_AUTO_EXCLUDE="backup-drive"   # devices, UUIDs or labels to leave alone
 STORAGE_OWNER=dufs          # who owns the top of each shared disk
-STORAGE_OWNER_DEEP=no       # yes to take over directories already on it
 ```
 
 `uuid` is the default because letters move: the same stick was `sdb2` on one
@@ -443,12 +442,29 @@ storage: these mounts keep whatever ownership the disks carry, which is
          to that account — STORAGE_OWNER=dufs for this one […]
 ```
 
-Only the top of each disk by default. Anything the server creates from then on
-is its own, while directories a disk arrived with keep the ownership they came
-with: a recursive chown rewrites ownership the disk may be carrying for another
-machine, and walks the whole tree on every boot. `STORAGE_OWNER_DEEP=yes` when
-that is what you want. On vfat/exfat/ntfs neither applies — those hold no Unix
-ownership, and `STORAGE_FAT_UMASK` is what grants access there.
+**The top of each disk, and only that** — there is deliberately no setting that
+takes over the whole tree. This is a service that runs on every boot against
+whatever happens to be attached, so a recursive chown here would rewrite the
+ownership of a disk nobody had in mind when the setting was chosen: a drive
+plugged in to copy one file off, re-chowned at every boot, irreversibly, with no
+record anywhere of what it replaced. So the mount records what it changed and
+the service hands you the command instead, for a disk you are looking at:
+
+```
+spore: sharing /dev/sdb1 (ext4) at /media/storage/8b6df71c-…, owner root:root -> dufs
+spore: /media/storage/8b6df71c-… came with directories dufs does not own, starting
+spore: at holiday — those stay read-only to it. Uploads land, and what was already
+spore: there does not move. To hand the rest over, once, with the disk in front of
+spore: you:  chown -Rh dufs /media/storage/8b6df71c-…
+```
+
+`-Rh`, because without `-h` busybox's `chown` follows a symlink and changes its
+*target* — it only picks `lchown` inside an `IF_DESKTOP` branch, and while Alpine
+does build with `CONFIG_DESKTOP=y`, a recursive chown running as root over media
+somebody else formatted should not rest on a dependency's build flag.
+
+On vfat/exfat/ntfs none of this applies — those hold no Unix ownership, and
+`STORAGE_FAT_UMASK` is what grants access there.
 
 And because a read-only mount and a read-only *server* look identical from a
 browser, the mount says which it is:

@@ -2634,12 +2634,18 @@ has 'and it names the account to use'             "$AM_NOOWN" 'STORAGE_OWNER=duf
 "$SPORE" -s "$AM/s" set storage STORAGE_OWNER dufs >/dev/null 2>&1
 AM_OWN=$(alpine "$SPORE" -s "$AM/s" -r "$AM/ro" plan 2>&1)
 hasnt 'set, and the warning goes away'  "$AM_OWN" 'only root can write to them'
-has   'replaced by what it does cover'  "$AM_OWN" 'not the whole tree'
-has   'and how to cover the rest'       "$AM_OWN" 'STORAGE_OWNER_DEEP=yes'
-"$SPORE" -s "$AM/s" set storage STORAGE_OWNER_DEEP yes >/dev/null 2>&1
-AM_DEEP=$(alpine "$SPORE" -s "$AM/s" -r "$AM/rd" plan 2>&1)
-hasnt 'and with DEEP set, neither note' "$AM_DEEP" 'not the whole tree'
-"$SPORE" -s "$AM/s" set storage STORAGE_OWNER_DEEP no >/dev/null 2>&1
+has   'replaced by what it does cover'  "$AM_OWN" 'and only that'
+has   'and says the rest is not a setting' "$AM_OWN" 'That is not a setting, on purpose'
+# A recursive chown at boot, over whatever happens to be plugged in, rewrites
+# disks nobody had in mind when the setting was chosen — irreversibly, with no
+# record of what it replaced, every boot. There is no switch for it anywhere.
+hasnt 'no switch for it in the plan'    "$AM_OWN" 'STORAGE_OWNER_DEEP'
+hasnt 'nor in the module'  "$(cat "$ROOT/modules/storage.sh")" 'STORAGE_OWNER_DEEP'
+hasnt 'nor in the wizard'  "$(cat "$ROOT/lib/wizard.sh")"      'STORAGE_OWNER_DEEP'
+hasnt 'and chown -R is never run at boot' \
+    "$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
+        . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
+        storage_automount_script /media/storage uuid '' 000 dufs )" 'chown -R "'
 # It is spliced into a chown in a generated script, so it is checked here rather
 # than written into a script that will not parse — or worse, one that will.
 "$SPORE" -s "$AM/s" set storage STORAGE_OWNER "dufs'; rm -rf /" >/dev/null 2>&1
@@ -2668,7 +2674,7 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null 2>&1 &&
     ( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
       . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
       printf '#!/bin/sh\nset -u\n'
-      storage_automount_script "$AMR/root" uuid 'skipme' 000 '' no ) > "$AM/am.sh"
+      storage_automount_script "$AMR/root" uuid 'skipme' 000 '' ) > "$AM/am.sh"
     chmod 755 "$AM/am.sh"
 
     for n in data mine skipme busy; do
@@ -2695,6 +2701,12 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null 2>&1 &&
     AM_E=$(losetup --show -f "$AM/empty.img")
     AM_P=$(losetup --show -f "$AM/ptonly.img")
     AM_U=$(losetup --show -f "$AM/busy.img")
+    # A disk that arrives with somebody else's directories on it.
+    dd if=/dev/zero of="$AM/full.img" bs=1M count=8 status=none 2>/dev/null
+    mkfs.ext4 -q "$AM/full.img"
+    AM_FU=$(losetup --show -f "$AM/full.img")
+    mkdir -p "$AM/tmp2" && mount "$AM_FU" "$AM/tmp2" &&
+        mkdir -p "$AM/tmp2/holiday" && umount "$AM/tmp2"
     mkdir -p "$AM/tmp"
     mount "$AM_M" "$AM/tmp" && mkdir -p "$AM/tmp/spore" &&
         printf 'FORMAT=1\n' > "$AM/tmp/spore/spore.conf" &&
@@ -2747,7 +2759,7 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null 2>&1 &&
     ( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
       . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
       printf '#!/bin/sh\nset -u\n'
-      storage_automount_script "$AMR/two" uuid '' 000 '' no ) > "$AM/am2.sh"
+      storage_automount_script "$AMR/two" uuid '' 000 '' ) > "$AM/am2.sh"
     AM_OUT2=$(SPORE_AUTOMOUNT_DEVS="$AM_D $AM_B" sh "$AM/am2.sh" 2>&1)
     has 'no exclusions excludes nothing'    "$AM_OUT2" "sharing $AM_B"
     has 'the labelled one included'         "$AM_OUT2" "sharing $AM_D"
@@ -2786,32 +2798,39 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null 2>&1 &&
     ( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
       . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
       printf '#!/bin/sh\nset -u\n'
-      storage_automount_script "$AMR/own" uuid '' 000 nobody no ) > "$AM/am3.sh"
+      storage_automount_script "$AMR/own" uuid '' 000 nobody ) > "$AM/am3.sh"
     AM_OUT6=$(SPORE_AUTOMOUNT_DEVS="$AM_D" sh "$AM/am3.sh" 2>&1)
-    has   'a shared disk is handed to STORAGE_OWNER' "$AM_OUT6" 'owned by nobody'
-    check 'and the mount point really changes hands' \
+    has   'a shared disk is handed to STORAGE_OWNER' "$AM_OUT6" '-> nobody'
+    # A chown with no record of what it replaced is the part that makes one hard
+    # to undo, and this one runs unattended.
+    has   'and the line says what it replaced'       "$AM_OUT6" 'owner root:root ->'
+    check 'the mount point really changes hands' \
         "$(stat -c '%U' "$AMR/own/$AM_UU" 2>/dev/null)" nobody
-    # Not recursive by default: a disk that came with data keeps the ownership
-    # it came with, and the boot does not walk the whole tree.
-    AM_SUB=$(find "$AMR/own/$AM_UU" -mindepth 1 -maxdepth 1 -type d ! -name 'lost+found' 2>/dev/null | head -1)
-    if [ -n "$AM_SUB" ]; then
-        check 'but not what was already on it' "$(stat -c '%U' "$AM_SUB")" root
-    else
-        check 'lost+found keeps its owner' "$(stat -c '%U' "$AMR/own/$AM_UU/lost+found" 2>/dev/null)" root
-    fi
+    check 'and nothing under it does' \
+        "$(stat -c '%U' "$AMR/own/$AM_UU/lost+found" 2>/dev/null)" root
     for m in "$AMR/own"/*; do
         [ ! -d "$m" ] || umount "$m" 2>/dev/null || true
     done
 
-    # And with STORAGE_OWNER_DEEP, everything under it.
-    ( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
-      . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
-      printf '#!/bin/sh\nset -u\n'
-      storage_automount_script "$AMR/deep" uuid '' 000 nobody yes ) > "$AM/am4.sh"
-    SPORE_AUTOMOUNT_DEVS="$AM_D" sh "$AM/am4.sh" >/dev/null 2>&1
-    check 'DEEP chowns what was already there too' \
-        "$(stat -c '%U' "$AMR/deep/$AM_UU/lost+found" 2>/dev/null)" nobody
-    for m in "$AMR/deep"/*; do
+    # A disk that arrives with directories on it. There is no setting that takes
+    # them over, because this runs on every boot against whatever is attached: a
+    # recursive chown here rewrites disks nobody had in mind, with no record of
+    # what it replaced. So it says so and hands over the command.
+    AM_OUT8=$(SPORE_AUTOMOUNT_DEVS="$AM_FU" sh "$AM/am3.sh" 2>&1)
+    AM_FUU=$(blkid -s UUID -o value "$AM_FU")
+    has 'a disk that came with data says so'    "$AM_OUT8" \
+        'came with directories nobody does not own'
+    has 'and names one of them'                 "$AM_OUT8" 'starting'
+    has 'and hands over the one-off command'    "$AM_OUT8" \
+        "chown -Rh nobody $AMR/own/$AM_FUU"
+    # -h, because without it busybox chown follows a symlink and changes its
+    # target: it only picks lchown inside an IF_DESKTOP branch, and a recursive
+    # chown as root over media somebody else formatted should not rest on a
+    # dependency's build flag.
+    hasnt 'never a bare chown -R'               "$AM_OUT8" 'chown -R nobody'
+    check 'and it really did not touch the tree' \
+        "$(stat -c '%U' "$AMR/own/$AM_FUU/holiday" 2>/dev/null)" root
+    for m in "$AMR/own"/*; do
         [ ! -d "$m" ] || umount "$m" 2>/dev/null || true
     done
 
@@ -2837,13 +2856,13 @@ if [ "$(id -u)" = 0 ] && command -v losetup >/dev/null 2>&1 &&
     # never told to accept uploads. It says which it is.
     AM_SRC_RO=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
                  . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
-                 storage_automount_script /media/storage uuid '' 000 dufs no )
+                 storage_automount_script /media/storage uuid '' 000 dufs )
     has 'a read-only mount is called out' "$AM_SRC_RO" 'is mounted READ-ONLY'
     has 'and says the server cannot help' "$AM_SRC_RO" \
         'whatever the server is configured to allow'
 
     umount "$AM/busy" 2>/dev/null
-    losetup -d "$AM_D" "$AM_M" "$AM_X" "$AM_B" "$AM_E" "$AM_P" "$AM_U" 2>/dev/null || true
+    losetup -d "$AM_D" "$AM_M" "$AM_X" "$AM_B" "$AM_E" "$AM_P" "$AM_U" "$AM_FU" 2>/dev/null || true
 else
     t_skip 'automount against real filesystems (needs root, losetup, mkfs.ext4)'
 fi
@@ -2852,7 +2871,7 @@ fi
 # device — the point being that it has one at all.
 AM_SRC=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
           . "$ROOT/lib/module.sh"; . "$ROOT/modules/storage.sh"
-          storage_automount_script /media/storage uuid '' 000 '' no )
+          storage_automount_script /media/storage uuid '' 000 '' )
 has 'a partitioned whole disk says why it was passed over' "$AM_SRC" \
     'echo "spore: $dev is partitioned, so its partitions were the"'
 has 'and it leaves the device loop, not just the partition scan' "$AM_SRC" \
