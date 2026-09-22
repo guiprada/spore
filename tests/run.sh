@@ -2655,6 +2655,21 @@ if [ -f "$WZ/m/spore/spore.conf" ]; then
     WZSRC=$(cat "$ROOT/lib/wizard.sh")
     hasnt 'the gateway is not offered as the resolver' "$WZSRC" "'DNS servers, space separated' \"\${wz_gw:-1.1.1.1}\""
     has   'a resolver that answers is'                 "$WZSRC" "'DNS servers, space separated' '1.1.1.1'"
+
+    # secret_ask_password prints "Password for <who>: " and then "Again: ". The
+    # wizard printed the same line first, as a heading, so the question appeared
+    # on screen twice and read as being asked twice. The prompt has one owner;
+    # anything the wizard adds is context, never a line shaped like the prompt.
+    # (Only reachable behind [ -t 0 ], which this suite has no tty to satisfy —
+    # so the invariant is asserted where it lives.)
+    hasnt 'the wizard prints no password prompt of its own' "$WZSRC" 'wz_say "Password for'
+    hasnt 'nor one for root'                                "$WZSRC" "wz_say 'Password for"
+    check 'and exactly one place asks' \
+        "$(grep -c "printf 'Password for" "$ROOT/lib/secret.sh")" 1
+    # The context is still there, because "why does root need one" is the part
+    # that is not obvious.
+    has 'the reason doas needs one survives' "$WZSRC" 'doas prompts for'
+    has 'and what the root one is for'      "$WZSRC" 'console rescue only'
 else
     # Not a skip. Nothing here is optional or environment-dependent — the wizard
     # is fed answers on stdin and writes a directory — so "it produced nothing"

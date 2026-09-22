@@ -998,14 +998,19 @@ CONF
         wz_head 'Passwords'
         wz_say 'Sealed into the spore and applied at first boot, so nothing has to'
         wz_say 'be typed at the machine. Empty skips.'
-        wz_say ''
+        # The prompt itself belongs to secret_ask_password, which prints
+        # "Password for <who>: " and then "Again: ". Saying the same thing first
+        # put that line on the screen twice and read as being asked twice — so
+        # anything added here is context for the answer, never a prompt shaped
+        # like the one that follows it.
         if [ "$wz_doas" = yes ]; then
+            wz_say ''
             wz_say "doas prompts for $wz_user's own password, so without one it cannot work."
         fi
-        wz_say "Password for $wz_user:"
+        wz_say ''
         wz_seal_password "$wz_user"
         wz_say ''
-        wz_say 'Password for root (console rescue; ssh will not accept it):'
+        wz_say 'And root — console rescue only; ssh will not accept it.'
         wz_seal_password root
     elif [ "$wz_keyed" = no ]; then
         warn "age is not installed, so this spore cannot carry secrets and no
