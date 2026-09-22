@@ -404,6 +404,150 @@ wz_tz_label() {
     printf '%s' "$2${2:+${3:+ — }}$3"
 }
 
+# --- package mirrors ---------------------------------------------------------
+#
+# setup-apkrepos fetches https://mirrors.alpinelinux.org/mirrors.txt, numbers
+# the hostnames, and takes a number, a URL, 'r' for a random one or 'f' to time
+# them all and keep the quickest. The list is live, which is the only way it can
+# be right — mirrors come and go — and this is one of the few places where the
+# workstation is a better place to ask from than the target: it has a network
+# now, and the machine being built does not exist yet.
+#
+# What it cannot do is measure the target's network. `f` times this workstation's
+# route to each mirror, which is a good proxy when the machine will live on the
+# same desk and a poor one when it will not, so it says which it is measuring.
+WZ_MIRRORS_URL=${WZ_MIRRORS_URL-https://mirrors.alpinelinux.org/mirrors.txt}
+
+# A path is read, a URL is fetched. The path case is how the tests pin the list,
+# and also how someone with their own list of mirrors uses it.
+wz_fetch() {
+    if [ -f "$1" ]; then cat "$1"; return $?; fi
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS --max-time 20 -- "$1" 2>/dev/null
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- --timeout=20 -- "$1" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
+wz_mirror_host() { wmh=${1#*://}; printf '%s' "${wmh%%/*}"; }
+
+# The same probe setup-apkrepos times: an index that every mirror carries. It is
+# a latency measurement and not a fetch of anything this machine will install,
+# which is why the architecture in it does not have to be the target's.
+wz_mirror_time() {
+    wmt_u=${1%/}/edge/main/x86_64/APKINDEX.tar.gz
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS -o /dev/null -m 5 -w '%{time_total}' -I -- "$wmt_u" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
+wz_mirror_fastest() {
+    wmf_best='' wmf_bt=''
+    while IFS= read -r wmf_u; do
+        [ -n "$wmf_u" ] || continue
+        wmf_t=$(wz_mirror_time "$wmf_u") || wmf_t=''
+        case $wmf_t in
+            ''|*[!0-9.]*) printf '  %-38s no answer\n' "$(wz_mirror_host "$wmf_u")" >&2
+                          continue ;;
+        esac
+        printf '  %-38s %ss\n' "$(wz_mirror_host "$wmf_u")" "$wmf_t" >&2
+        if [ -z "$wmf_bt" ] ||
+           awk -v a="$wmf_t" -v b="$wmf_bt" 'BEGIN { exit !(a < b) }'; then
+            wmf_bt=$wmf_t wmf_best=$wmf_u
+        fi
+    done < "$1"
+    [ -n "$wmf_best" ] || return 1
+    printf '%s' "$wmf_best"
+}
+
+# wz_mirror <var> — empty means "keep whatever the image came with".
+wz_mirror() {
+    wm_var=$1
+    wz_say 'Package mirror. Blank keeps whatever the image came with, which is'
+    wz_say 'the global CDN — it always works and is often slow from far away.'
+
+    wm_list=$SPORE_WORK/mirrors
+    if ! wz_fetch "$WZ_MIRRORS_URL" 2>/dev/null |
+         sed -n 's/[[:space:]]*$//; /^[a-z][a-z0-9+.-]*:\/\//p' > "$wm_list" ||
+       [ ! -s "$wm_list" ]; then
+        wz_say ''
+        wz_say "Could not fetch the mirror list from $WZ_MIRRORS_URL."
+        wz_say 'Blank keeps the CDN, or type the base URL of a mirror —'
+        wz_say 'https://mirror.ufpr.br/alpine, no release or repository on the end.'
+        wz_ask "$wm_var" 'Mirror URL' ''
+        return 0
+    fi
+
+    wm_n=$(grep -c . "$wm_list")
+    printf '\n' >&2
+    awk '{ printf "   %2d) %s\n", NR, $0 }' "$wm_list" |
+        sed 's|\(https\?://\)||; s|/[[:space:]]*$||' >&2
+    printf '\n' >&2
+    wz_say "A number from those $wm_n, part of a hostname to search, a URL of"
+    wz_say "your own, or 'f' to time them all and take the quickest. Blank keeps"
+    wz_say 'the CDN the image already points at.'
+
+    while :; do
+        wz_ask wm_a 'Mirror' ''
+        [ -n "$wm_a" ] || { eval "$wm_var=''"; return 0; }
+        case $wm_a in
+            f|F)
+                wz_say ''
+                wz_say 'Timing each one from this workstation. That is the route from'
+                wz_say 'here, not from wherever the machine will end up — the same'
+                wz_say 'answer when it lives on this desk, and a guess when it does not.'
+                if wm_fast=$(wz_mirror_fastest "$wm_list"); then
+                    wz_say ""
+                    wz_say "  quickest: $(wz_mirror_host "$wm_fast")"
+                    wm_fast=${wm_fast%/}
+
+                    eval "$wm_var=\$wm_fast"
+                    return 0
+                fi
+                wz_say '  no mirror answered; leaving it as it was'
+                continue ;;
+            */*)
+                # A URL of their own. Stripped of any trailing slash, because
+                # repos.sh appends /$branch/main and two slashes in a repository
+                # line is the sort of thing apk reports about the wrong file.
+                wm_a=${wm_a%/}
+                eval "$wm_var=\$wm_a"
+                return 0 ;;
+        esac
+        case $wm_a in
+            ''|*[!0-9]*) : ;;
+            *) wm_u=$(sed -n "${wm_a}p" "$wm_list")
+               if [ -n "$wm_u" ]; then wm_u=${wm_u%/}; eval "$wm_var=\$wm_u"; return 0; fi
+               wz_say "  there is no $wm_a) in the list"
+               continue ;;
+        esac
+        wm_hits=$(grep -i -- "$wm_a" "$wm_list" 2>/dev/null) || wm_hits=''
+        wm_hn=0
+        [ -z "$wm_hits" ] || wm_hn=$(printf '%s\n' "$wm_hits" | grep -c .)
+        if [ "$wm_hn" = 1 ]; then
+            wz_say "  $(wz_mirror_host "$wm_hits")"
+            wm_hits=${wm_hits%/}
+
+            eval "$wm_var=\$wm_hits"
+            return 0
+        fi
+        if [ "$wm_hn" -gt 1 ]; then
+            wz_say "  $wm_hn mirrors match '$wm_a' — its number, or more of the name:"
+            printf '%s\n' "$wm_hits" | while IFS= read -r wm_h; do
+                printf '     %2s) %s\n' \
+                    "$(grep -n -x -F -- "$wm_h" "$wm_list" | cut -d: -f1)" \
+                    "$(wz_mirror_host "$wm_h")" >&2
+            done
+            continue
+        fi
+        wz_say "  no mirror matches '$wm_a', and it is not a URL"
+    done
+}
+
 # wz_timezone <var>
 wz_timezone() {
     wt_var=$1
@@ -592,10 +736,7 @@ INTRO
         *) wz_mode=dhcp ;;
     esac
     wz_say ''
-    wz_say 'Package mirror. Blank keeps whatever the image came with, which is'
-    wz_say 'the global CDN — a nearer one is usually much faster.'
-    wz_say 'For example: https://mirror.ufpr.br/alpine'
-    wz_ask wz_mirror 'Mirror URL' ''
+    wz_mirror wz_mirror
 
     # --- account -------------------------------------------------------------
     wz_head 'Account'

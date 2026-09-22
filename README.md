@@ -642,6 +642,30 @@ its own lists what is in it, the way `setup-timezone` descends. A zone this
 workstation's tzdata does not have is taken anyway and checked on the machine,
 which reports it by name.
 
+**The mirror is fetched live**, as `setup-apkrepos` fetches it, from
+`https://mirrors.alpinelinux.org/mirrors.txt` — the only way that list can be
+right, since mirrors come and go. This is the one question where the workstation
+is a *better* place to ask than the target: it has a network now, and the
+machine being built does not exist yet.
+
+```
+   1) dl-cdn.alpinelinux.org/alpine
+   2) mirror.ufpr.br/alpine
+   …
+A number from those 47, part of a hostname to search, a URL of your own,
+or 'f' to time them all and take the quickest. Blank keeps the CDN the
+image already points at.
+Mirror:
+```
+
+`f` times each mirror the way `setup-apkrepos` does, and says what it is
+measuring: **the route from this workstation**, which is the right answer when
+the machine will live on the same desk and a guess when it will not. Blank stays
+the easy answer, because keeping the CDN always works. A list that will not
+fetch — a workstation behind a proxy — falls back to typing a URL rather than
+becoming a dead end. `WZ_MIRRORS_URL` points the whole thing at a file if you
+keep your own list.
+
 The list is real because **Alpine derives it from a file this workstation also
 has.** `main/kbd/APKBUILD` reads `/usr/share/X11/xkb/rules/base.lst`, takes every
 line of its `! variant` section as one `<layout>-<variant>` map, gives each

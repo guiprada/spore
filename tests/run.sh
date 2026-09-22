@@ -15,6 +15,21 @@ PASS=0
 FAIL=0
 export SPORE_COLOR=never
 
+# The mirror prompt fetches Alpine's live mirror list, which is the only way it
+# can be right — mirrors come and go. A suite that fetched it would depend on a
+# network and on which mirrors exist today, so every wizard run below is pinned
+# to a fixture. The fetch itself, and the path where it fails, are tested on
+# purpose further down.
+WZ_MIRRORS_FIXTURE=$(mktemp /tmp/spore-mirrors.XXXXXX)
+cat > "$WZ_MIRRORS_FIXTURE" <<'MIRRORS'
+http://dl-cdn.alpinelinux.org/alpine/
+https://mirror.ufpr.br/alpine/
+https://mirrors.dotsrc.org/alpine/
+https://alpine.mirror.far.br/
+MIRRORS
+export WZ_MIRRORS_URL=$WZ_MIRRORS_FIXTURE
+trap 'rm -f "$WZ_MIRRORS_FIXTURE"' EXIT
+
 t_ok()   { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 t_fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; [ $# -ge 2 ] && printf '        %s\n' "$2"; return 0; }
 t_skip() { printf '  skip  %s\n' "$1"; }
@@ -2398,6 +2413,74 @@ printf '%s\n' 'tznone' 'us us' 'Europe/Lisbon' '1' 'eth0' '1' '' 'tester' 'n' ''
 has   'without tzdata it says so' "$(cat "$PK/tzn")" 'No tzdata on this machine'
 check 'and still takes a zone'    \
     "$(conf_read "$PK/spores/tznone/spore/modules/system.conf" SYSTEM_TIMEZONE)" 'Europe/Lisbon'
+
+# The mirror is the third of these, and the one where the workstation is a
+# genuinely better place to ask from than the target: setup-apkrepos fetches a
+# live list, mirrors come and go, and the machine being built has no network
+# yet. The suite pins that list to a fixture (see the top of this file).
+# Blank keeps whatever the image came with, which has to stay the easy answer —
+# it is the one that always works.
+printf '%s\n' 'mblank' 'us us' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup > "$PK/mb" 2>&1 || true
+check 'blank leaves the mirror unset' \
+    "$(conf_read "$PK/spores/mblank/spore/modules/repos.conf" REPOS_MIRROR)" ''
+has   'and the list was shown'  "$(cat "$PK/mb")" '2) mirror.ufpr.br/alpine'
+has   'with the scheme dropped' "$(cat "$PK/mb")" '1) dl-cdn.alpinelinux.org/alpine'
+# By number, by a piece of the hostname, and by a URL of your own.
+printf '%s\n' 'mnum' 'us us' 'UTC' '1' 'eth0' '1' '2' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup >/dev/null 2>&1 || true
+check 'a mirror chosen by number' \
+    "$(conf_read "$PK/spores/mnum/spore/modules/repos.conf" REPOS_MIRROR)" \
+    'https://mirror.ufpr.br/alpine'
+printf '%s\n' 'mfind' 'us us' 'UTC' '1' 'eth0' '1' 'ufpr' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup >/dev/null 2>&1 || true
+check 'and by part of its hostname' \
+    "$(conf_read "$PK/spores/mfind/spore/modules/repos.conf" REPOS_MIRROR)" \
+    'https://mirror.ufpr.br/alpine'
+# repos.sh appends /$branch/main, and two slashes in a repository line is the
+# sort of thing apk reports about the wrong file.
+printf '%s\n' 'murl' 'us us' 'UTC' '1' 'eth0' '1' 'https://my.mirror/alpine/' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup >/dev/null 2>&1 || true
+check 'a url of your own, without its trailing slash' \
+    "$(conf_read "$PK/spores/murl/spore/modules/repos.conf" REPOS_MIRROR)" \
+    'https://my.mirror/alpine'
+# Several matches are numbered against the list, so the number still means what
+# it meant when the list was printed.
+printf '%s\n' 'mmany' 'us us' 'UTC' '1' 'eth0' '1' 'br' '4' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup > "$PK/mm" 2>&1 || true
+has   'several matches are listed'  "$(cat "$PK/mm")" "2 mirrors match 'br'"
+check 'and keep their original numbers' \
+    "$(conf_read "$PK/spores/mmany/spore/modules/repos.conf" REPOS_MIRROR)" \
+    'https://alpine.mirror.far.br'
+# A number off the end, and a word that is neither a mirror nor a URL.
+printf '%s\n' 'mbad' 'us us' 'UTC' '1' 'eth0' '1' '9' 'nope' '1' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup > "$PK/mbad" 2>&1 || true
+has   'a number off the end says so' "$(cat "$PK/mbad")" 'there is no 9) in the list'
+has   'and a word that is neither'   "$(cat "$PK/mbad")" "no mirror matches 'nope', and it is not a URL"
+check 'and the answer after them lands' \
+    "$(conf_read "$PK/spores/mbad/spore/modules/repos.conf" REPOS_MIRROR)" \
+    'http://dl-cdn.alpinelinux.org/alpine'
+# A list that cannot be fetched is not a dead end: the CDN still works and a URL
+# can still be typed. This is the common case on a workstation behind a proxy.
+printf '%s\n' 'mnofetch' 'us us' 'UTC' '1' 'eth0' '1' 'https://only.this/alpine' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        WZ_MIRRORS_URL=/nonexistent-mirror-list "$SPORE" setup > "$PK/mnf" 2>&1 || true
+has   'a list that will not fetch says so' "$(cat "$PK/mnf")" 'Could not fetch the mirror list'
+check 'and a url still goes in'  \
+    "$(conf_read "$PK/spores/mnofetch/spore/modules/repos.conf" REPOS_MIRROR)" \
+    'https://only.this/alpine'
+# Timing measures this workstation's route, not the machine's, and says so
+# rather than implying it knows something it cannot.
+MSRC=$(cat "$ROOT/lib/wizard.sh")
+has 'the fastest option says what it measures' "$MSRC" \
+    'here, not from wherever the machine will end up'
+has 'and probes the index every mirror carries' "$MSRC" 'edge/main/x86_64/APKINDEX.tar.gz'
 
 # Layout then variant, as setup-keymap asks them; the time client, address mode
 # and desktop by number in the same run.
