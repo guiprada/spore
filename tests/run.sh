@@ -28,7 +28,23 @@ https://mirrors.dotsrc.org/alpine/
 https://alpine.mirror.far.br/
 MIRRORS
 export WZ_MIRRORS_URL=$WZ_MIRRORS_FIXTURE
-trap 'rm -f "$WZ_MIRRORS_FIXTURE"' EXIT
+
+# And the mirror is probed the moment it is picked, which this suite has no
+# network for. A stub curl answers the probe's shape and behaves like curl with
+# no network for anything else — which is what is actually here. The tests that
+# care what a probe returns put their own in front of this one.
+WZ_STUB_BIN=$(mktemp -d /tmp/spore-stubbin.XXXXXX)
+cat > "$WZ_STUB_BIN/curl" <<'STUBCURL'
+#!/bin/sh
+case " $* " in
+    *' -I '*) printf 200; exit 0 ;;
+esac
+exit 1
+STUBCURL
+chmod 755 "$WZ_STUB_BIN/curl"
+PATH=$WZ_STUB_BIN:$PATH
+export PATH
+trap 'rm -f "$WZ_MIRRORS_FIXTURE"; rm -rf "$WZ_STUB_BIN"' EXIT
 
 t_ok()   { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 t_fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; [ $# -ge 2 ] && printf '        %s\n' "$2"; return 0; }
@@ -2479,6 +2495,67 @@ has   'a list that will not fetch says so' "$(cat "$PK/mnf")" 'Could not fetch t
 check 'and a url still goes in'  \
     "$(conf_read "$PK/spores/mnofetch/spore/modules/repos.conf" REPOS_MIRROR)" \
     'https://only.this/alpine'
+# A mirror is checked when it is chosen, which is the moment it costs nothing.
+# Unchecked, one that does not work is found on the machine, at the first
+# package that is not on the boot medium, several screens after the warning
+# that explains it — which is a boot, and it happened.
+MCK=$(mktemp -d /tmp/spore-mircheck.XXXXXX)
+mkdir -p "$MCK/bin"
+printf 'http://blocked.example/\nhttps://good.example/alpine/\n' > "$MCK/mirrors"
+# A firewall answering 403 for a host it refuses, which is what this looks like
+# from the client — and is indistinguishable from the mirror refusing.
+cat > "$MCK/bin/curl" <<'MCURL'
+#!/bin/sh
+for a in "$@"; do case $a in http*) u=$a ;; esac; done
+case $u in
+    https://good.example/*) printf 200 ;;
+    *) printf 403 ;;
+esac
+MCURL
+chmod 755 "$MCK/bin/curl"
+printf 'mck\nus us\nUTC\n1\neth0\n1\n1\nn\n2\ntester\nn\n\nn\nn\nn\n' |
+    env PATH="$MCK/bin:$PATH" HOME="$MCK" SUDO_USER= SPORE_PUBKEY= \
+        WZ_MIRRORS_URL="$MCK/mirrors" "$SPORE" setup > "$MCK/out" 2>&1 || true
+MCK_OUT=$(cat "$MCK/out")
+has 'a mirror that does not answer is caught at the prompt' "$MCK_OUT" \
+    'blocked.example: HTTP 403'
+# The reading that cost a boot: a 403 was taken for the mirror refusing, when
+# this container's own proxy returns exactly that, with an x-deny-reason header
+# nothing downstream reads.
+has 'and a 403 is not blamed on the mirror'   "$MCK_OUT" 'refusing on its behalf'
+has 'with the way to tell which it is'        "$MCK_OUT" 'If another
+         mirror does the same, it is the network'
+has 'and it can still be taken anyway'        "$MCK_OUT" 'Use it anyway?'
+check 'declining it asks again, and the good one is written' \
+    "$(conf_read "$MCK/spores/mck/spore/modules/repos.conf" REPOS_MIRROR)" \
+    'https://good.example/alpine'
+# A mirror registered as http that only serves https is ordinary, and
+# mirrors.txt lists whichever form its operator gave.
+cat > "$MCK/bin/curl" <<'MCURL2'
+#!/bin/sh
+for a in "$@"; do case $a in http*) u=$a ;; esac; done
+case $u in https://*) printf 200 ;; *) printf 403 ;; esac
+MCURL2
+chmod 755 "$MCK/bin/curl"
+printf 'mck2\nus us\nUTC\n1\neth0\n1\n1\ntester\nn\n\nn\nn\nn\n' |
+    env PATH="$MCK/bin:$PATH" HOME="$MCK" SUDO_USER= SPORE_PUBKEY= \
+        WZ_MIRRORS_URL="$MCK/mirrors" "$SPORE" setup > "$MCK/out2" 2>&1 || true
+has 'the other scheme is tried before giving up' "$(cat "$MCK/out2")" \
+    'http gave 403, https answers'
+check 'and the one that works is what gets written' \
+    "$(conf_read "$MCK/spores/mck2/spore/modules/repos.conf" REPOS_MIRROR)" \
+    'https://blocked.example'
+# Nothing to check with is not the same as a failed check.
+rm -f "$MCK/bin/curl"
+cat > "$MCK/bin/wget" <<'MWGET'
+#!/bin/sh
+exit 1
+MWGET
+chmod 755 "$MCK/bin/wget"
+MCK_SRC=$(cat "$ROOT/lib/wizard.sh")
+has 'with no curl or wget it says it did not check' "$MCK_SRC" 'not checked — no curl or wget here'
+rm -rf "$MCK"
+
 # Timing measures this workstation's route, not the machine's, and says so
 # rather than implying it knows something it cannot.
 MSRC=$(cat "$ROOT/lib/wizard.sh")

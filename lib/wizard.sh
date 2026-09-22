@@ -445,6 +445,88 @@ wz_mirror_time() {
     fi
 }
 
+# The HTTP code, not just reachable-or-not. What the code is turns out to matter
+# more than whether there was one.
+wz_mirror_code() {
+    wmc_u=${1%/}/edge/main/x86_64/APKINDEX.tar.gz
+    if command -v curl >/dev/null 2>&1; then
+        curl -sS -o /dev/null -m 8 -w '%{http_code}' -I -- "$wmc_u" 2>/dev/null ||
+            printf '000'
+    elif command -v wget >/dev/null 2>&1; then
+        if wget -q --spider --timeout=8 -- "$wmc_u" 2>/dev/null
+        then printf '200'; else printf '000'; fi
+    else
+        printf 'na'
+    fi
+}
+
+# A 403 from a mirror is very often not from the mirror. A firewall or a proxy
+# that refuses the host answers with its own 403, and from the client the two
+# are identical — this container does exactly that, with an x-deny-reason header
+# nothing downstream reads. Saying "the mirror is refusing" on that evidence
+# sends somebody to find another mirror when every mirror will do the same.
+wz_mirror_why() {
+    case $1 in
+        000) printf 'no answer at all — unreachable from here, or it timed out' ;;
+        403|407|451)
+            printf 'HTTP %s. That may be the mirror refusing, and it may equally
+         be something on this network refusing on its behalf: a firewall or a
+         proxy returns its own %s and it is identical from here. If another
+         mirror does the same, it is the network' "$1" "$1" ;;
+        404) printf 'HTTP 404 — reachable, but no Alpine tree at that path' ;;
+        *)   printf 'HTTP %s' "$1" ;;
+    esac
+}
+
+# Checked when it is chosen, which is the moment it costs nothing. Unchecked, a
+# mirror that does not work is found on the machine, at the first package that
+# is not on the boot medium, several screens after the warning that explains it.
+#
+# Prints the usable URL, which is not always the one that was picked: a mirror
+# registered as http that only serves https is ordinary, and mirrors.txt lists
+# whichever form its operator gave.
+wz_mirror_check() {
+    wmk_url=$1
+    wmk_code=$(wz_mirror_code "$wmk_url")
+    case $wmk_code in
+        na) wz_say '  not checked — no curl or wget here.'
+            printf '%s' "$wmk_url"; return 0 ;;
+        2*|3*) wz_say "  $(wz_mirror_host "$wmk_url") answers."
+            printf '%s' "$wmk_url"; return 0 ;;
+    esac
+    wmk_alt=''
+    case $wmk_url in
+        http://*)  wmk_alt=https://${wmk_url#http://} ;;
+        https://*) wmk_alt=http://${wmk_url#https://} ;;
+    esac
+    if [ -n "$wmk_alt" ]; then
+        case $(wz_mirror_code "$wmk_alt") in
+            2*|3*)
+                wz_say "  ${wmk_url%%:*} gave $wmk_code, ${wmk_alt%%:*} answers — taking ${wmk_alt%%:*}."
+                printf '%s' "$wmk_alt"; return 0 ;;
+        esac
+    fi
+    wz_say "  $(wz_mirror_host "$wmk_url"): $(wz_mirror_why "$wmk_code")"
+    return 1
+}
+
+# Every path that yields a mirror goes through here, so none of them can hand
+# back one that was never tried. Refused rather than rejected: this workstation
+# is not the machine, and a check that cannot be overruled would be a check that
+# is sometimes wrong and always final.
+wz_mirror_accept() {
+    wma_var=$1 wma_url=${2%/}
+    if wma_ok=$(wz_mirror_check "$wma_url"); then
+        wma_ok=${wma_ok%/}
+        eval "$wma_var=\$wma_ok"
+        return 0
+    fi
+    wz_yn wma_any '  Use it anyway?' n
+    [ "$wma_any" = yes ] || return 1
+    eval "$wma_var=\$wma_url"
+    return 0
+}
+
 wz_mirror_fastest() {
     wmf_best='' wmf_bt=''
     while IFS= read -r wmf_u; do
@@ -511,17 +593,19 @@ wz_mirror() {
                 wz_say '  no mirror answered; leaving it as it was'
                 continue ;;
             */*)
-                # A URL of their own. Stripped of any trailing slash, because
-                # repos.sh appends /$branch/main and two slashes in a repository
-                # line is the sort of thing apk reports about the wrong file.
-                wm_a=${wm_a%/}
-                eval "$wm_var=\$wm_a"
-                return 0 ;;
+                # A URL of their own. Trailing slash stripped by wz_mirror_accept,
+                # because repos.sh appends /$branch/main and a doubled slash is
+                # the sort of thing apk reports about the wrong file.
+                wz_mirror_accept "$wm_var" "$wm_a" && return 0
+                continue ;;
         esac
         case $wm_a in
             ''|*[!0-9]*) : ;;
             *) wm_u=$(sed -n "${wm_a}p" "$wm_list")
-               if [ -n "$wm_u" ]; then wm_u=${wm_u%/}; eval "$wm_var=\$wm_u"; return 0; fi
+               if [ -n "$wm_u" ]; then
+                   wz_mirror_accept "$wm_var" "$wm_u" && return 0
+                   continue
+               fi
                wz_say "  there is no $wm_a) in the list"
                continue ;;
         esac
@@ -530,10 +614,8 @@ wz_mirror() {
         [ -z "$wm_hits" ] || wm_hn=$(printf '%s\n' "$wm_hits" | grep -c .)
         if [ "$wm_hn" = 1 ]; then
             wz_say "  $(wz_mirror_host "$wm_hits")"
-            wm_hits=${wm_hits%/}
-
-            eval "$wm_var=\$wm_hits"
-            return 0
+            wz_mirror_accept "$wm_var" "$wm_hits" && return 0
+            continue
         fi
         if [ "$wm_hn" -gt 1 ]; then
             wz_say "  $wm_hn mirrors match '$wm_a' — its number, or more of the name:"
