@@ -2261,6 +2261,86 @@ MD_LIST=$("$SPORE" modules 2>&1)
 has 'listing still lists'               "$MD_LIST" 'dufs file server'
 rm -rf "$MD"
 
+section 'spore setup: answers that come from a fixed set are picked from it'
+# Every one of these was a free-text prompt with the set spelled out in the
+# question, which is two problems: you type a value exactly from a description
+# of it, and a near miss went somewhere different in each case.
+PK=$(mktemp -d /tmp/spore-pick.XXXXXX)
+# Picked entirely by number — the keyboard layout, the time client, the address
+# mode and the desktop, in one run.
+printf '%s\n' 'picked' '2' 'UTC' '2' 'eth0' '1' '' 'tester' 'n' '' 'n' 'y' '3' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$PK/out" 2>&1 || true
+PKS=$PK/spores/picked/spore
+check 'a layout chosen by number' \
+    "$(conf_read "$PKS/modules/system.conf" SYSTEM_KEYMAP)" 'br br-abnt2'
+check 'a time client chosen by number' \
+    "$(conf_read "$PKS/modules/system.conf" SYSTEM_NTP)" 'busybox'
+check 'an address mode chosen by number' \
+    "$(conf_read "$PKS/modules/net.conf" NET_MODE)" 'dhcp'
+check 'a desktop chosen by number' \
+    "$(conf_read "$PKS/modules/desktop.conf" DESKTOP_ENV)" 'sway'
+# The list is shown, not described in the question.
+has 'the layouts are listed'   "$(cat "$PK/out")" ' 2) br br-abnt2'
+has 'with what they are'       "$(cat "$PK/out")" 'Brazilian, ABNT2'
+has 'and the time clients too' "$(cat "$PK/out")" ' 2) busybox'
+
+# Typing the name still works, which is what every earlier run of this wizard
+# did and what a person who knows the answer will still do.
+printf '%s\n' 'named' 'br br-abnt2' 'UTC' 'busybox' 'eth0' 'dhcp' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup >/dev/null 2>&1 || true
+check 'a layout typed by name' \
+    "$(conf_read "$PK/spores/named/spore/modules/system.conf" SYSTEM_KEYMAP)" 'br br-abnt2'
+check 'a time client typed by name' \
+    "$(conf_read "$PK/spores/named/spore/modules/system.conf" SYSTEM_NTP)" 'busybox'
+
+# The one that used to fail silently, and in the worst direction: anything that
+# was not the literal word "static" fell through to dhcp, so a typo configured
+# the machine for a different network and nothing said so.
+printf '%s\n' 'typo' '1' 'UTC' '1' 'eth0' 'statc' 'static' '10.0.0.5' '' '' '' \
+    '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$PK/typo" 2>&1 || true
+has   'a misspelt address mode is refused' "$(cat "$PK/typo")" "'statc' is not one of them"
+check 'and does not quietly become dhcp' \
+    "$(conf_read "$PK/spores/typo/spore/modules/net.conf" NET_MODE)" 'static'
+# Asked again, rather than taken and reported later.
+check 'the question comes back once' "$(grep -c 'Address \[' "$PK/typo")" 2
+
+# A number outside the list is a different mistake from a wrong name, and says so.
+printf '%s\n' 'range' '99' '1' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$PK/range" 2>&1 || true
+has   'a number off the end says so'  "$(cat "$PK/range")" 'there is no 99) in the list'
+# And is never taken as the answer itself. On the open list this wrote
+# SYSTEM_KEYMAP=99: the index lookup failed and "anything else is accepted as
+# typed" then accepted it. No keyboard layout is a number, and a wrong index is
+# a slip rather than a value.
+check 'and the answer after it lands' \
+    "$(conf_read "$PK/spores/range/spore/modules/system.conf" SYSTEM_KEYMAP)" 'us us'
+
+# The keyboard list is a shortcut, not the set: the real one is in kbd-bkeymaps
+# on the target and is not knowable here. A prompt that refused an off-list pair
+# would be one you could not get past, which this file has been caught by once.
+printf '%s\n' 'open' 'ru ru' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$PK/open" 2>&1 || true
+check 'a layout that is not on the list is taken as typed' \
+    "$(conf_read "$PK/spores/open/spore/modules/system.conf" SYSTEM_KEYMAP)" 'ru ru'
+hasnt 'without being argued with' "$(cat "$PK/open")" 'is not one of them'
+# And the escape from it is on the list rather than being folklore.
+has 'leaving the layout alone is an option' "$(cat "$PK/out")" 'leave the layout alone'
+printf '%s\n' 'nokm' '-' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup >/dev/null 2>&1 || true
+check 'and a dash still writes no layout at all' \
+    "$(grep -c '^SYSTEM_KEYMAP=' "$PK/spores/nokm/spore/modules/system.conf" || true)" 0
+
+# A default outside its own list makes the prompt unanswerable: blank takes the
+# default, the default is refused, and there is no third thing to type. That is
+# a bug on this side of the prompt, so it stops here rather than there.
+PK_BAD=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/wizard.sh"
+          printf '\n' | wz_pick pk_v 'Pick' nope 'a=A' 'b=B' 2>&1 || true )
+has 'a default off its own list is refused at the source' \
+    "$PK_BAD" 'is not among the choices offered'
+has 'and says why that could not be answered' "$PK_BAD" 'blank is that answer'
+rm -rf "$PK"
+
 section 'spore setup asks about files, so the answer is one command'
 # Sharing disks took eight `spore set` calls and two `modules add`. The guided
 # command is where that belongs: a second verb for it would be a parallel way to

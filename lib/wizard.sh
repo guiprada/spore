@@ -51,6 +51,115 @@ wz_yn() {
 wz_say()  { printf '%s\n' "$*" >&2; }
 wz_head() { printf '\n%s%s%s\n' "$_c_bold" "$*" "$_c_reset" >&2; }
 
+# --- picking from a list -----------------------------------------------------
+#
+# Several answers come from a fixed set, and every one of them was a free-text
+# prompt with the set spelled out in the question. That is two problems. You have
+# to type a value exactly from a description of it, and a near miss went
+# somewhere different in each case: an unknown NTP client made it into the conf
+# and died at plan time; anything that was not the word "static" silently became
+# dhcp, so a typo configured a machine for the wrong network and said nothing.
+#
+# A numbered list answers both. It is also the shape the answer already had —
+# "chrony, busybox, openntpd or none" is a list read out loud.
+#
+# Each choice is "value" or "value=label". A value may contain spaces, which is
+# why they are separate arguments rather than one string.
+wz_choice_value() { printf '%s' "${1%%=*}"; }
+
+wz_choice_has() {
+    wch_want=$1
+    shift
+    for wch_c in "$@"; do
+        if [ "${wch_c%%=*}" = "$wch_want" ]; then return 0; fi
+    done
+    return 1
+}
+
+wz_choice_nth() {
+    wcn_n=$1
+    shift
+    wcn_i=0
+    for wcn_c in "$@"; do
+        wcn_i=$((wcn_i + 1))
+        if [ "$wcn_i" = "$wcn_n" ]; then printf '%s' "${wcn_c%%=*}"; return 0; fi
+    done
+    return 1
+}
+
+wz_choice_show() {
+    # Its own line, always. A menu is several lines where every other prompt is
+    # one, and run together with the answer above it they read as one blob.
+    printf '\n' >&2
+    wcs_i=0
+    for wcs_c in "$@"; do
+        wcs_i=$((wcs_i + 1))
+        wcs_v=${wcs_c%%=*}
+        wcs_l=${wcs_c#*=}
+        [ "$wcs_l" != "$wcs_c" ] || wcs_l=''
+        if [ -n "$wcs_l" ]; then
+            printf '  %2d) %-16s %s\n' "$wcs_i" "$wcs_v" "$wcs_l" >&2
+        else
+            printf '  %2d) %s\n' "$wcs_i" "$wcs_v" >&2
+        fi
+    done
+}
+
+# _wz_pick <strict|open> <var> <prompt> <default> <choice>...
+#
+# Re-asking is safe here in a way it was not for the keyboard layout, and for a
+# reason worth stating: every one of these sets is closed and the default is in
+# it, so a blank line always answers the question. The loop cannot reject
+# everything the way one over an open-ended set can, and wz_ask still dies on
+# EOF, so it cannot spin on a pipe either.
+_wz_pick() {
+    wp_mode=$1 wp_var=$2 wp_prompt=$3 wp_def=$4
+    shift 4
+    # A default outside its own list makes the prompt unanswerable: blank takes
+    # the default, the default is refused, and there is no third thing to type.
+    # That is a bug on this side of the prompt, so it stops here.
+    if [ "$wp_mode" = strict ] && ! wz_choice_has "$wp_def" "$@"; then
+        die "wizard: the default '$wp_def' is not among the choices offered for
+         \"$wp_prompt\" — answering it would be refused and blank is that answer."
+    fi
+    wz_choice_show "$@"
+    while :; do
+        wz_ask wp_a "$wp_prompt" "$wp_def"
+        case $wp_a in
+            ''|*[!0-9]*) : ;;
+            *) if wp_hit=$(wz_choice_nth "$wp_a" "$@"); then
+                   eval "$wp_var=\$wp_hit"
+                   return 0
+               fi
+               # All digits is a pick from the list and nothing else. Without
+               # this, open mode took an out-of-range number as the answer
+               # itself and wrote SYSTEM_KEYMAP=99 — no layout is a number, and
+               # a wrong index is a slip, not a value.
+               wz_say "  there is no $wp_a) in the list"
+               continue ;;
+        esac
+        if wz_choice_has "$wp_a" "$@"; then
+            eval "$wp_var=\$wp_a"
+            return 0
+        fi
+        if [ "$wp_mode" = open ] && [ -n "$wp_a" ]; then
+            eval "$wp_var=\$wp_a"
+            return 0
+        fi
+        wz_say "  '$wp_a' is not one of them — a number from the list, or the name"
+    done
+}
+
+# One of these, and nothing else.
+wz_pick() { _wz_pick strict "$@"; }
+
+# The list is a shortcut, not the whole set. For the keyboard layout the real
+# set lives in kbd-bkeymaps on the target and is not knowable from here, so an
+# answer that is not on the list is taken as typed — a prompt that refused it
+# would be a prompt you could not get past, which this file has been caught by
+# once already.
+wz_pick_open() { _wz_pick open "$@"; }
+
 # The same thing `spore passwd` does, because it is the same thing: ask twice
 # with the echo off, hash it, encrypt the hash. What the wizard adds is only
 # that a refusal here is not fatal — the rest of the guided run is still worth
@@ -88,15 +197,27 @@ INTRO
 
     # --- console -------------------------------------------------------------
     wz_head 'Console'
-    wz_say 'Keyboard layout and variant, as setup-keymap takes them: "us us",'
-    wz_say '"br br-abnt2", "de de-nodeadkeys". A layout on its own is used as'
-    wz_say 'its own variant. A dash leaves the layout alone.'
-    # Asked once. This was a loop that re-asked until it got two words, which is
-    # a worse thing to be caught in than the problem it was avoiding — a prompt
-    # you cannot get past is not validation. A layout alone is a fine answer and
-    # system.sh doubles it; anything genuinely unusable is caught there, once,
-    # with a message instead of another question.
-    wz_ask wz_keymap 'Keyboard' 'us us'
+    wz_say 'Keyboard layout and variant, as setup-keymap takes them. The list is'
+    wz_say 'the common ones, not all of them: the full set lives in kbd-bkeymaps'
+    wz_say 'on the machine, so any other pair can be typed and is checked there.'
+    wz_say 'A layout on its own is used as its own variant.'
+    # Open, not strict. This was once a loop that re-asked until it got two
+    # words, which is a worse thing to be caught in than the problem it was
+    # avoiding — a prompt you cannot get past is not validation, and the set it
+    # was validating against does not exist on this side. What a list can do is
+    # show the shape of an answer, which is all the prose above was doing.
+    wz_pick_open wz_keymap 'Keyboard' 'us us' \
+        'us us=US English' \
+        'br br-abnt2=Brazilian, ABNT2' \
+        'br br=Brazilian, US layout' \
+        'gb gb=UK English' \
+        'de de-nodeadkeys=German' \
+        'fr fr=French' \
+        'es es=Spanish' \
+        'pt pt-latin1=Portuguese' \
+        'it it=Italian' \
+        'dvorak dvorak=Dvorak' \
+        '-=leave the layout alone'
     [ "$wz_keymap" = - ] && wz_keymap=''
     wz_say ''
     wz_say 'Timezone as a zone name — America/Sao_Paulo, Europe/Lisbon, UTC.'
@@ -104,7 +225,11 @@ INTRO
     wz_say ''
     wz_say 'Time sync. A machine with no battery-backed clock boots in 1970, and'
     wz_say 'a clock that far out makes every certificate look not-yet-valid.'
-    wz_ask wz_ntp 'NTP client: chrony, busybox, openntpd or none' 'chrony'
+    wz_pick wz_ntp 'NTP client' chrony \
+        'chrony=the usual one; a daemon that keeps it right' \
+        'busybox=already installed, smaller, less accurate' \
+        'openntpd=from OpenBSD' \
+        'none=no time sync at all'
 
     # --- network -------------------------------------------------------------
     wz_head 'Network'
@@ -113,7 +238,12 @@ INTRO
     wz_say 'eth0 on one box and enp3s0 on the next, and a name that does not exist'
     wz_say 'means no network at all on a machine nobody is standing in front of.'
     wz_ask wz_iface 'Interface' 'auto'
-    wz_ask wz_mode 'Address: dhcp or static' 'dhcp'
+    # Strict, because this one used to fail silently in the worst direction:
+    # anything that was not the literal word "static" fell through to dhcp, so a
+    # typo configured the machine for a different network and said nothing.
+    wz_pick wz_mode 'Address' dhcp \
+        'dhcp=ask the network' \
+        'static=an address this spore carries'
     wz_addr='' wz_mask='' wz_gw='' wz_dns=''
     case $wz_mode in
         static)
@@ -216,20 +346,14 @@ INTRO
     wz_yn wz_desktop 'Install a desktop?' n
     if [ "$wz_desktop" = yes ]; then
         wz_say ''
-        wz_say 'xfce is the light one that behaves like a desktop; sway is lighter'
-        wz_say 'still and has no greeter, you log in on a console and start it.'
-        wz_say 'gnome and plasma are much larger, which a diskless box pays for on'
-        wz_say 'every boot.'
-        # Asked until it is one of them: an unknown name is refused at plan time
-        # anyway, and finding that out here costs nothing.
-        wz_des='xfce xfce-wayland sway mate lxqt gnome plasma'
-        while : ; do
-            wz_ask wz_desktop_env "Which ($(printf '%s' "$wz_des" | tr ' ' ','))" xfce
-            case " $wz_des " in
-                *" $wz_desktop_env "*) break ;;
-            esac
-            wz_say "'$wz_desktop_env' is not one of them."
-        done
+        wz_pick wz_desktop_env 'Which' xfce \
+            'xfce=light, and behaves like a desktop' \
+            'xfce-wayland=the same on wayland, with a greeter' \
+            'sway=lighter still; no greeter, started from a console' \
+            'mate=gtk, in the shape of the old gnome 2' \
+            'lxqt=qt, light' \
+            'gnome=large; a diskless box pays for it on every boot' \
+            'plasma=large; likewise'
     fi
 
     # --- write ---------------------------------------------------------------
