@@ -267,9 +267,23 @@ wz_keymap() {
     printf '\n' >&2
     wz_xkb_columns "$wk_list"
 
+    # What the last search printed, so a number can answer it.
+    wk_prev=''
     while :; do
         wz_ask wk_a 'Layout' 'us'
         if [ "$wk_a" = - ]; then eval "$wk_var=''"; return 0; fi
+        case $wk_a in
+            ''|*[!0-9]*) : ;;
+            *) if [ -n "$wk_prev" ]; then
+                   wk_layout=$(printf '%s\n' "$wk_prev" | sed -n "${wk_a}p" | cut -f1)
+                   if [ -n "$wk_layout" ]; then break; fi
+                   wz_say "  there is no $wk_a) in the list"
+               else
+                   wz_say "  '$wk_a' is not a layout, and there is no list to number"
+               fi
+               continue ;;
+        esac
+        wk_prev=''
         # A whole pair in one answer, which is what setup-keymap also accepts
         # and what everyone who already knows the answer will type.
         case $wk_a in
@@ -298,10 +312,10 @@ wz_keymap() {
             break
         fi
         wz_say "  $wk_n layouts match '$wk_a':"
-        printf '%s\n' "$wk_hits" | while IFS="$SPORE_TAB" read -r wk_c wk_d; do
-            printf '     %-10s %s\n' "$wk_c" "$wk_d" >&2
-        done
-        wz_say '  type one of those codes'
+        printf '%s\n' "$wk_hits" | awk -F'\t' '
+            { printf "   %2d) %-10s %s\n", NR, $1, $2 }
+        ' >&2
+        wk_prev=$wk_hits
     done
 
     # The variants are a closed set and a short one, so this half is a plain
@@ -316,6 +330,174 @@ wz_keymap() {
     done < "$wk_vars"
     wz_pick wk_variant 'Variant' "$wk_layout" "$@"
     eval "$wk_var=\"\$wk_layout \$wk_variant\""
+}
+
+# --- timezones, from the workstation's own tzdata ----------------------------
+#
+# setup-timezone walks /usr/share/zoneinfo: list the top level, descend into
+# whatever the answer names, repeat until the answer is a file. It has tzdata
+# to hand because it runs on the target and installs it first.
+#
+# Here tzdata is on the workstation instead, and it carries something better
+# than a directory tree: zone1970.tab is the canonical list — 312 zones rather
+# than the 450 files, which include legacy aliases, posixrules and Factory —
+# and each row has the country codes and a description. So "sao", "brazil" and
+# "BR" can all find America/Sao_Paulo, which descending a tree cannot.
+#
+# The version caveat is the keymap's: the target's tzdata is its own, and a zone
+# that is here and missing there is reported by setup-timezone on the machine,
+# by name. So the list is a list and not a gate.
+WZ_ZONEINFO=${WZ_ZONEINFO-}
+
+wz_tz_dir() {
+    if [ -n "$WZ_ZONEINFO" ]; then
+        [ -d "$WZ_ZONEINFO" ] && printf '%s' "$WZ_ZONEINFO"
+        return 0
+    fi
+    [ -d /usr/share/zoneinfo ] && printf '%s' /usr/share/zoneinfo
+    return 0
+}
+
+# zone<TAB>country-codes<TAB>description. The codes are their own field because
+# two letters is a country and not a substring: searching "BR" across whole
+# lines matches Gibraltar and Bratislava too, which is every Brazilian zone
+# plus forty others — a list too long to show and no answer at all.
+wz_tz_table() {
+    wtt_root=$1
+    [ -f "$wtt_root/UTC" ] && printf 'UTC\t\tCoordinated Universal Time\n'
+    for wtt_f in "$wtt_root/zone1970.tab" "$wtt_root/zone.tab"; do
+        [ -f "$wtt_f" ] || continue
+        awk -F'\t' '
+            /^#/ { next }
+            NF >= 3 && $3 != "" {
+                printf "%s\t%s\t%s\n", $3, $1, (NF >= 4 ? $4 : "")
+            }
+        ' "$wtt_f" | sort -u
+        return 0
+    done
+    # No table shipped: the tree, minus the files in it that are not zones.
+    ( cd "$wtt_root" 2>/dev/null || exit 0; find . -type f 2>/dev/null ) |
+        sed 's|^\./||' | awk '
+            /^(posix|right)\// { next }
+            /\.(tab|zi|list)$/ { next }
+            /^(leapseconds|localtime|posixrules|Factory|UTC)$/ { next }
+            { printf "%s\t\t\n", $0 }
+        ' | sort -u
+}
+
+# Two letters are tried as a country code first, and only fall back to a
+# substring when no country has them — so "BR" is Brazil and "zz" is still a
+# search.
+wz_tz_search() {
+    wts_hits=$(awk -F'\t' -v q="$2" '
+        BEGIN { q = tolower(q) }
+        q ~ /^[a-z][a-z]$/ {
+            n = split(tolower($2), c, ",")
+            for (i = 1; i <= n; i++) if (c[i] == q) { print; next }
+        }
+    ' "$1")
+    if [ -n "$wts_hits" ]; then printf '%s\n' "$wts_hits"; return 0; fi
+    awk -F'\t' -v q="$2" 'BEGIN { q = tolower(q) } tolower($0) ~ q' "$1"
+}
+
+wz_tz_label() {
+    printf '%s' "$2${2:+${3:+ — }}$3"
+}
+
+# wz_timezone <var>
+wz_timezone() {
+    wt_var=$1
+    wt_root=$(wz_tz_dir)
+    if [ -z "$wt_root" ]; then
+        wz_say 'No tzdata on this machine to list zones from, so this one is'
+        wz_say 'typed. A zone name like America/Sao_Paulo, Europe/Lisbon or UTC;'
+        wz_say 'it is checked on the target by setup-timezone.'
+        wz_ask "$wt_var" 'Timezone' 'UTC'
+        return 0
+    fi
+
+    wt_list=$SPORE_WORK/zones
+    wz_tz_table "$wt_root" > "$wt_list"
+    wt_regions=$(cut -f1 "$wt_list" | grep '/' | cut -d/ -f1 | sort -u)
+
+    wz_say 'Type a zone like America/Sao_Paulo, or part of a city, country or'
+    wz_say 'country code to search for one — "sao", "brazil" and "BR" all find'
+    wz_say 'the same zone. A region on its own lists what is in it. UTC is a'
+    wz_say 'fine answer for a machine that does not care.'
+    printf '\n' >&2
+    printf '%s\n' "$wt_regions" | tr '\n' ' ' | fold -s -w 72 | sed 's/^/  /' >&2
+    printf '\n' >&2
+
+    # What the last search printed, so a number can answer it. A list you have
+    # to read back a name out of is a list, not a selector.
+    wt_prev=''
+    while :; do
+        wz_ask wt_a 'Timezone' 'UTC'
+        [ -n "$wt_a" ] || continue
+        case $wt_a in
+            *[!0-9]*) : ;;
+            *) if [ -n "$wt_prev" ]; then
+                   wt_z=$(printf '%s\n' "$wt_prev" | sed -n "${wt_a}p" | cut -f1)
+                   if [ -n "$wt_z" ]; then
+                       eval "$wt_var=\$wt_z"
+                       return 0
+                   fi
+                   wz_say "  there is no $wt_a) in the list"
+               else
+                   wz_say "  '$wt_a' is not a zone, and there is no list to number"
+               fi
+               continue ;;
+        esac
+        wt_prev=''
+        if awk -F'\t' -v z="$wt_a" '$1 == z { f = 1 } END { exit !f }' "$wt_list"; then
+            eval "$wt_var=\$wt_a"
+            return 0
+        fi
+        # A region on its own: show what is in it and ask again, which is how
+        # setup-timezone descends.
+        if printf '%s\n' "$wt_regions" | grep -qx -- "$wt_a"; then
+            wz_say "  zones in $wt_a:"
+            awk -F'\t' -v r="$wt_a/" 'index($1, r) == 1 { print substr($1, length(r) + 1) }' \
+                "$wt_list" | tr '\n' ' ' | fold -s -w 68 | sed 's/^/     /' >&2
+            continue
+        fi
+        wt_hits=$(wz_tz_search "$wt_list" "$wt_a" 2>/dev/null) || wt_hits=''
+        wt_n=0
+        [ -z "$wt_hits" ] || wt_n=$(printf '%s\n' "$wt_hits" | grep -c .)
+        if [ "$wt_n" = 1 ]; then
+            wt_z=$(printf '%s' "$wt_hits" | cut -f1)
+            wt_lbl=$(wz_tz_label "" "$(printf '%s' "$wt_hits" | cut -f2)" \
+                                   "$(printf '%s' "$wt_hits" | cut -f3)")
+            wz_say "  $wt_z${wt_lbl:+ — $wt_lbl}"
+            eval "$wt_var=\$wt_z"
+            return 0
+        fi
+        if [ "$wt_n" -gt 1 ] && [ "$wt_n" -le 24 ]; then
+            wz_say "  $wt_n zones match '$wt_a':"
+            printf '%s\n' "$wt_hits" | awk -F'\t' '
+                { d = $2 (($2 != "" && $3 != "") ? " — " : "") $3
+                  printf "   %2d) %-28s %s\n", NR, $1, d }
+            ' >&2
+            wt_prev=$wt_hits
+            continue
+        fi
+        if [ "$wt_n" -gt 24 ]; then
+            wz_say "  $wt_n zones match '$wt_a' — too many to list; be more specific"
+            continue
+        fi
+        # Not a zone here and not a search that found one. Taken anyway when it
+        # has the shape of a zone name, because this workstation's tzdata is not
+        # the target's: setup-timezone there reports one that does not exist, by
+        # name, which is a better place to be told than a prompt that refuses.
+        case $wt_a in
+            */*)
+                wz_say "  '$wt_a' is not in this workstation's tzdata — taking it"
+                wz_say "  anyway; the machine checks it when it applies."
+                eval "$wt_var=\$wt_a"
+                return 0 ;;
+        esac
+        wz_say "  no zone, city or country matches '$wt_a'"
+    done
 }
 
 # The list is a shortcut, not the whole set. For the keyboard layout the real
@@ -366,8 +548,7 @@ INTRO
     # actually have — see wz_keymap for where that list comes from.
     wz_keymap wz_keymap
     wz_say ''
-    wz_say 'Timezone as a zone name — America/Sao_Paulo, Europe/Lisbon, UTC.'
-    wz_ask wz_tz 'Timezone' 'UTC'
+    wz_timezone wz_tz
     wz_say ''
     wz_say 'Time sync. A machine with no battery-backed clock boots in 1970, and'
     wz_say 'a clock that far out makes every certificate look not-yet-valid.'

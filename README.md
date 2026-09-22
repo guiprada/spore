@@ -613,7 +613,34 @@ Variant [br]:
 ```
 
 Part of a name searches, because knowing "portuguese" is likelier than knowing
-`br`, and a column of 83 codes does not tell you which one you want.
+`br`, and a column of 83 codes does not tell you which one you want. Several
+matches come back numbered — a list you have to read a name back out of is a
+list, not a selector.
+
+**The timezone is the same question with the same source problem.**
+`setup-timezone` walks `/usr/share/zoneinfo` on the target; this runs on a
+workstation. But tzdata is here too, and it ships something better than the
+tree: `zone1970.tab` is the canonical list — 312 zones rather than 450 files, of
+which many are legacy aliases, `posixrules` and `Factory` — with country codes
+and a description on every row. So one search covers zone names, cities,
+countries and codes:
+
+```
+Timezone [UTC]: BR
+  13 zones match 'BR':
+    1) America/Araguaina         BR — Tocantins
+    2) America/Bahia             BR — Bahia
+    …
+    9) America/Sao_Paulo         BR — Brazil (southeast: GO, DF, MG, ES, RJ, SP…)
+Timezone [UTC]: 9
+```
+
+Two letters are tried as a country code before anything else, because `BR` as a
+substring also matches Gibraltar and Bratislava — every Brazilian zone plus
+forty others, which is too long a list to show and no answer at all. A region on
+its own lists what is in it, the way `setup-timezone` descends. A zone this
+workstation's tzdata does not have is taken anyway and checked on the machine,
+which reports it by name.
 
 The list is real because **Alpine derives it from a file this workstation also
 has.** `main/kbd/APKBUILD` reads `/usr/share/X11/xkb/rules/base.lst`, takes every

@@ -2315,6 +2315,90 @@ check 'variants are named as the map file is' \
     "$(printf '%s\n' "$PK_V" | cut -f1 | tr '\n' ' ')" 'br-nodeadkeys br-dvorak '
 hasnt 'and only that layout'  "$PK_V" 'de-nodeadkeys'
 
+# The timezone has the same shape and the same source problem: setup-timezone
+# walks /usr/share/zoneinfo on the target, which is not here. tzdata on this
+# workstation is, and it ships something better than the tree — zone1970.tab is
+# the canonical list, 312 zones rather than 450 files of which many are legacy
+# aliases, posixrules and Factory, and each row carries country codes and a
+# description. Fixture again, for the same reason as the keymap one.
+mkdir -p "$PK/zi"
+: > "$PK/zi/UTC"
+cat > "$PK/zi/zone1970.tab" <<'TAB'
+# comment line
+BR	-2332-04637	America/Sao_Paulo	Brazil (southeast)
+BR	-0803-03454	America/Recife	Pernambuco
+ST	+0020+00644	Africa/Sao_Tome
+PT	+3843-00908	Europe/Lisbon	Portugal (mainland)
+GB	+513030-0000731	Europe/London
+TAB
+PK_Z=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/wizard.sh"; wz_tz_table "$PK/zi" )
+check 'the canonical zones are read from zone1970.tab' \
+    "$(printf '%s\n' "$PK_Z" | cut -f1 | tr '\n' ' ')" \
+    'UTC Africa/Sao_Tome America/Recife America/Sao_Paulo Europe/Lisbon Europe/London '
+has 'with the country codes kept apart from the prose' "$PK_Z" 'America/Sao_Paulo	BR	Brazil (southeast)'
+# Two letters are a country, not a substring: "BR" across whole lines also finds
+# Gibraltar and Bratislava, which is every Brazilian zone plus forty others —
+# too long a list to show, and no answer at all.
+PK_BR=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/wizard.sh"
+         wz_tz_table "$PK/zi" > "$PK/zi.tsv"; wz_tz_search "$PK/zi.tsv" BR )
+check 'a two-letter query is a country code' \
+    "$(printf '%s\n' "$PK_BR" | cut -f1 | tr '\n' ' ')" 'America/Recife America/Sao_Paulo '
+# And when no country has those letters it is a search again, rather than
+# nothing.
+PK_SA=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/wizard.sh"; wz_tz_search "$PK/zi.tsv" sao )
+check 'anything else is a substring over the lot' \
+    "$(printf '%s\n' "$PK_SA" | cut -f1 | tr '\n' ' ')" 'Africa/Sao_Tome America/Sao_Paulo '
+PK_LO=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/wizard.sh"; wz_tz_search "$PK/zi.tsv" lisbon )
+check 'and it reaches the city names'  "$(printf '%s\n' "$PK_LO" | cut -f1)" 'Europe/Lisbon'
+PK_PO=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/wizard.sh"; wz_tz_search "$PK/zi.tsv" portugal )
+check 'and the descriptions'           "$(printf '%s\n' "$PK_PO" | cut -f1)" 'Europe/Lisbon'
+
+# A search with several answers is numbered and answered by number. A list you
+# have to read a name back out of is a list, not a selector.
+printf '%s\n' 'tzpick' 'us us' 'sao' '2' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        WZ_ZONEINFO="$PK/zi" "$SPORE" setup > "$PK/tz" 2>&1 || true
+has   'the matches are numbered'  "$(cat "$PK/tz")" '2) America/Sao_Paulo'
+check 'and a number picks one'    \
+    "$(conf_read "$PK/spores/tzpick/spore/modules/system.conf" SYSTEM_TIMEZONE)" 'America/Sao_Paulo'
+# A single match needs no list at all.
+printf '%s\n' 'tzone' 'us us' 'lisbon' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        WZ_ZONEINFO="$PK/zi" "$SPORE" setup > "$PK/tz1" 2>&1 || true
+check 'one match is taken straight' \
+    "$(conf_read "$PK/spores/tzone/spore/modules/system.conf" SYSTEM_TIMEZONE)" 'Europe/Lisbon'
+has 'and says which it took'  "$(cat "$PK/tz1")" 'Europe/Lisbon — PT — Portugal (mainland)'
+# A region on its own lists what is in it, which is how setup-timezone descends.
+printf '%s\n' 'tzreg' 'us us' 'America' 'America/Recife' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        WZ_ZONEINFO="$PK/zi" "$SPORE" setup > "$PK/tzr" 2>&1 || true
+has   'a region lists its zones' "$(cat "$PK/tzr")" 'zones in America:'
+check 'and the zone after it lands' \
+    "$(conf_read "$PK/spores/tzreg/spore/modules/system.conf" SYSTEM_TIMEZONE)" 'America/Recife'
+# This workstation's tzdata is not the target's. A zone that looks like one is
+# taken and checked there by setup-timezone, which reports it by name — a better
+# place to be told than a prompt that refuses.
+printf '%s\n' 'tzodd' 'us us' 'Mars/Olympus' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        WZ_ZONEINFO="$PK/zi" "$SPORE" setup > "$PK/tzo" 2>&1 || true
+has   'an unknown zone is taken, not refused' "$(cat "$PK/tzo")" 'the machine checks it when it applies'
+check 'and is what gets written' \
+    "$(conf_read "$PK/spores/tzodd/spore/modules/system.conf" SYSTEM_TIMEZONE)" 'Mars/Olympus'
+# But a word that is neither is a typo, and says so rather than becoming one.
+printf '%s\n' 'tzbad' 'us us' 'klingon' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        WZ_ZONEINFO="$PK/zi" "$SPORE" setup > "$PK/tzb" 2>&1 || true
+has   'a word that is no zone says so' "$(cat "$PK/tzb")" "no zone, city or country matches 'klingon'"
+check 'and the answer after it lands' \
+    "$(conf_read "$PK/spores/tzbad/spore/modules/system.conf" SYSTEM_TIMEZONE)" 'UTC'
+# No tzdata on the workstation at all falls back to typing it, and says why.
+printf '%s\n' 'tznone' 'us us' 'Europe/Lisbon' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        WZ_ZONEINFO=/nonexistent "$SPORE" setup > "$PK/tzn" 2>&1 || true
+has   'without tzdata it says so' "$(cat "$PK/tzn")" 'No tzdata on this machine'
+check 'and still takes a zone'    \
+    "$(conf_read "$PK/spores/tznone/spore/modules/system.conf" SYSTEM_TIMEZONE)" 'Europe/Lisbon'
+
 # Layout then variant, as setup-keymap asks them; the time client, address mode
 # and desktop by number in the same run.
 printf '%s\n' 'picked' 'br' '2' 'UTC' '2' 'eth0' '1' '' 'tester' 'n' '' 'n' 'y' '3' 'n' |
