@@ -2687,6 +2687,72 @@ if [ -f "$WZ/m/spore/spore.conf" ]; then
     has   'a machine without one is offered the plain try' \
         "$(cat "$WZ/try5")" 'spore try /dev/sdX'
     hasnt 'and no memory it does not need' "$(cat "$WZ/try5")" 'mem=6144'
+
+    # The last two prompts were the ones still asking you to know an answer: a
+    # device path typed from a printed table, and an ISO with nothing naming
+    # which one to fetch.
+    WZI=$(mktemp -d /tmp/spore-wiziso.XXXXXX)
+    mkdir -p "$WZI/Downloads"
+    touch -d '3 days ago' "$WZI/Downloads/alpine-virt-3.21.0-x86_64.iso"
+    touch -d '1 day ago'  "$WZI/Downloads/alpine-standard-3.21.0-x86_64.iso"
+    touch                 "$WZI/Downloads/alpine-standard-3.22.0-x86_64.iso"
+    WZI_L=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/bootstrap.sh"
+             . "$ROOT/lib/wizard.sh"; SPORE_WORK=$WZI; HOME=$WZI; SUDO_USER=
+             wz_find_isos )
+    # Which one is not obvious when there are three: an old release, a virt
+    # image with none of the drivers a real machine needs, and this morning's.
+    check 'every iso is offered, newest first' \
+        "$(printf '%s\n' "$WZI_L" | sed 's|.*/||' | tr '\n' ' ')" \
+        'alpine-standard-3.22.0-x86_64.iso alpine-standard-3.21.0-x86_64.iso alpine-virt-3.21.0-x86_64.iso '
+    WZI_1=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/bootstrap.sh"
+             . "$ROOT/lib/wizard.sh"; SPORE_WORK=$WZI; HOME=$WZI; SUDO_USER=
+             wz_find_iso )
+    check 'and the newest is the default' "$(printf '%s' "$WZI_1" | sed 's|.*/||')" \
+        'alpine-standard-3.22.0-x86_64.iso'
+    rm -rf "$WZI"
+    WZSRC2=$(cat "$ROOT/lib/wizard.sh")
+    # An empty prompt with nothing naming what to download is a dead end for
+    # anyone who has not made one of these before. It cost a round.
+    has 'with none found it says where to get one' "$WZSRC2" 'alpinelinux.org/downloads/'
+    has 'and which image, and why not the other'   "$WZSRC2" 'not virt: virt leaves out the drivers'
+    # `media` erases what it is given. Labelling the disk holding / is not
+    # enough: one keystroke would still destroy the machine being typed on, so
+    # it is refused rather than annotated.
+    has 'the disk holding / is marked in the list' "$WZSRC2" 'this workstation booted from it'
+    has 'and refused if it is picked anyway'       "$WZSRC2" 'so it is not on offer'
+    has 'both prompts take a number'               "$WZSRC2" "'Device (number or path, blank to skip)'"
+    has 'the iso one as well'                      "$WZSRC2" "'Alpine ISO (number or path, blank to skip)'"
+    # Root straight on a whole disk with no partition table is ordinary in a VM,
+    # and taking an empty PKNAME as "not found" left that one case unmarked —
+    # which is the case where the mistake is unrecoverable.
+    # Root straight on a whole disk with no partition table is ordinary in a VM,
+    # and taking an empty PKNAME as "not found" left that one case unmarked —
+    # the case where the mistake is unrecoverable. Stubbed rather than asserted
+    # against a comment, because what matters is what it returns.
+    WZR=$(mktemp -d /tmp/spore-wizroot.XXXXXX)
+    mkdir -p "$WZR/bin"
+    printf '#!/bin/sh\nprintf "/dev/vdz\\n"\n' > "$WZR/bin/findmnt"
+    # No parent, and the source is itself a whole disk.
+    printf '#!/bin/sh\ncase " $* " in\n  *PKNAME*) exit 0 ;;\n  *TYPE*) printf "disk\\n" ;;\nesac\n' \
+        > "$WZR/bin/lsblk"
+    chmod 755 "$WZR/bin/findmnt" "$WZR/bin/lsblk"
+    check 'a root with no parent disk still resolves to itself' \
+        "$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/wizard.sh"
+            PATH="$WZR/bin:$PATH"; wz_root_disk )" '/dev/vdz'
+    # And the ordinary case, where / is a partition of something.
+    printf '#!/bin/sh\ncase " $* " in\n  *PKNAME*) printf "sda\\n" ;;\n  *TYPE*) printf "part\\n" ;;\nesac\n' \
+        > "$WZR/bin/lsblk"
+    check 'and a partition resolves to its disk' \
+        "$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/wizard.sh"
+            PATH="$WZR/bin:$PATH"; wz_root_disk )" '/dev/sda'
+    # Nothing resolvable is no answer, not a wrong one: a container root is an
+    # overlay, and marking some unrelated disk as "yours" would be worse than
+    # marking none.
+    printf '#!/bin/sh\nprintf "overlay\\n"\n' > "$WZR/bin/findmnt"
+    check 'and an overlay root marks nothing' \
+        "$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/wizard.sh"
+            PATH="$WZR/bin:$PATH"; wz_root_disk )" ''
+    rm -rf "$WZR"
 else
     # Not a skip. Nothing here is optional or environment-dependent — the wizard
     # is fed answers on stdin and writes a directory — so "it produced nothing"

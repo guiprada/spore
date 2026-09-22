@@ -1117,22 +1117,46 @@ wz_try_mem() {
     return 0
 }
 
-# The newest Alpine ISO lying around, so the common case is one Enter.
-wz_find_iso() {
-    wf_best=''
+# Every Alpine ISO lying around, newest first. One of them is almost always the
+# answer, and which one is not obvious when there are three: an old release, a
+# virt image that has none of the drivers a real machine needs, the one that was
+# downloaded this morning.
+#
+# Sorted by mtime through stat rather than `ls -t`, because parsing ls is how a
+# path with a space in it becomes two paths.
+wz_find_isos() {
+    wf_tmp=$SPORE_WORK/isos.raw
+    : > "$wf_tmp"
     for wf_d in "$(bootstrap_home)/Downloads" "$(bootstrap_home)" .; do
         [ -d "$wf_d" ] || continue
         for wf_i in "$wf_d"/alpine-*.iso; do
             [ -f "$wf_i" ] || continue
-            if [ -z "$wf_best" ] || [ "$wf_i" -nt "$wf_best" ]; then
-                wf_best=$wf_i
-            fi
+            printf '%s\t%s\n' "$(stat -c %Y "$wf_i" 2>/dev/null || echo 0)" "$wf_i" \
+                >> "$wf_tmp"
         done
-        if [ -n "$wf_best" ]; then
-            printf '%s' "$wf_best"
-            return 0
-        fi
     done
+    sort -rn "$wf_tmp" | cut -f2- | awk '!seen[$0]++'
+}
+
+wz_find_iso() { wz_find_isos | head -n 1; }
+
+# The disk this workstation booted from. Naming it in the list is not enough —
+# `media` erases what it is given, and the one thing nobody can afford to pick
+# by accident is the machine they are standing at.
+wz_root_disk() {
+    wrd_src=$(findmnt -no SOURCE / 2>/dev/null | head -n1) || wrd_src=''
+    case $wrd_src in
+        /dev/*) : ;;
+        # overlay, tmpfs, a UUID= — nothing this can resolve to a disk.
+        *) return 0 ;;
+    esac
+    wrd_pk=$(lsblk -no PKNAME "$wrd_src" 2>/dev/null | head -n1) || wrd_pk=''
+    if [ -n "$wrd_pk" ]; then printf '/dev/%s' "$wrd_pk"; return 0; fi
+    # No parent: root sits straight on a whole disk with no partition table
+    # between, which is ordinary in a VM — and is exactly the disk that must not
+    # be handed to `media`. Taking an empty PKNAME as "not found" left the one
+    # case that matters unmarked.
+    [ "$(lsblk -dno TYPE "$wrd_src" 2>/dev/null)" = disk ] && printf '%s' "$wrd_src"
     return 0
 }
 
@@ -1157,16 +1181,41 @@ wz_disk() {
     fi
 
     wz_say ''
-    lsblk -dno PATH,SIZE,TRAN,MODEL 2>/dev/null | sed 's/^/  /' >&2 ||
+    wd_root=$(wz_root_disk)
+    wd_list=$SPORE_WORK/disks
+    if lsblk -dno PATH,SIZE,TRAN,MODEL 2>/dev/null > "$wd_list" && [ -s "$wd_list" ]; then
+        awk -v root="$wd_root" '
+            { mark = ($1 == root) ? "   <- this workstation booted from it" : ""
+              printf "   %2d) %-12s %-9s %-6s %s%s\n", NR, $1, $2, $3, $4, mark }
+        ' "$wd_list" >&2
+    else
+        : > "$wd_list"
         wz_say '  (lsblk is not installed — you will have to know the path)'
+    fi
     wz_say ''
     wz_say 'The removable one. Everything on it is destroyed.'
     # Asked again on a typo rather than abandoning the step. Getting a device
     # path slightly wrong is the most ordinary mistake here, and it should cost
     # a retry, not the answers to fifteen questions.
     while :; do
-        wz_ask wd_dev 'Device (blank to skip)' ''
+        wz_ask wd_dev 'Device (number or path, blank to skip)' ''
         [ -n "$wd_dev" ] || return 1
+        case $wd_dev in
+            ''|*[!0-9]*) : ;;
+            *) wd_pick=$(awk -v n="$wd_dev" 'NR == n { print $1 }' "$wd_list")
+               if [ -z "$wd_pick" ]; then
+                   warn "there is no $wd_dev) in the list."
+                   continue
+               fi
+               wd_dev=$wd_pick ;;
+        esac
+        # Refused, not warned about. A list that merely labels the disk holding
+        # / still lets one keystroke erase the machine you are typing on.
+        if [ -n "$wd_root" ] && [ "$wd_dev" = "$wd_root" ]; then
+            warn "$wd_dev is the disk this workstation booted from. Writing a
+         medium to it would destroy this machine, so it is not on offer."
+            continue
+        fi
         if [ ! -b "$wd_dev" ]; then
             warn "$wd_dev is not a block device — pick one from the list above."
             continue
@@ -1188,10 +1237,37 @@ wz_disk() {
     done
 
     wz_say ''
-    wd_found=$(wz_find_iso)
+    wd_isos=$SPORE_WORK/isos
+    wz_find_isos > "$wd_isos"
+    if [ -s "$wd_isos" ]; then
+        awk '{ printf "   %2d) %s\n", NR, $0 }' "$wd_isos" >&2
+        wz_say ''
+        wd_found=$(head -n 1 "$wd_isos")
+    else
+        # The prompt used to be a bare question with no default and nothing to
+        # download named in it, which is a dead end for anybody who has not made
+        # one of these before.
+        wz_say 'No alpine-*.iso in ~/Downloads, here, or your home directory.'
+        wz_say 'Get one from https://alpinelinux.org/downloads/ — the *standard*'
+        wz_say 'x86_64 image, not virt: virt leaves out the drivers a real'
+        wz_say 'machine needs for its disks and its screen. Put it in ~/Downloads'
+        wz_say 'and it is found by itself next time.'
+        wz_say ''
+        wd_found=''
+    fi
     while :; do
-        wz_ask wd_iso 'Alpine ISO (blank to skip)' "$wd_found"
+        wz_ask wd_iso 'Alpine ISO (number or path, blank to skip)' "$wd_found"
         [ -n "$wd_iso" ] || return 1
+        case $wd_iso in
+            ''|*[!0-9]*) : ;;
+            *) wd_ipick=$(sed -n "${wd_iso}p" "$wd_isos")
+               if [ -z "$wd_ipick" ]; then
+                   warn "there is no $wd_iso) in the list."
+                   wd_found=''
+                   continue
+               fi
+               wd_iso=$wd_ipick ;;
+        esac
         [ -f "$wd_iso" ] && break
         warn "no such file: $wd_iso"
         # Never offer back a default that was just rejected: pressing Enter on
