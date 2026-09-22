@@ -206,6 +206,32 @@ INTRO
         wz_yn wz_dufs_tls 'HTTPS with a self-signed certificate?' y
     fi
 
+    # --- desktop -------------------------------------------------------------
+    wz_head 'Desktop'
+    wz_say 'A graphical desktop, rather than a text console. Alpine boots'
+    wz_say 'diskless by reinstalling every package in its world file into RAM,'
+    wz_say 'every boot — for a file server that is nothing, for a desktop it is'
+    wz_say 'the whole desktop each time. spore plan says what that costs.'
+    wz_desktop=no wz_desktop_env=''
+    wz_yn wz_desktop 'Install a desktop?' n
+    if [ "$wz_desktop" = yes ]; then
+        wz_say ''
+        wz_say 'xfce is the light one that behaves like a desktop; sway is lighter'
+        wz_say 'still and has no greeter, you log in on a console and start it.'
+        wz_say 'gnome and plasma are much larger, which a diskless box pays for on'
+        wz_say 'every boot.'
+        # Asked until it is one of them: an unknown name is refused at plan time
+        # anyway, and finding that out here costs nothing.
+        wz_des='xfce xfce-wayland sway mate lxqt gnome plasma'
+        while : ; do
+            wz_ask wz_desktop_env "Which ($(printf '%s' "$wz_des" | tr ' ' ','))" xfce
+            case " $wz_des " in
+                *" $wz_desktop_env "*) break ;;
+            esac
+            wz_say "'$wz_desktop_env' is not one of them."
+        done
+    fi
+
     # --- write ---------------------------------------------------------------
     # Built in a staging area first, so where it ends up is still an open
     # question at this point: onto a disk, or into a directory if there is no
@@ -220,7 +246,7 @@ INTRO
     cat > "$SPORE_DIR/spore.conf" <<CONF
 FORMAT=1
 HOST=$wz_host
-MODULES="repos system net users ssh apkovl$([ "$wz_share" = yes ] && printf ' storage dufs')"
+MODULES="repos system net users ssh apkovl$([ "$wz_share" = yes ] && printf ' storage dufs')$([ "$wz_desktop" = yes ] && printf ' desktop')"
 # The private key that decrypts this spore's secrets. Relative, so it resolves
 # against the spore itself — the same line is correct here and on the target.
 SECRETS_IDENTITY=../identity
@@ -339,6 +365,27 @@ CONF
             printf '#   spore -s <spore> seal dufs-auth   (type e.g. admin:s3cret@/:rw)\n'
             printf '#   DUFS_AUTH_SECRET=dufs-auth\n'
         } > "$SPORE_DIR/modules/dufs.conf"
+    fi
+
+    if [ "$wz_desktop" = yes ]; then
+        {
+            printf '# The environment, as alpine-conf names them. Its package sets are\n'
+            printf '# mirrored into plan actions, so "spore plan" lists the whole desktop\n'
+            printf '# before any of it exists.\n'
+            printf 'DESKTOP_ENV=%s\n' "$wz_desktop_env"
+            printf '\n'
+            printf '# A browser is a large package and not everyone wants this one.\n'
+            printf '# DESKTOP_BROWSER=none  leaves it out entirely.\n'
+            printf 'DESKTOP_BROWSER=firefox\n'
+            printf '\n'
+            printf '# Anything else, space separated:\n'
+            printf '# DESKTOP_EXTRA="mpv gimp"\n'
+            printf '\n'
+            printf '# Who gets the video, input, audio, netdev and seat groups. Unset\n'
+            printf '# means whoever USERS names in users.conf, which is the answer that\n'
+            printf '# cannot disagree with itself.\n'
+            printf '# DESKTOP_USERS="%s"\n' "$wz_user"
+        } > "$SPORE_DIR/modules/desktop.conf"
     fi
 
     : > "$SPORE_DIR/packages"

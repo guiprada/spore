@@ -1413,7 +1413,7 @@ printf '%s\n' \
     'wizhost' 'br br-abnt2' 'America/Sao_Paulo' 'chrony' 'eth0' 'static' \
     '192.168.1.50' '255.255.255.0' '192.168.1.1' '192.168.1.1 1.1.1.1' \
     'https://mirror.ufpr.br/alpine' \
-    'tester' 'y' "$WZ/id.pub" 'y' '2222' 'n' 'n' |
+    'tester' 'y' "$WZ/id.pub" 'y' '2222' 'n' 'n' 'n' |
     SPORE_PUBKEY="$WZ/id.pub" "$SPORE" setup "$WZ/m" >"$WZ/out" 2>&1 || true
 WZOUT=$(cat "$WZ/out")
 WZS=$WZ/m/spore
@@ -1432,7 +1432,7 @@ check 'the keymap, as setup-keymap takes it' "$(grep '^SYSTEM_KEYMAP=' "$WZS/mod
 # Asked once. A validation loop here was a prompt you could not get past, which
 # is a worse thing to be caught in than the problem it was avoiding.
 WZK=$(mktemp -d /tmp/spore-wizkm.XXXXXX)
-printf '%s\n' 'kmhost' 'br' 'UTC' 'none' 'auto' 'dhcp' '' 'tester' 'n' '' 'n' 'n' |
+printf '%s\n' 'kmhost' 'br' 'UTC' 'none' 'auto' 'dhcp' '' 'tester' 'n' '' 'n' 'n' 'n' |
     env HOME="$WZK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZK/out" 2>&1 || true
 check 'a layout alone is taken as given' \
     "$(grep '^SYSTEM_KEYMAP=' "$WZK/spores/kmhost/spore/modules/system.conf")" \
@@ -1443,7 +1443,7 @@ rm -rf "$WZK"
 # And there has to be a way to say "leave it alone" that is not a blank line,
 # because a blank line is how you take the default.
 WZD=$(mktemp -d /tmp/spore-wizdash.XXXXXX)
-printf '%s\n' 'dashhost' '-' 'UTC' 'none' 'auto' 'dhcp' '' 'tester' 'n' '' 'n' 'n' |
+printf '%s\n' 'dashhost' '-' 'UTC' 'none' 'auto' 'dhcp' '' 'tester' 'n' '' 'n' 'n' 'n' |
     env HOME="$WZD" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZD/out" 2>&1 || true
 check 'a dash leaves the layout alone' \
     "$(grep -c '^SYSTEM_KEYMAP=' "$WZD/spores/dashhost/spore/modules/system.conf" || true)" 0
@@ -1582,7 +1582,7 @@ has 'and the apkovl has a destination'  "$WZP" 'file       /etc/lbu/lbu.conf'
 # An existing machine is offered up for replacement rather than refused — but
 # only a machine, and only when the answer is yes. Its identity is in there.
 WZE=$(mktemp -d /tmp/spore-wizexist.XXXXXX)
-printf '%s\n' 'again' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' 'n' 'n' |
+printf '%s\n' 'again' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' 'n' 'n' 'n' |
     "$SPORE" setup "$WZE/m" >/dev/null 2>&1 || true
 WZE_ID=$WZE/m/spore/spore.conf
 check 'a machine was created' "$([ -f "$WZE_ID" ] && echo yes || echo no)" yes
@@ -1593,7 +1593,7 @@ check 'declining leaves it untouched' \
     "$([ -f "$WZE/m/spore/keys/marker" ] && echo yes || echo no)" yes
 has 'and points at editing instead' "$(cat "$WZE/decline")" 'edit the file rather than'
 # Accepting replaces it.
-printf '%s\n' 'again' 'y' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' 'n' 'n' |
+printf '%s\n' 'again' 'y' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' 'n' 'n' 'n' |
     "$SPORE" setup "$WZE/m" >/dev/null 2>&1 || true
 check 'accepting replaces it' \
     "$([ -f "$WZE/m/spore/keys/marker" ] && echo stale || echo fresh)" fresh
@@ -1612,7 +1612,7 @@ rm -rf "$WZE"
 # when there is no disk in your hand, and the answers must survive declining it.
 WZH=$(mktemp -d /tmp/spore-wizhome.XXXXXX)
 printf '%s\n' 'homehost' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' \
-    'tester' 'n' '' 'n' 'n' |
+    'tester' 'n' '' 'n' 'n' 'n' |
     env HOME="$WZH" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZH/out" 2>&1 || true
 has 'the disk is offered, not a directory' "$(cat "$WZH/out")" 'Write a USB stick now'
 check 'declining still keeps the answers' \
@@ -1644,7 +1644,7 @@ rm -rf "$WZX"
 # A mistyped device path costs a retry, not the answers to fifteen questions.
 WZR=$(mktemp -d /tmp/spore-wizretry.XXXXXX)
 printf '%s\n' 'retryhost' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' \
-    'n' 'y' '/dev/definitely-not-here' '' |
+    'n' 'n' 'y' '/dev/definitely-not-here' '' |
     env HOME="$WZR" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZR/out" 2>&1 || true
 has 'a bad device path is told, not fatal' "$(cat "$WZR/out")" 'is not a block device'
 has 'and it asks again'                    "$(cat "$WZR/out")" 'blank to skip'
@@ -2266,7 +2266,7 @@ section 'spore setup asks about files, so the answer is one command'
 # command is where that belongs: a second verb for it would be a parallel way to
 # express configuration, and the conf files are already the format.
 WZ=$(mktemp -d /tmp/spore-wizshare.XXXXXX)
-printf 'coisas\n\n\n\n\n\n\n\n\n\ny\n\n\ny\ny\n' |
+printf 'coisas\n\n\n\n\n\n\n\n\n\ny\n\n\ny\ny\nn\n' |
     "$SPORE" setup "$WZ/m" >/dev/null 2>&1 || true
 if [ -f "$WZ/m/spore/spore.conf" ]; then
     has   'answering yes turns both modules on' \
@@ -2293,7 +2293,7 @@ if [ -f "$WZ/m/spore/spore.conf" ]; then
     has 'and the spore it wrote plans the service' "$WZ_PLAN" 'spore-automount'
 
     # Read-only is the default, and it must not hand the disks over anyway.
-    printf 'coisas\n\n\n\n\n\n\n\n\n\ny\n\n\nn\ny\n' |
+    printf 'coisas\n\n\n\n\n\n\n\n\n\ny\n\n\nn\ny\nn\n' |
         "$SPORE" setup "$WZ/m3" >/dev/null 2>&1 || true
     check 'a read-only share sets no owner' \
         "$(conf_read "$WZ/m3/spore/modules/storage.conf" STORAGE_OWNER)" ''
@@ -2301,12 +2301,28 @@ if [ -f "$WZ/m/spore/spore.conf" ]; then
         "$(cat "$WZ/m3/spore/modules/storage.conf")" 'refuse every upload'
 
     # Answering no leaves both out entirely rather than writing them off.
-    printf 'coisas\n\n\n\n\n\n\n\n\n\nn\n' |
+    printf 'coisas\n\n\n\n\n\n\n\n\n\nn\nn\n' |
         "$SPORE" setup "$WZ/m2" >/dev/null 2>&1 || true
     hasnt 'answering no leaves them out' \
         "$(conf_read "$WZ/m2/spore/spore.conf" MODULES)" 'dufs'
     check 'and writes no config for them' \
         "$([ -f "$WZ/m2/spore/modules/dufs.conf" ] && echo yes || echo no)" no
+    hasnt 'and no desktop either'  "$(conf_read "$WZ/m2/spore/spore.conf" MODULES)" 'desktop'
+
+    # The desktop is the same shape of question: one answer, and the module is
+    # on with a conf that explains itself.
+    printf 'coisas\n\n\n\n\n\n\n\n\n\nn\ny\nsway\n' |
+        "$SPORE" setup "$WZ/m4" >/dev/null 2>&1 || true
+    has   'answering yes turns the desktop on' \
+        "$(conf_read "$WZ/m4/spore/spore.conf" MODULES)" 'desktop'
+    check 'with the environment that was asked for' \
+        "$(conf_read "$WZ/m4/spore/modules/desktop.conf" DESKTOP_ENV)" 'sway'
+    # users has to plan before desktop, or the account exists after the groups
+    # were handed out. The wizard writes the order, so the wizard has to get it
+    # right — and the spore it wrote has to plan, not merely parse.
+    WZ_DPLAN=$(alpine "$SPORE" -s "$WZ/m4/spore" -r "$WZ/r4" plan 2>&1)
+    has 'and the spore it wrote plans a desktop' "$WZ_DPLAN" 'pkg        sway'
+    hasnt 'in an order that is not refused'      "$WZ_DPLAN" 'MODULES lists desktop before users'
 
     # The gateway was the default resolver here, and a gateway that routes
     # without resolving is invisible: the route works, it answers a ping, and
@@ -2877,6 +2893,105 @@ has 'a partitioned whole disk says why it was passed over' "$AM_SRC" \
 has 'and it leaves the device loop, not just the partition scan' "$AM_SRC" \
     'continue 2'
 rm -rf "$AM"
+
+section 'desktop: a graphical machine, planned rather than shelled out to'
+# Alpine ships setup-desktop and this does not call it: its exit status is that
+# of a trailing `rc-update del acpid`, it reaches scripts that rc-service-start
+# sysinit services (which OpenRC refuses from the default runlevel, where this
+# always runs), and with no argument it prompts. So upstream's package sets are
+# mirrored into plan actions, which also means the whole desktop is visible
+# before any of it exists.
+DK=$(mktemp -d /tmp/spore-desktop.XXXXXX)
+cp -r "$EX" "$DK/s"
+sed -i 's/^MODULES=.*/MODULES="users desktop"/' "$DK/s/spore.conf"
+"$SPORE" -s "$DK/s" set desktop DESKTOP_ENV xfce >/dev/null 2>&1
+DK_XFCE=$(alpine "$SPORE" -s "$DK/s" -r "$DK/r" plan 2>&1)
+has 'xorg comes from setup-xorg-base'   "$DK_XFCE" 'pkg        xorg-server'
+has 'with the libinput driver'          "$DK_XFCE" 'pkg        xf86-input-libinput'
+has 'the environment itself'            "$DK_XFCE" 'pkg        xfce4'
+has 'and a greeter to reach it through' "$DK_XFCE" 'svc        lightdm -> default [on]'
+# setup-xorg-base and setup-wayland-base both end in `setup-devd udev`, because
+# Xorg's libinput driver and elogind's seats both want it. A diskless Alpine
+# boots with mdev.
+has 'the device manager moves to udev'  "$DK_XFCE" 'svc        udev -> sysinit [on]'
+has 'and mdev is stood down'            "$DK_XFCE" 'svc        mdev -> sysinit [off]'
+has 'with hwdrivers, which was its job' "$DK_XFCE" 'svc        hwdrivers -> sysinit [off]'
+# sysinit ran long before this did, so none of it is live until a reboot. A
+# first boot that ends at a text console has worked, and saying so is cheaper
+# than the message that says it did not.
+has 'and says none of that is live yet' "$DK_XFCE" 'come up on the *next* boot'
+# Nothing is executed on the workstation and no setup-* script is invoked on the
+# machine either: every line of it is an action.
+hasnt 'setup-desktop is never called'   "$DK_XFCE" 'setup-desktop'
+hasnt 'nor setup-xorg-base'             "$DK_XFCE" 'setup-xorg-base'
+
+# A browser is a large package and not everyone wants that one. Upstream's
+# ${BROWSER:-firefox} cannot express leaving it out.
+has 'a browser is installed by default' "$DK_XFCE" 'pkg        firefox'
+"$SPORE" -s "$DK/s" set desktop DESKTOP_BROWSER none >/dev/null 2>&1
+DK_NOBR=$(alpine "$SPORE" -s "$DK/s" -r "$DK/rb" plan 2>&1)
+hasnt 'and none leaves it out'          "$DK_NOBR" 'pkg        firefox'
+"$SPORE" -s "$DK/s" set desktop DESKTOP_BROWSER firefox >/dev/null 2>&1
+
+# The groups are the difference between a desktop and a desktop nobody can open:
+# adduser -D puts an account in none of them.
+has 'the desktop account joins the seat groups' "$DK_XFCE" 'video, input, audio, netdev and'
+has 'named from users.conf, not asked twice'    "$DK_XFCE" '(from users.conf)'
+has 'and it is a firstboot action'              "$DK_XFCE" 'firstboot  desktop-groups'
+
+# Firstboot actions run in MODULES order and `adduser <user> <group>` needs the
+# account to exist. Listed the wrong way round nothing fails on the machine: the
+# desktop installs and refuses the only account meant to use it. On a diskless
+# box there is no second chance, because firstboot stamps live on the RAM root
+# and none of them run once it is on its own overlay.
+sed -i 's/^MODULES=.*/MODULES="desktop users"/' "$DK/s/spore.conf"
+DK_ORDER=$(alpine "$SPORE" -s "$DK/s" -r "$DK/ro" plan 2>&1 || true)
+has 'desktop before users is refused'    "$DK_ORDER" 'MODULES lists desktop before users'
+has 'and it says what would have gone wrong' "$DK_ORDER" 'refuse the one account meant to use it'
+has 'and prints the line to paste'       "$DK_ORDER" 'MODULES="users desktop"'
+sed -i 's/^MODULES=.*/MODULES="users desktop"/' "$DK/s/spore.conf"
+
+# The fact that decides whether a diskless desktop is a good idea. Alpine's
+# initramfs re-reads world out of the apkovl and apk-adds every line of it into
+# the tmpfs root on every boot — a handful of packages for a file server, the
+# entire desktop for this.
+has 'the diskless cost is stated at plan time' "$DK_XFCE" 'into the RAM root at every boot'
+has 'both halves of it, with both fixes'       "$DK_XFCE" 'REPOS_APK_CACHE'
+has 'and the memory half'                      "$DK_XFCE" 'sits in tmpfs for as long as'
+# An environment name is not a package name, and a command nobody can paste is
+# worse than no command.
+has 'with a package name that exists'          "$DK_XFCE" 'apk add --simulate xfce4'
+DK_VM=$(env SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=yes SPORE_FACT_PERSIST=rootfs \
+            SPORE_FACT_ARCH=x86_64 SPORE_FACT_ROOT=yes SPORE_FACT_ALPINE=3.20.0 \
+            "$SPORE" -s "$DK/s" -r "$DK/rv" plan 2>&1)
+hasnt 'and not said at all on a host with a disk' "$DK_VM" 'into the RAM root at every boot'
+
+# gnome and plasma are much the largest, and upstream builds their package list
+# on the target with `apk info --depends`, which a plan made on a workstation
+# cannot do.
+"$SPORE" -s "$DK/s" set desktop DESKTOP_ENV gnome >/dev/null 2>&1
+DK_GN=$(alpine "$SPORE" -s "$DK/s" -r "$DK/rg" plan 2>&1)
+has 'gnome plans its meta-packages'   "$DK_GN" 'pkg        gnome'
+has 'and its greeter'                 "$DK_GN" 'svc        gdm -> default [on]'
+has 'and says it is the expensive one' "$DK_GN" 'much the largest'
+has 'with a simulate line that matches' "$DK_GN" 'apk add --simulate gnome'
+
+# sway has no display manager upstream and none here, which is worth saying:
+# a machine that boots to a text console is otherwise indistinguishable from a
+# broken one.
+"$SPORE" -s "$DK/s" set desktop DESKTOP_ENV sway >/dev/null 2>&1
+DK_SW=$(alpine "$SPORE" -s "$DK/s" -r "$DK/rs" plan 2>&1)
+has   'sway is planned'                 "$DK_SW" 'pkg        sway'
+has   'on the wayland base'             "$DK_SW" 'pkg        elogind'
+hasnt 'with no display manager'         "$DK_SW" 'svc        lightdm'
+has   'and it says so'                  "$DK_SW" 'sway has no display manager'
+
+# An unknown environment is a typo, and it is knowable here.
+"$SPORE" -s "$DK/s" set desktop DESKTOP_ENV kde >/dev/null 2>&1
+DK_BAD=$(alpine "$SPORE" -s "$DK/s" -r "$DK/rx" plan 2>&1 || true)
+has 'an unknown environment is refused' "$DK_BAD" "not 'kde'"
+has 'and the message lists the real ones' "$DK_BAD" 'xfce xfce-wayland gnome plasma mate sway lxqt'
+rm -rf "$DK"
 
 section 'MOD_DATA: a module payload on the RAM root does not outlast the boot'
 # Declared by two modules and read by none. It matters most on exactly the host

@@ -292,6 +292,7 @@ package files are re-downloaded every boot.
 | `users` | accounts, doas rules, persist `/home` | root |
 | `system` | keyboard layout, timezone and time sync, via Alpine's own setup-* tools | root |
 | `storage` | mount declared volumes under a serve root | root |
+| `desktop` | a graphical desktop — xfce, sway, gnome and the rest | root, OpenRC |
 | `apkovl` | where `lbu commit` writes — without it a diskless box forgets everything | diskless |
 | — | secrets are handled by the core, not a module | `age` on the target |
 | `net` | hostname (anywhere), interfaces and DNS | NET_ADMIN for the latter |
@@ -507,6 +508,74 @@ rather than assuming: internal disks count, and so does anything plugged in
 later. With `DUFS_ALLOW_ALL=yes` and `STORAGE_OWNER` set, all of it is writable
 by whoever reaches the port, which is what `DUFS_TLS_SELFSIGNED` and a sealed
 `DUFS_AUTH_SECRET` are for.
+
+### Desktop
+
+```sh
+DESKTOP_ENV=xfce            # xfce xfce-wayland gnome plasma mate sway lxqt
+DESKTOP_BROWSER=firefox     # or none
+DESKTOP_EXTRA="mpv gimp"    # anything else
+DESKTOP_USERS="gui"         # unset means whoever USERS names in users.conf
+```
+
+Alpine ships `setup-desktop`, and this does not call it. Three reasons, each
+found by reading it:
+
+- **Its exit status is a lie.** The script ends in `rc-update del acpid`, so it
+  reports failure on any machine where acpid was never enabled — which is every
+  diskless one. Exactly the shape of `setup-ntp`, which cost this project a whole
+  apply once already.
+- **It starts services from the wrong runlevel.** It reaches `setup-wayland-base`
+  and `setup-devd`, which `rc-service … start` things belonging to sysinit and
+  boot. Run from inside the seed service — in the default runlevel, which is
+  where this always runs — OpenRC refuses them, because it will not re-enter a
+  runlevel that has finished.
+- **With no argument it prompts**, via `setup-user`, and a prompt cannot be
+  answered on a machine that is booting itself.
+
+So its package sets are mirrored into plan actions instead, the same way
+`render_keymap` does what `setup-keymap` does once it has a valid pair. The
+payoff is not just avoiding those three: `spore plan` lists the entire desktop
+before any of it exists, `spore diff` can see it drift, and a later `build` gets
+it for nothing.
+
+Two things the plan says that a working boot would not:
+
+**The desktop is not up on the boot that installs it.** Both of Alpine's base
+scripts end in `setup-devd udev`, because Xorg's libinput driver and elogind's
+seats both need it — and a diskless Alpine boots with mdev. The runlevel links
+are right immediately; sysinit, where they take effect, ran long before. A first
+boot that ends at a text console has worked.
+
+**A diskless desktop reinstalls itself every boot.** Alpine's initramfs re-reads
+`/etc/apk/world` out of the apkovl and runs `apk add` over all of it into the
+tmpfs root, on every boot (`initramfs-init`: `pkgs="$pkgs $(cat
+"$sysroot"/etc/apk/world)"` … `apk add --root $sysroot … $pkgs`). For a file
+server that is a handful of packages nobody notices. A desktop is hundreds, and
+gnome is over a thousand. It costs twice, and the halves have different fixes:
+set `REPOS_APK_CACHE` so they are not *downloaded* again each boot, and accept
+that the installed tree lives in RAM for as long as the machine is up. `apk add
+--simulate xfce4` on any Alpine box says how much before you commit to it. A
+desktop on a disk pays neither.
+
+The other thing worth knowing is smaller and just as fatal: an account made by
+`adduser -D` is in none of the groups a seat needs, so the desktop would install
+perfectly and refuse the only login meant to use it. The module puts
+`DESKTOP_USERS` — or, unset, whoever `users.conf` names, because naming them
+twice is a way for the two to disagree — into `video`, `input`, `audio`,
+`netdev` and `seat`. That runs as a firstboot action, and firstboot actions run
+in `MODULES` order, so `users` has to come first. Listed the other way round
+nothing fails on the machine, which is why it is refused on the workstation:
+
+```
+error: desktop: MODULES lists desktop before users, and the accounts have to
+       exist before this can put them in the video, input and seat groups.
+       Nothing would fail on the machine — the desktop would come up and refuse
+       the one account meant to use it.
+
+       In spore.conf, list users first:
+           MODULES="users desktop"
+```
 
 ## Making the boot medium
 
