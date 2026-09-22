@@ -38,12 +38,51 @@ el_pkg() {
     if ! mutate; then say "would install package $1"; return 0; fi
 
     starting "package $1"
-    run apk add --no-progress "$1"
+    if [ "$SPORE_DRYRUN" != 1 ] && [ "$SPORE_NOEXEC" != 1 ] &&
+       ! synthetic && command -v apk >/dev/null 2>&1; then
+        runlog "apk add --no-progress $1"
+        if ! apk add --no-progress "$1"; then
+            el_pkg_unreachable "$1"
+            die "${SPORE_ACTION:+while $SPORE_ACTION: }command failed: apk add --no-progress $1"
+        fi
+    else
+        run apk add --no-progress "$1"
+    fi
     if synthetic; then
         mkdir -p "$(dirname "$ep_world")"
         printf '%s\n' "$1" >> "$ep_world"
     fi
     changed "package $1"
+}
+
+# apk's last word on a package it cannot find is "no such package". That is true
+# of the repositories it could read and says nothing whatever about the ones it
+# could not — and the line before it, a WARNING naming a mirror that returned
+# 403, has by then scrolled past several screens of successful installs.
+#
+# A diskless Alpine always has one repository that works: the ~95 packages on
+# its own boot medium. So a dead mirror does not fail early and obviously. It
+# installs everything the ISO happens to carry, and then reports the first
+# package that is only on a mirror as one Alpine does not have.
+el_pkg_unreachable() {
+    epu_pkg=$1
+    command -v apk >/dev/null 2>&1 || return 0
+    epu_out=$(apk update 2>&1) || true
+    epu_n=$(printf '%s\n' "$epu_out" |
+            sed -n 's/^\([0-9][0-9]*\) unavailable.*/\1/p' | tail -n 1)
+    case $epu_n in ''|0) return 0 ;; esac
+    epu_have=$(printf '%s\n' "$epu_out" |
+               sed -n 's/.*; *\([0-9][0-9]*\) distinct packages.*/\1/p' | tail -n 1)
+    warn "$epu_n of this machine's package repositories did not answer, so only
+         ${epu_have:-a few} packages are reachable — that number is the boot
+         medium's own repository, not a mirror. '$epu_pkg' is far likelier to be
+         missing from what could be read than missing from Alpine, and apk says
+         'no such package' for both. These did not answer:"
+    printf '%s\n' "$epu_out" |
+        sed -n 's|^WARNING: [^h]*\(https*://[^ ]*\)/APKINDEX[^ ]*.*|         \1|p' |
+        sort -u >&2
+    warn "Point REPOS_MIRROR in modules/repos.conf at one that answers, or unset
+         it to fall back to the CDN the image came with."
 }
 
 el_dir() {

@@ -3470,6 +3470,60 @@ has 'an unknown environment is refused' "$DK_BAD" "not 'kde'"
 has 'and the message lists the real ones' "$DK_BAD" 'xfce xfce-wayland gnome plasma mate sway lxqt'
 rm -rf "$DK"
 
+section 'a package that is missing from a mirror that is down'
+# apk's last word on a package it cannot find is "no such package". That is true
+# of the repositories it could read and says nothing about the ones it could
+# not — and the WARNING naming a mirror that returned 403 has by then scrolled
+# past several screens of successful installs.
+#
+# A diskless Alpine always has one repository that works: the packages on its
+# own boot medium. So a dead mirror does not fail early and obviously. It
+# installs everything the ISO happens to carry and then reports the first
+# package that only exists on a mirror as one Alpine does not have. That is what
+# "dosfstools (no such package)" meant on a real machine, and it is the wrong
+# thing to conclude.
+PU=$(mktemp -d /tmp/spore-pkgunreach.XXXXXX)
+mkdir -p "$PU/bin"
+cat > "$PU/bin/apk" <<'PUAPK'
+#!/bin/sh
+cat <<'OUT'
+WARNING: updating and opening http://alpinelinux.c3sl.ufpr.br/v3.24/main/x86_64/APKINDEX.tar.gz: HTTP 403: Forbidden
+WARNING: updating and opening http://alpinelinux.c3sl.ufpr.br/v3.24/community/x86_64/APKINDEX.tar.gz: HTTP 403: Forbidden
+3.24.1 [/media/sdc1/apks]
+2 unavailable, 0 stale; 95 distinct packages available
+OUT
+PUAPK
+chmod 755 "$PU/bin/apk"
+PU_OUT=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/exec_live.sh"
+          PATH="$PU/bin:$PATH"; el_pkg_unreachable dosfstools 2>&1 )
+has 'it counts the repositories that did not answer' "$PU_OUT" \
+    '2 of this machine'
+has 'and how little that leaves'   "$PU_OUT" 'only'
+has 'and says which number it is'  "$PU_OUT" '95 packages are reachable'
+# The conclusion is the point: not that Alpine lacks it.
+has 'it names the wrong conclusion' "$PU_OUT" 'than missing from Alpine'
+has 'and the repositories themselves' "$PU_OUT" \
+    'http://alpinelinux.c3sl.ufpr.br/v3.24/main/x86_64'
+has 'both of them'                    "$PU_OUT" \
+    'http://alpinelinux.c3sl.ufpr.br/v3.24/community/x86_64'
+has 'and what to change'              "$PU_OUT" 'REPOS_MIRROR in modules/repos.conf'
+# And it says nothing at all when every repository answered, because then "no
+# such package" is exactly what it means.
+cat > "$PU/bin/apk" <<'PUOK'
+#!/bin/sh
+echo "3.24.1 [https://dl-cdn.alpinelinux.org/alpine/v3.24/main]"
+echo "0 unavailable, 0 stale; 28672 distinct packages available"
+PUOK
+chmod 755 "$PU/bin/apk"
+PU_OK=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/exec_live.sh"
+         PATH="$PU/bin:$PATH"; el_pkg_unreachable nosuchpkg 2>&1 )
+check 'healthy repositories say nothing' "$PU_OK" ''
+rm -rf "$PU"
+# The failure still fails: this explains the error, it does not swallow it.
+ELPSRC=$(cat "$ROOT/lib/exec_live.sh")
+has 'and the apply still stops there' "$ELPSRC" \
+    'die "${SPORE_ACTION:+while $SPORE_ACTION: }command failed: apk add --no-progress $1"'
+
 section 'MOD_DATA: a module payload on the RAM root does not outlast the boot'
 # Declared by two modules and read by none. It matters most on exactly the host
 # this tool is for: a diskless Alpine is a RAM root, so dufs serving its default
