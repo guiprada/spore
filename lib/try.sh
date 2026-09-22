@@ -158,7 +158,7 @@ try_scratch_disk() {
 try_boot() {
     tb_target=$1
     shift 2>/dev/null || true
-    tb_write=no tb_direct=yes tb_disk=''
+    tb_write=no tb_direct=yes tb_disk='' tb_mem=2048
     for tb_a in "$@"; do
         case $tb_a in
             write)      tb_write='write' ;;
@@ -167,9 +167,20 @@ try_boot() {
             disk=*)     tb_disk=${tb_a#disk=}
                         [ -e "$tb_disk" ] ||
                             die "no such disk image or device: $tb_disk" ;;
+            # 2048 is plenty for a file server and not enough for a desktop, and
+            # the reason is not the desktop's own appetite: a diskless Alpine
+            # installs every package in world into a tmpfs root sized at half of
+            # RAM, so 2G of guest is a 1G ceiling on everything installed. A guest
+            # that runs out looks like a broken spore rather than a small VM.
+            mem=*)      tb_mem=${tb_a#mem=}
+                        case $tb_mem in
+                            ''|*[!0-9]*) die "spore try: mem= takes megabytes, e.g. mem=6144" ;;
+                        esac
+                        [ "$tb_mem" -ge 256 ] ||
+                            die "spore try: mem=$tb_mem is too little to boot Alpine at all" ;;
             '')         : ;;
             *)          die "spore try: unknown option '$tb_a'
-         (write, bootloader, disk, disk=PATH)" ;;
+         (write, bootloader, disk, disk=PATH, mem=MB)" ;;
         esac
     done
     set -- "$tb_target"
@@ -211,7 +222,11 @@ $(printf '%s\n' "$tb_used" | sed 's/^/           /')
     tb_code=${tb_fw%"$SPORE_TAB"*}
     tb_vars=${tb_fw#*"$SPORE_TAB"}
 
-    set -- -machine q35 -m 2048 -smp 2
+    set -- -machine q35 -m "$tb_mem" -smp 2
+    # Said before the guest starts, because afterwards it is buried under a boot.
+    say "guest: ${tb_mem}M of RAM, so about $((tb_mem / 2))M of tmpfs root — that is
+         the ceiling on everything Alpine installs into it. mem=6144 or more for
+         a desktop."
 
     if [ "$tb_kernel" = yes ]; then
         # The options Alpine's own boot entry uses, plus the console that entry

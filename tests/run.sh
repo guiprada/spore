@@ -2588,7 +2588,19 @@ TDSRC=$(cat "$ROOT/lib/try.sh")
 has 'it attaches a second usb drive'  "$TDSRC" 'drive=sporeextra'
 has 'on the same controller as the medium' "$TDSRC" 'bus=xhci.0,drive=sporeextra'
 TD_BAD=$(SPORE_TRY_LOG=$TD/log "$SPORE" try /dev/null nonsense 2>&1 || true)
-has 'an unknown option still names the real ones' "$TD_BAD" '(write, bootloader, disk, disk=PATH)'
+has 'an unknown option still names the real ones' "$TD_BAD" '(write, bootloader, disk, disk=PATH, mem=MB)'
+# 2048 is plenty for a file server and not enough for a desktop, and not because
+# of the desktop: a diskless Alpine installs world into a tmpfs root sized at
+# half of RAM, so the guest's memory is the ceiling on everything installed. A
+# VM that runs out of it looks like a broken spore.
+TD_MEM=$("$SPORE" try /dev/null mem=nonsense 2>&1 || true)
+has 'mem= takes megabytes'            "$TD_MEM" 'mem= takes megabytes'
+TD_TINY=$("$SPORE" try /dev/null mem=64 2>&1 || true)
+has 'and refuses one that cannot boot' "$TD_TINY" 'too little to boot Alpine at all'
+TDSRC2=$(cat "$ROOT/lib/try.sh")
+has 'the guest memory is no longer fixed' "$TDSRC2" '-m "$tb_mem"'
+has 'and the guest says what its root ceiling is' "$TDSRC2" 'that is
+         the ceiling on everything Alpine installs into it'
 TD_MISS=$("$SPORE" try /dev/null disk=/tmp/definitely-not-here.img 2>&1 || true)
 has 'and a disk that is not there is refused' "$TD_MISS" 'no such disk image or device'
 
