@@ -1429,16 +1429,23 @@ check 'the static address is recorded' "$(grep '^NET_ADDRESS=' "$WZS/modules/net
                                        'NET_ADDRESS=192.168.1.50'
 check 'the keymap, as setup-keymap takes it' "$(grep '^SYSTEM_KEYMAP=' "$WZS/modules/system.conf")" \
                                        'SYSTEM_KEYMAP="br br-abnt2"'
-# Asked once. A validation loop here was a prompt you could not get past, which
-# is a worse thing to be caught in than the problem it was avoiding.
+# A layout on its own is a layout, and its variants are the next question —
+# which is how setup-keymap asks it too. The old single prompt took "br" and
+# wrote it, leaving system.sh to double it into "br br"; now the answer is
+# resolved here, where the variants can be listed.
 WZK=$(mktemp -d /tmp/spore-wizkm.XXXXXX)
-printf '%s\n' 'kmhost' 'br' 'UTC' 'none' 'auto' 'dhcp' '' 'tester' 'n' '' 'n' 'n' 'n' |
+printf '%s\n' 'kmhost' 'br' '' 'UTC' 'none' 'auto' 'dhcp' '' 'tester' 'n' '' 'n' 'n' 'n' |
     env HOME="$WZK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZK/out" 2>&1 || true
-check 'a layout alone is taken as given' \
+check 'a layout alone asks which variant' \
+    "$(grep -c 'Variant \[' "$WZK/out")" 1
+check 'and the plain layout is the default' \
     "$(grep '^SYSTEM_KEYMAP=' "$WZK/spores/kmhost/spore/modules/system.conf")" \
-    'SYSTEM_KEYMAP="br"'
-check 'and the next question is the next one' \
-    "$(grep -c 'Keyboard \[' "$WZK/out")" 1
+    'SYSTEM_KEYMAP="br br"'
+# Asked once. A validation loop here was a prompt you could not get past, which
+# is a worse thing to be caught in than the problem it was avoiding — so a code
+# that is in the list is taken and the question does not come back.
+check 'and the layout is not asked twice' \
+    "$(grep -c 'Layout \[' "$WZK/out")" 1
 rm -rf "$WZK"
 # And there has to be a way to say "leave it alone" that is not a blank line,
 # because a blank line is how you take the default.
@@ -2266,39 +2273,110 @@ section 'spore setup: answers that come from a fixed set are picked from it'
 # question, which is two problems: you type a value exactly from a description
 # of it, and a near miss went somewhere different in each case.
 PK=$(mktemp -d /tmp/spore-pick.XXXXXX)
-# Picked entirely by number — the keyboard layout, the time client, the address
-# mode and the desktop, in one run.
-printf '%s\n' 'picked' '2' 'UTC' '2' 'eth0' '1' '' 'tester' 'n' '' 'n' 'y' '3' 'n' |
-    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$PK/out" 2>&1 || true
+# A fixture rather than this machine's own X data: the real file is 46KB and a
+# different version on every workstation, and a test that asserts against it
+# asserts against xkeyboard-config's release notes.
+cat > "$PK/rules.lst" <<'XKB'
+! model
+  pc105           Generic 105-key PC
+
+! layout
+  us              English (US)
+  br              Portuguese (Brazil)
+  de              German
+  novar           Has No Variants
+
+! variant
+  nodeadkeys      br: Portuguese (Brazil, no dead keys)
+  dvorak          br: Portuguese (Brazil, Dvorak)
+  dvorak          us: English (Dvorak)
+  nodeadkeys      de: German (no dead keys)
+
+! option
+  grp             Switching to another layout
+XKB
+export WZ_XKB_RULES="$PK/rules.lst"
+
+# Alpine builds kbd-bkeymaps out of this exact file (main/kbd/APKBUILD): every
+# line of the variant section becomes bkeymaps/<layout>/<layout>-<variant>, and
+# each layout named there also gets a plain <layout>. So the same derivation
+# over the same file offers the same list, which is what makes a real selector
+# possible days before the machine exists.
+PK_L=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/wizard.sh"; wz_xkb_layouts "$PK/rules.lst" )
+check 'the layouts are the ones that will have maps' \
+    "$(printf '%s\n' "$PK_L" | cut -f1 | tr '\n' ' ')" 'br de us '
+# A layout with no variants gets no map at all — the APKBUILD only generates the
+# plain one inside the variant loop — so offering it would offer something that
+# is not there.
+hasnt 'a layout with no variants is not offered' "$PK_L" 'novar'
+has   'and each carries its description'         "$PK_L" 'Portuguese (Brazil)'
+PK_V=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/wizard.sh"; wz_xkb_variants "$PK/rules.lst" br )
+check 'variants are named as the map file is' \
+    "$(printf '%s\n' "$PK_V" | cut -f1 | tr '\n' ' ')" 'br-nodeadkeys br-dvorak '
+hasnt 'and only that layout'  "$PK_V" 'de-nodeadkeys'
+
+# Layout then variant, as setup-keymap asks them; the time client, address mode
+# and desktop by number in the same run.
+printf '%s\n' 'picked' 'br' '2' 'UTC' '2' 'eth0' '1' '' 'tester' 'n' '' 'n' 'y' '3' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup > "$PK/out" 2>&1 || true
 PKS=$PK/spores/picked/spore
-check 'a layout chosen by number' \
-    "$(conf_read "$PKS/modules/system.conf" SYSTEM_KEYMAP)" 'br br-abnt2'
+check 'a variant chosen by number' \
+    "$(conf_read "$PKS/modules/system.conf" SYSTEM_KEYMAP)" 'br br-nodeadkeys'
 check 'a time client chosen by number' \
     "$(conf_read "$PKS/modules/system.conf" SYSTEM_NTP)" 'busybox'
 check 'an address mode chosen by number' \
     "$(conf_read "$PKS/modules/net.conf" NET_MODE)" 'dhcp'
 check 'a desktop chosen by number' \
     "$(conf_read "$PKS/modules/desktop.conf" DESKTOP_ENV)" 'sway'
-# The list is shown, not described in the question.
-has 'the layouts are listed'   "$(cat "$PK/out")" ' 2) br br-abnt2'
-has 'with what they are'       "$(cat "$PK/out")" 'Brazilian, ABNT2'
-has 'and the time clients too' "$(cat "$PK/out")" ' 2) busybox'
+# The layouts are shown as a column of codes, the way setup-keymap shows them;
+# the variants as a numbered list, because there are few enough to number.
+has 'the layouts are listed'        "$(cat "$PK/out")" 'br'
+has 'the variants are numbered'     "$(cat "$PK/out")" ' 2) br-nodeadkeys'
+has 'the plain layout is first'     "$(cat "$PK/out")" " 1) br               the layout's own default"
+has 'with what each one is'         "$(cat "$PK/out")" 'Portuguese (Brazil, no dead keys)'
+has 'and the time clients too'      "$(cat "$PK/out")" ' 2) busybox'
 
-# Typing the name still works, which is what every earlier run of this wizard
-# did and what a person who knows the answer will still do.
+# A whole pair in one answer, which setup-keymap also takes and which anyone who
+# already knows the answer will type. It skips the variant question.
 printf '%s\n' 'named' 'br br-abnt2' 'UTC' 'busybox' 'eth0' 'dhcp' '' 'tester' 'n' '' 'n' 'n' 'n' |
-    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup >/dev/null 2>&1 || true
-check 'a layout typed by name' \
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup > "$PK/named" 2>&1 || true
+check 'a pair typed in one go is taken whole' \
     "$(conf_read "$PK/spores/named/spore/modules/system.conf" SYSTEM_KEYMAP)" 'br br-abnt2'
+check 'and the variant is not asked'  "$(grep -c 'Variant \[' "$PK/named")" 0
 check 'a time client typed by name' \
     "$(conf_read "$PK/spores/named/spore/modules/system.conf" SYSTEM_NTP)" 'busybox'
+
+# Knowing "portuguese" is far likelier than knowing "br", and a column of 83
+# codes does not say which one you want.
+printf '%s\n' 'search' 'brazil' '' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup > "$PK/search" 2>&1 || true
+has   'a name finds its code'   "$(cat "$PK/search")" 'br — Portuguese (Brazil)'
+check 'and is what gets written' \
+    "$(conf_read "$PK/spores/search/spore/modules/system.conf" SYSTEM_KEYMAP)" 'br br'
+# Several matches are listed rather than guessed between.
+printf '%s\n' 'many' 'german' 'de' '' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup > "$PK/many" 2>&1 || true
+check 'an ambiguous search resolves to one' \
+    "$(conf_read "$PK/spores/many/spore/modules/system.conf" SYSTEM_KEYMAP)" 'de de'
+# And a search that matches nothing says so rather than taking it.
+printf '%s\n' 'none' 'klingon' 'us' '' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup > "$PK/none" 2>&1 || true
+has   'a search with no match says so' "$(cat "$PK/none")" "no layout code or name matches 'klingon'"
+check 'and the answer after it lands' \
+    "$(conf_read "$PK/spores/none/spore/modules/system.conf" SYSTEM_KEYMAP)" 'us us'
 
 # The one that used to fail silently, and in the worst direction: anything that
 # was not the literal word "static" fell through to dhcp, so a typo configured
 # the machine for a different network and nothing said so.
-printf '%s\n' 'typo' '1' 'UTC' '1' 'eth0' 'statc' 'static' '10.0.0.5' '' '' '' \
+printf '%s\n' 'typo' 'us us' 'UTC' '1' 'eth0' 'statc' 'static' '10.0.0.5' '' '' '' \
     '' 'tester' 'n' '' 'n' 'n' 'n' |
-    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$PK/typo" 2>&1 || true
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup > "$PK/typo" 2>&1 || true
 has   'a misspelt address mode is refused' "$(cat "$PK/typo")" "'statc' is not one of them"
 check 'and does not quietly become dhcp' \
     "$(conf_read "$PK/spores/typo/spore/modules/net.conf" NET_MODE)" 'static'
@@ -2306,30 +2384,30 @@ check 'and does not quietly become dhcp' \
 check 'the question comes back once' "$(grep -c 'Address \[' "$PK/typo")" 2
 
 # A number outside the list is a different mistake from a wrong name, and says so.
-printf '%s\n' 'range' '99' '1' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
-    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$PK/range" 2>&1 || true
+printf '%s\n' 'range' 'br' '99' '1' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup > "$PK/range" 2>&1 || true
 has   'a number off the end says so'  "$(cat "$PK/range")" 'there is no 99) in the list'
-# And is never taken as the answer itself. On the open list this wrote
-# SYSTEM_KEYMAP=99: the index lookup failed and "anything else is accepted as
-# typed" then accepted it. No keyboard layout is a number, and a wrong index is
-# a slip rather than a value.
 check 'and the answer after it lands' \
-    "$(conf_read "$PK/spores/range/spore/modules/system.conf" SYSTEM_KEYMAP)" 'us us'
+    "$(conf_read "$PK/spores/range/spore/modules/system.conf" SYSTEM_KEYMAP)" 'br br'
 
-# The keyboard list is a shortcut, not the set: the real one is in kbd-bkeymaps
-# on the target and is not knowable here. A prompt that refused an off-list pair
-# would be one you could not get past, which this file has been caught by once.
-printf '%s\n' 'open' 'ru ru' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
-    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$PK/open" 2>&1 || true
-check 'a layout that is not on the list is taken as typed' \
-    "$(conf_read "$PK/spores/open/spore/modules/system.conf" SYSTEM_KEYMAP)" 'ru ru'
-hasnt 'without being argued with' "$(cat "$PK/open")" 'is not one of them'
-# And the escape from it is on the list rather than being folklore.
-has 'leaving the layout alone is an option' "$(cat "$PK/out")" 'leave the layout alone'
+# A dash still means leave it alone, and is in the prose rather than folklore.
+has 'leaving the layout alone is offered' "$(cat "$PK/out")" 'A dash leaves the'
 printf '%s\n' 'nokm' '-' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
-    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup >/dev/null 2>&1 || true
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES="$PK/rules.lst" \
+        "$SPORE" setup >/dev/null 2>&1 || true
 check 'and a dash still writes no layout at all' \
     "$(grep -c '^SYSTEM_KEYMAP=' "$PK/spores/nokm/spore/modules/system.conf" || true)" 0
+
+# No X keyboard data at all — a headless workstation, or a mac. The short list is
+# what is left, and it is still better than a bare prompt.
+printf '%s\n' 'noxkb' '2' 'UTC' '1' 'eth0' '1' '' 'tester' 'n' '' 'n' 'n' 'n' |
+    env HOME="$PK" SUDO_USER= SPORE_PUBKEY= WZ_XKB_RULES=/nonexistent \
+        "$SPORE" setup > "$PK/noxkb" 2>&1 || true
+has   'without xkb data it says so' "$(cat "$PK/noxkb")" 'No X keyboard data on this machine'
+check 'and falls back to a short list' \
+    "$(conf_read "$PK/spores/noxkb/spore/modules/system.conf" SYSTEM_KEYMAP)" 'br br-abnt2'
+unset WZ_XKB_RULES
 
 # A default outside its own list makes the prompt unanswerable: blank takes the
 # default, the default is refused, and there is no third thing to type. That is
@@ -2346,8 +2424,8 @@ section 'spore setup asks about files, so the answer is one command'
 # command is where that belongs: a second verb for it would be a parallel way to
 # express configuration, and the conf files are already the format.
 WZ=$(mktemp -d /tmp/spore-wizshare.XXXXXX)
-printf 'coisas\n\n\n\n\n\n\n\n\n\ny\n\n\ny\ny\nn\n' |
-    "$SPORE" setup "$WZ/m" >/dev/null 2>&1 || true
+printf 'coisas\n\n\n\n\n\n\n\n\n\n\ny\n\n\ny\ny\nn\n' |
+    "$SPORE" setup "$WZ/m" > "$WZ/m.out" 2>&1 || true
 if [ -f "$WZ/m/spore/spore.conf" ]; then
     has   'answering yes turns both modules on' \
         "$(conf_read "$WZ/m/spore/spore.conf" MODULES)" 'storage dufs'
@@ -2373,7 +2451,7 @@ if [ -f "$WZ/m/spore/spore.conf" ]; then
     has 'and the spore it wrote plans the service' "$WZ_PLAN" 'spore-automount'
 
     # Read-only is the default, and it must not hand the disks over anyway.
-    printf 'coisas\n\n\n\n\n\n\n\n\n\ny\n\n\nn\ny\nn\n' |
+    printf 'coisas\n\n\n\n\n\n\n\n\n\n\ny\n\n\nn\ny\nn\n' |
         "$SPORE" setup "$WZ/m3" >/dev/null 2>&1 || true
     check 'a read-only share sets no owner' \
         "$(conf_read "$WZ/m3/spore/modules/storage.conf" STORAGE_OWNER)" ''
@@ -2381,7 +2459,7 @@ if [ -f "$WZ/m/spore/spore.conf" ]; then
         "$(cat "$WZ/m3/spore/modules/storage.conf")" 'refuse every upload'
 
     # Answering no leaves both out entirely rather than writing them off.
-    printf 'coisas\n\n\n\n\n\n\n\n\n\nn\nn\n' |
+    printf 'coisas\n\n\n\n\n\n\n\n\n\n\nn\nn\n' |
         "$SPORE" setup "$WZ/m2" >/dev/null 2>&1 || true
     hasnt 'answering no leaves them out' \
         "$(conf_read "$WZ/m2/spore/spore.conf" MODULES)" 'dufs'
@@ -2391,7 +2469,7 @@ if [ -f "$WZ/m/spore/spore.conf" ]; then
 
     # The desktop is the same shape of question: one answer, and the module is
     # on with a conf that explains itself.
-    printf 'coisas\n\n\n\n\n\n\n\n\n\nn\ny\nsway\n' |
+    printf 'coisas\n\n\n\n\n\n\n\n\n\n\nn\ny\nsway\n' |
         "$SPORE" setup "$WZ/m4" >/dev/null 2>&1 || true
     has   'answering yes turns the desktop on' \
         "$(conf_read "$WZ/m4/spore/spore.conf" MODULES)" 'desktop'
@@ -2411,7 +2489,14 @@ if [ -f "$WZ/m/spore/spore.conf" ]; then
     hasnt 'the gateway is not offered as the resolver' "$WZSRC" "'DNS servers, space separated' \"\${wz_gw:-1.1.1.1}\""
     has   'a resolver that answers is'                 "$WZSRC" "'DNS servers, space separated' '1.1.1.1'"
 else
-    t_skip 'wizard file-sharing section (setup did not produce a spore here)'
+    # Not a skip. Nothing here is optional or environment-dependent — the wizard
+    # is fed answers on stdin and writes a directory — so "it produced nothing"
+    # is a failure. As a skip it was invisible twice, both times because a new
+    # prompt was added and the canned answers no longer lined up. A test that
+    # stops testing does not fail, which is the only way that can happen twice.
+    t_fail 'spore setup produced a machine directory' \
+        "no $WZ/m/spore/spore.conf; the wizard said:
+$(sed 's/^/           /' "$WZ/m.out" 2>/dev/null || echo '           (no output captured)')"
 fi
 rm -rf "$WZ"
 

@@ -153,6 +153,171 @@ _wz_pick() {
 # One of these, and nothing else.
 wz_pick() { _wz_pick strict "$@"; }
 
+# --- keyboard layouts, from the same data Alpine builds them from -------------
+#
+# setup-keymap asks twice — layout, then variant — against the real set, which
+# it gets by installing kbd-bkeymaps and listing /usr/share/bkeymaps. None of
+# that is available here: this runs on a workstation, days before the machine
+# exists.
+#
+# But the set is derivable, because Alpine derives it. main/kbd/APKBUILD reads
+# /usr/share/X11/xkb/rules/base.lst — the X keyboard data this workstation also
+# has — takes every line of its "! variant" section as one <layout>-<variant>
+# map, gives every layout named there a plain <layout> map as well, and installs
+# each as bkeymaps/<layout>/<name>.bmap.gz. That pair, <layout> and <name>, is
+# exactly what SYSTEM_KEYMAP holds.
+#
+# So the same transformation, over the same file, offers the same list. What it
+# cannot promise is the version: the target's set comes from whichever
+# xkeyboard-config Alpine built against, and this workstation has its own. A
+# pair that is right here and missing there is caught on the machine by
+# render_keymap, which names the ones that do exist. That is a message rather
+# than a guess, which is why this can afford to be a list rather than a warning.
+WZ_XKB_RULES=${WZ_XKB_RULES-}
+
+wz_xkb_file() {
+    if [ -n "$WZ_XKB_RULES" ]; then
+        [ -f "$WZ_XKB_RULES" ] && printf '%s' "$WZ_XKB_RULES"
+        return 0
+    fi
+    for wxf_f in /usr/share/X11/xkb/rules/base.lst \
+                 /usr/share/X11/xkb/rules/evdev.lst; do
+        if [ -f "$wxf_f" ]; then printf '%s' "$wxf_f"; return 0; fi
+    done
+    return 0
+}
+
+# Only the layouts that appear in the variant section: the APKBUILD generates a
+# plain <layout> map inside that loop, so a layout with no variants gets no map
+# at all and offering it would be offering something that is not there.
+wz_xkb_layouts() {
+    awk '
+        /^! layout/  { sec = "l"; next }
+        /^! variant/ { sec = "v"; next }
+        /^!/         { sec = "";  next }
+        sec == "l" && NF { c = $1; $1 = ""; sub(/^[ \t]+/, ""); d[c] = $0; next }
+        sec == "v" && NF { l = $2; sub(/:$/, "", l); has[l] = 1; next }
+        END { for (l in has) printf "%s\t%s\n", l, (l in d ? d[l] : l) }
+    ' "$1" | sort
+}
+
+# Named the way the map file is, because that is what SYSTEM_KEYMAP carries:
+# bkeymaps/br/br-nodeadkeys.bmap.gz is the pair "br br-nodeadkeys".
+wz_xkb_variants() {
+    awk -v want="$2" '
+        /^! variant/ { sec = 1; next }
+        /^!/         { sec = 0; next }
+        sec && NF {
+            l = $2; sub(/:$/, "", l)
+            if (l != want) next
+            d = $0; sub(/^[ \t]*[^ \t]+[ \t]+[^ \t]+:[ \t]*/, "", d)
+            printf "%s-%s\t%s\n", want, $1, d
+        }
+    ' "$1"
+}
+
+wz_xkb_columns() {
+    wxc_w=$(stty size 2>/dev/null | cut -d' ' -f2) || wxc_w=''
+    case $wxc_w in ''|*[!0-9]*) wxc_w=80 ;; esac
+    [ "$wxc_w" -ge 40 ] || wxc_w=80
+    cut -f1 "$1" | awk -v w="$wxc_w" '
+        { a[n++] = $0; if (length($0) > m) m = length($0) }
+        END {
+            m += 2
+            cols = int(w / m); if (cols < 1) cols = 1
+            for (i = 0; i < n; i++) {
+                printf "%-*s", m, a[i]
+                if ((i + 1) % cols == 0) printf "\n"
+            }
+            if (n % cols) printf "\n"
+        }
+    ' >&2
+}
+
+# wz_keymap <var> — sets it to "<layout> <variant>", or empty for "leave it".
+wz_keymap() {
+    wk_var=$1
+    wk_rules=$(wz_xkb_file)
+    if [ -z "$wk_rules" ]; then
+        # No X keyboard data here — a headless workstation, or a mac. The short
+        # list is all that is left, and it is still better than a bare prompt.
+        wz_say 'No X keyboard data on this machine to list layouts from, so this'
+        wz_say 'is the short list. Any other "<layout> <variant>" pair can be'
+        wz_say 'typed and is checked on the target.'
+        wz_pick_open "$wk_var" 'Keyboard' 'us us' \
+            'us us=US English' \
+            'br br-abnt2=Brazilian, ABNT2' \
+            'gb gb=UK English' \
+            'de de-nodeadkeys=German' \
+            'fr fr=French' \
+            'es es=Spanish' \
+            'pt pt-latin1=Portuguese' \
+            'it it=Italian' \
+            '-=leave the layout alone'
+        [ "$(eval "printf '%s' \"\$$wk_var\"")" = - ] && eval "$wk_var=''"
+        return 0
+    fi
+
+    wk_list=$SPORE_WORK/xkb-layouts
+    wz_xkb_layouts "$wk_rules" > "$wk_list"
+    wz_say 'Alpine builds its keymaps out of the same X keyboard data this'
+    wz_say 'workstation has, so these are the layouts the machine will have.'
+    wz_say 'Type a code, or part of a name to search for one. A dash leaves the'
+    wz_say 'layout alone; a full "<layout> <variant>" pair skips the next question.'
+    printf '\n' >&2
+    wz_xkb_columns "$wk_list"
+
+    while :; do
+        wz_ask wk_a 'Layout' 'us'
+        if [ "$wk_a" = - ]; then eval "$wk_var=''"; return 0; fi
+        # A whole pair in one answer, which is what setup-keymap also accepts
+        # and what everyone who already knows the answer will type.
+        case $wk_a in
+            *' '*) eval "$wk_var=\$wk_a"; return 0 ;;
+        esac
+        if awk -F'\t' -v c="$wk_a" '$1 == c { f = 1 } END { exit !f }' "$wk_list"; then
+            wk_layout=$wk_a
+            break
+        fi
+        # Not a code, so read it as a search. "portuguese" is a far more likely
+        # thing to know than "pt", and a list of 83 codes does not tell you
+        # which one you want.
+        wk_hits=$(awk -F'\t' -v q="$wk_a" '
+            BEGIN { q = tolower(q) }
+            tolower($0) ~ q { print }
+        ' "$wk_list" 2>/dev/null) || wk_hits=''
+        wk_n=0
+        [ -z "$wk_hits" ] || wk_n=$(printf '%s\n' "$wk_hits" | grep -c .)
+        if [ "$wk_n" = 0 ]; then
+            wz_say "  no layout code or name matches '$wk_a'"
+            continue
+        fi
+        if [ "$wk_n" = 1 ]; then
+            wk_layout=$(printf '%s' "$wk_hits" | cut -f1)
+            wz_say "  $wk_layout — $(printf '%s' "$wk_hits" | cut -f2)"
+            break
+        fi
+        wz_say "  $wk_n layouts match '$wk_a':"
+        printf '%s\n' "$wk_hits" | while IFS="$SPORE_TAB" read -r wk_c wk_d; do
+            printf '     %-10s %s\n' "$wk_c" "$wk_d" >&2
+        done
+        wz_say '  type one of those codes'
+    done
+
+    # The variants are a closed set and a short one, so this half is a plain
+    # menu. The plain layout is first and is the default, because it is what
+    # "br" on its own has always meant.
+    wk_vars=$SPORE_WORK/xkb-variants
+    wz_xkb_variants "$wk_rules" "$wk_layout" > "$wk_vars"
+    set -- "$wk_layout=the layout's own default"
+    while IFS="$SPORE_TAB" read -r wk_v wk_d; do
+        [ -n "$wk_v" ] || continue
+        set -- "$@" "$wk_v=$wk_d"
+    done < "$wk_vars"
+    wz_pick wk_variant 'Variant' "$wk_layout" "$@"
+    eval "$wk_var=\"\$wk_layout \$wk_variant\""
+}
+
 # The list is a shortcut, not the whole set. For the keyboard layout the real
 # set lives in kbd-bkeymaps on the target and is not knowable from here, so an
 # answer that is not on the list is taken as typed — a prompt that refused it
@@ -197,28 +362,9 @@ INTRO
 
     # --- console -------------------------------------------------------------
     wz_head 'Console'
-    wz_say 'Keyboard layout and variant, as setup-keymap takes them. The list is'
-    wz_say 'the common ones, not all of them: the full set lives in kbd-bkeymaps'
-    wz_say 'on the machine, so any other pair can be typed and is checked there.'
-    wz_say 'A layout on its own is used as its own variant.'
-    # Open, not strict. This was once a loop that re-asked until it got two
-    # words, which is a worse thing to be caught in than the problem it was
-    # avoiding — a prompt you cannot get past is not validation, and the set it
-    # was validating against does not exist on this side. What a list can do is
-    # show the shape of an answer, which is all the prose above was doing.
-    wz_pick_open wz_keymap 'Keyboard' 'us us' \
-        'us us=US English' \
-        'br br-abnt2=Brazilian, ABNT2' \
-        'br br=Brazilian, US layout' \
-        'gb gb=UK English' \
-        'de de-nodeadkeys=German' \
-        'fr fr=French' \
-        'es es=Spanish' \
-        'pt pt-latin1=Portuguese' \
-        'it it=Italian' \
-        'dvorak dvorak=Dvorak' \
-        '-=leave the layout alone'
-    [ "$wz_keymap" = - ] && wz_keymap=''
+    # Two questions, as setup-keymap asks them, against the set Alpine will
+    # actually have — see wz_keymap for where that list comes from.
+    wz_keymap wz_keymap
     wz_say ''
     wz_say 'Timezone as a zone name — America/Sao_Paulo, Europe/Lisbon, UTC.'
     wz_ask wz_tz 'Timezone' 'UTC'

@@ -577,6 +577,59 @@ error: desktop: MODULES lists desktop before users, and the accounts have to
            MODULES="users desktop"
 ```
 
+### The questions it asks
+
+Every answer that comes from a fixed set is picked from one. Type the number or
+the name; both work, so an answer you already know still goes straight in.
+
+```
+   1) chrony           the usual one; a daemon that keeps it right
+   2) busybox          already installed, smaller, less accurate
+   3) openntpd         from OpenBSD
+   4) none             no time sync at all
+NTP client [chrony]:
+```
+
+This replaced four free-text prompts with the set spelled out in the question,
+and one of them was failing in the worst direction: anything that was not the
+literal word `static` fell through to dhcp, so a typo configured the machine for
+a different network and nothing said so.
+
+**The keyboard layout is asked the way `setup-keymap` asks it** — layout, then
+variant — and against the real set rather than a handful of guesses:
+
+```
+af     al     am     ara    at     az     ba     bd     be     bg     br
+brai   by     ca     ch     cm     cn     cz     de     dk     dz     ee
+…
+Layout [us]: brazil
+  br — Portuguese (Brazil)
+
+   1) br               the layout's own default
+   2) br-nodeadkeys    Portuguese (Brazil, no dead keys)
+   3) br-dvorak        Portuguese (Brazil, Dvorak)
+   …
+Variant [br]:
+```
+
+Part of a name searches, because knowing "portuguese" is likelier than knowing
+`br`, and a column of 83 codes does not tell you which one you want.
+
+The list is real because **Alpine derives it from a file this workstation also
+has.** `main/kbd/APKBUILD` reads `/usr/share/X11/xkb/rules/base.lst`, takes every
+line of its `! variant` section as one `<layout>-<variant>` map, gives each
+layout named there a plain `<layout>` map too, and installs them as
+`bkeymaps/<layout>/<name>.bmap.gz`. That pair is exactly what `SYSTEM_KEYMAP`
+holds. Same file, same derivation, same list — days before the machine exists.
+
+What it cannot promise is the *version*: the target's set comes from whichever
+xkeyboard-config Alpine built against, and this workstation has its own. A pair
+that is right here and missing there is caught on the machine by `render_keymap`,
+which names the ones that do exist — a message rather than a guess, which is what
+lets this be a list instead of a warning. A full `<layout> <variant>` pair typed
+at the first prompt is taken whole and skips the second, and a workstation with
+no X keyboard data falls back to a short list and says so.
+
 ## Making the boot medium
 
 ```sh
