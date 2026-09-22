@@ -1058,12 +1058,19 @@ wz_land() {
     mv "$wl_stage" "$wz_dir" || die "cannot write $wz_dir"
     wz_dir=$(CDPATH='' cd -- "$wz_dir" && pwd)
 
+    wl_mem=$(wz_try_mem "$wz_dir")
+    wl_why=''
+    [ -z "$wl_mem" ] || wl_why="
+  mem= because a guest's root is half its memory, and a diskless desktop
+  installs the whole of itself into that at every boot."
     cat >&2 <<SUMMARY
 
 Saved to $wz_dir — it is not on a disk yet.
 
   sudo spore media /dev/sdX alpine-standard-*.iso
   sudo spore install $wz_dir /dev/sdX
+  sudo spore try /dev/sdX$wl_mem
+$wl_why
 SUMMARY
 
     if [ -z "$wz_key" ]; then
@@ -1097,6 +1104,17 @@ wz_claim_dir() {
             \$EDITOR $wc_d/spore/modules/<module>.conf
             sudo spore install $wc_d /dev/sdX"
     rm -rf "$wc_d"
+}
+
+# A desktop does not fit in the guest `try` gives by default, and not because of
+# the desktop: a diskless Alpine installs everything in world into a tmpfs root
+# sized at half of RAM, so 2048 is a 1G ceiling on the whole installed system.
+# Printing `spore try` without that sends someone into a guest that runs out of
+# room and looks like a broken spore.
+wz_try_mem() {
+    [ -n "$(conf_get "$1/spore/modules/desktop.conf" DESKTOP_ENV '' 2>/dev/null || true)" ] &&
+        printf ' mem=6144'
+    return 0
 }
 
 # The newest Alpine ISO lying around, so the common case is one Enter.
@@ -1191,14 +1209,20 @@ wz_disk() {
     "$wd_sudo" "$SPORE_PREFIX/bin/spore" install "$wd_dir" "$wd_dev" ||
         { warn 'the medium is made, but this machine is not on it yet.'; return 1; }
 
+    wd_mem=$(wz_try_mem "$wd_dir")
+    wd_why=''
+    [ -z "$wd_mem" ] || wd_why='
+  A diskless Alpine reinstalls everything in world into a RAM root at every
+  boot, and a guest'\''s root is half its memory — so a desktop needs the mem=.
+'
     cat >&2 <<DONE
 
 $wd_host is on $wd_dev. Boot it.
 
 Or boot it here first, in a VM, without touching the medium:
 
-  sudo spore try $wd_dev
-
+  sudo spore try $wd_dev$wd_mem
+$wd_why
 To change it later, mount the data partition and edit the files there —
 the spore on the disk is the machine, there is no other copy:
 

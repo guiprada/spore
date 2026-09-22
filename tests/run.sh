@@ -2670,6 +2670,23 @@ if [ -f "$WZ/m/spore/spore.conf" ]; then
     # that is not obvious.
     has 'the reason doas needs one survives' "$WZSRC" 'doas prompts for'
     has 'and what the root one is for'      "$WZSRC" 'console rescue only'
+
+    # The wizard ends by suggesting `spore try`, and for a desktop that guest is
+    # too small — not because of the desktop, but because a diskless Alpine
+    # installs world into a tmpfs root sized at half of RAM. Printing the command
+    # without the mem= sends someone into a guest that runs out and looks like a
+    # broken spore, which is the failure the mem= option exists to prevent.
+    has 'a desktop spore is offered try with room for it' \
+        "$(conf_read "$WZ/m4/spore/spore.conf" MODULES)" 'desktop'
+    printf 'coisas\n\n\n\n\n\n\n\n\n\n\nn\ny\n1\nn\n' |
+        env HOME="$WZ/h4" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZ/try4" 2>&1 || true
+    has   'the try line carries mem='  "$(cat "$WZ/try4")" 'spore try /dev/sdX mem=6144'
+    has   'and says why it has to'     "$(cat "$WZ/try4")" "root is half its memory"
+    printf 'coisas\n\n\n\n\n\n\n\n\n\n\nn\nn\nn\n' |
+        env HOME="$WZ/h5" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZ/try5" 2>&1 || true
+    has   'a machine without one is offered the plain try' \
+        "$(cat "$WZ/try5")" 'spore try /dev/sdX'
+    hasnt 'and no memory it does not need' "$(cat "$WZ/try5")" 'mem=6144'
 else
     # Not a skip. Nothing here is optional or environment-dependent — the wizard
     # is fed answers on stdin and writes a directory — so "it produced nothing"
