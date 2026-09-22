@@ -1664,9 +1664,13 @@ fi
 rm -rf "$WZX"
 
 # A mistyped device path costs a retry, not the answers to fifteen questions.
+# The ISO is asked first now — it is the precondition — so one has to be there
+# for the device prompt to be reached at all.
 WZR=$(mktemp -d /tmp/spore-wizretry.XXXXXX)
+mkdir -p "$WZR/Downloads"
+: > "$WZR/Downloads/alpine-standard-9.9.9-x86_64.iso"
 printf '%s\n' 'retryhost' 'us us' 'UTC' 'none' 'eth0' 'dhcp' '' 'tester' 'n' '' \
-    'n' 'n' 'y' '/dev/definitely-not-here' '' |
+    'n' 'n' 'y' '' '/dev/definitely-not-here' '' |
     env HOME="$WZR" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZR/out" 2>&1 || true
 has 'a bad device path is told, not fatal' "$(cat "$WZR/out")" 'is not a block device'
 has 'and it asks again'                    "$(cat "$WZR/out")" 'blank to skip'
@@ -2753,6 +2757,37 @@ if [ -f "$WZ/m/spore/spore.conf" ]; then
         "$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/wizard.sh"
             PATH="$WZR/bin:$PATH"; wz_root_disk )" ''
     rm -rf "$WZR"
+
+    # Answering yes to the stick and getting no stick, with nothing saying which
+    # answer caused it. The ISO was asked second, so you worked out which of your
+    # disks was the stick and were told everything on it would be destroyed —
+    # and only then found out there was no image to write. That selection was
+    # for nothing, and the step ended in silence.
+    WZN=$(mktemp -d /tmp/spore-wiznodisk.XXXXXX)
+    printf 'nodisk\n\n\n\n\n\n\n\n\n\n\nn\nn\ny\n\n' |
+        env HOME="$WZN" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZN/out" 2>&1 || true
+    WZN_OUT=$(cat "$WZN/out")
+    has   'saying yes with no ISO says why nothing was written' "$WZN_OUT" \
+        'no ISO, so no medium was made'
+    has   'and that the machine is still there'  "$WZN_OUT" 'write it when you have one'
+    # The precondition is asked first, so the disk is never chosen for nothing.
+    hasnt 'and it never asks which disk to erase' "$WZN_OUT" 'Device (number or path'
+    check 'the machine is saved all the same' \
+        "$([ -f "$WZN/spores/nodisk/spore/spore.conf" ] && echo yes || echo no)" yes
+    # With an ISO to hand, the disk is asked — and skipping that says why too.
+    mkdir -p "$WZN/Downloads"
+    : > "$WZN/Downloads/alpine-standard-9.9.9-x86_64.iso"
+    printf 'nodev\n\n\n\n\n\n\n\n\n\n\nn\nn\ny\n\n\n' |
+        env HOME="$WZN" SUDO_USER= SPORE_PUBKEY= "$SPORE" setup > "$WZN/out2" 2>&1 || true
+    WZN_OUT2=$(cat "$WZN/out2")
+    has 'an ISO that exists gets as far as the disk' "$WZN_OUT2" 'Device (number or path'
+    has 'and skipping that says why as well'         "$WZN_OUT2" \
+        'no device, so nothing was written to any disk'
+    # Order, stated as itself: the ISO is the precondition and is asked first.
+    check 'the ISO is asked before the disk' \
+        "$(printf '%s\n' "$WZN_OUT2" | grep -n 'Alpine ISO (number\|Device (number' |
+           head -n 1 | sed 's/.*\(Alpine ISO\|Device\).*/\1/')" 'Alpine ISO'
+    rm -rf "$WZN"
 else
     # Not a skip. Nothing here is optional or environment-dependent — the wizard
     # is fed answers on stdin and writes a directory — so "it produced nothing"

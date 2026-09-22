@@ -1180,6 +1180,57 @@ wz_disk() {
         wd_sudo=sudo
     fi
 
+    # The ISO first, because it is the precondition: without one `media` cannot
+    # run at all. Asked second, as it was, somebody answers yes, works out which
+    # of their disks is the stick, is told everything on it will be destroyed —
+    # and only then finds out there is no image to write. That selection was for
+    # nothing, and the step ended without saying so.
+    wz_say ''
+    wd_isos=$SPORE_WORK/isos
+    wz_find_isos > "$wd_isos"
+    if [ -s "$wd_isos" ]; then
+        awk '{ printf "   %2d) %s\n", NR, $0 }' "$wd_isos" >&2
+        wz_say ''
+        wd_found=$(head -n 1 "$wd_isos")
+    else
+        # The prompt used to be a bare question with no default and nothing to
+        # download named in it, which is a dead end for anybody who has not made
+        # one of these before.
+        wz_say 'No alpine-*.iso in ~/Downloads, here, or your home directory.'
+        wz_say 'Get one from https://alpinelinux.org/downloads/ — the *standard*'
+        wz_say 'x86_64 image, not virt: virt leaves out the drivers a real'
+        wz_say 'machine needs for its disks and its screen. Put it in ~/Downloads'
+        wz_say 'and it is found by itself next time.'
+        wz_say ''
+        wd_found=''
+    fi
+    while :; do
+        wz_ask wd_iso 'Alpine ISO (number or path, blank to skip)' "$wd_found"
+        if [ -z "$wd_iso" ]; then
+            # Never silently. Answering yes and then getting a machine directory
+            # and no disk, with nothing saying which answer caused it, is the
+            # complaint this whole reordering came from.
+            warn "no ISO, so no medium was made and nothing was written to any
+         disk. The machine is saved below; write it when you have one."
+            return 1
+        fi
+        case $wd_iso in
+            ''|*[!0-9]*) : ;;
+            *) wd_ipick=$(sed -n "${wd_iso}p" "$wd_isos")
+               if [ -z "$wd_ipick" ]; then
+                   warn "there is no $wd_iso) in the list."
+                   wd_found=''
+                   continue
+               fi
+               wd_iso=$wd_ipick ;;
+        esac
+        [ -f "$wd_iso" ] && break
+        warn "no such file: $wd_iso"
+        # Never offer back a default that was just rejected: pressing Enter on
+        # it would ask the same unanswerable question for ever.
+        wd_found=''
+    done
+
     wz_say ''
     wd_root=$(wz_root_disk)
     wd_list=$SPORE_WORK/disks
@@ -1199,7 +1250,11 @@ wz_disk() {
     # a retry, not the answers to fifteen questions.
     while :; do
         wz_ask wd_dev 'Device (number or path, blank to skip)' ''
-        [ -n "$wd_dev" ] || return 1
+        if [ -z "$wd_dev" ]; then
+            warn "no device, so nothing was written to any disk. The machine is
+         saved below; write it when the stick is to hand."
+            return 1
+        fi
         case $wd_dev in
             ''|*[!0-9]*) : ;;
             *) wd_pick=$(awk -v n="$wd_dev" 'NR == n { print $1 }' "$wd_list")
@@ -1234,45 +1289,6 @@ wz_disk() {
             continue
         fi
         break
-    done
-
-    wz_say ''
-    wd_isos=$SPORE_WORK/isos
-    wz_find_isos > "$wd_isos"
-    if [ -s "$wd_isos" ]; then
-        awk '{ printf "   %2d) %s\n", NR, $0 }' "$wd_isos" >&2
-        wz_say ''
-        wd_found=$(head -n 1 "$wd_isos")
-    else
-        # The prompt used to be a bare question with no default and nothing to
-        # download named in it, which is a dead end for anybody who has not made
-        # one of these before.
-        wz_say 'No alpine-*.iso in ~/Downloads, here, or your home directory.'
-        wz_say 'Get one from https://alpinelinux.org/downloads/ — the *standard*'
-        wz_say 'x86_64 image, not virt: virt leaves out the drivers a real'
-        wz_say 'machine needs for its disks and its screen. Put it in ~/Downloads'
-        wz_say 'and it is found by itself next time.'
-        wz_say ''
-        wd_found=''
-    fi
-    while :; do
-        wz_ask wd_iso 'Alpine ISO (number or path, blank to skip)' "$wd_found"
-        [ -n "$wd_iso" ] || return 1
-        case $wd_iso in
-            ''|*[!0-9]*) : ;;
-            *) wd_ipick=$(sed -n "${wd_iso}p" "$wd_isos")
-               if [ -z "$wd_ipick" ]; then
-                   warn "there is no $wd_iso) in the list."
-                   wd_found=''
-                   continue
-               fi
-               wd_iso=$wd_ipick ;;
-        esac
-        [ -f "$wd_iso" ] && break
-        warn "no such file: $wd_iso"
-        # Never offer back a default that was just rejected: pressing Enter on
-        # it would ask the same unanswerable question for ever.
-        wd_found=''
     done
 
     # media does its own listing and makes the path be typed back, so the
