@@ -516,6 +516,18 @@ section 'a machine brings its own network up before it fetches anything'
 # file pass is four phases too late: the run is already dead, at a failure that
 # reads like a broken mirror rather than like a machine with no address.
 has 'the interface is configured first of all' "$PLAN" 'netup      net-up'
+# And enabled, which netup alone never did. netup runs during an apply and
+# nowhere else, so a machine that had converged brought its network up never
+# again: every boot that appeared to work was a boot that re-applied, and the
+# first one that genuinely used its own overlay came up with no address — and
+# with it everything declaring `need net`, which is sshd and dufs both. A stock
+# diskless Alpine has `networking` in no runlevel; setup-alpine adds it and
+# nothing here did.
+has 'and the service is enabled for every later boot' "$PLAN" \
+    'svc        networking -> boot [enable]'
+# Enabled, not started: netup has the interface up by then, and starting the
+# service mid-apply would bounce it while packages are coming over it.
+hasnt 'and not started under the apply'  "$PLAN" 'svc        networking -> boot [on]'
 # ifup, not `rc-service networking`: asking OpenRC for the service drags in its
 # dependency graph, which wants fsck, which will not start that early — and the
 # whole thing dies as "cannot start networking as fsck would not start", three

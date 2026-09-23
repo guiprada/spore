@@ -123,6 +123,19 @@ cat > /etc/resolv.conf <<'SPORE_RESOLV_EOF'
 $net_resolv
 SPORE_RESOLV_EOF"
     fi
+    # netup runs during an apply and nowhere else, and for a long time that was
+    # the whole of it — so a machine that had converged brought its network up
+    # never again. Every boot that appeared to work was a boot that re-applied;
+    # the first one that genuinely used its own committed overlay came up with
+    # no address, and with it everything that declares `need net`: sshd and dufs
+    # both. A stock diskless Alpine has `networking` in no runlevel at all —
+    # setup-alpine is what normally adds it, and nothing here ever did.
+    #
+    # Enabled, not started. netup has the interface up by the time this runs,
+    # and starting the service now would bounce it in the middle of an apply
+    # that is fetching packages over it.
+    plan_svc networking boot enable
+
     # ifup, not `rc-service networking`. Asking OpenRC to start the service
     # drags in its whole dependency graph — which wants fsck, which will not
     # start this early — and the whole thing fails with "cannot start networking
