@@ -3518,6 +3518,17 @@ has 'the environment itself'            "$DK_XFCE" 'pkg        xfce4'
 # go back to. The machine is fine and looks dead; that is what happened.
 has 'and a greeter to reach it through' "$DK_XFCE" 'svc        lightdm -> default [enable]'
 hasnt 'which is not started by the apply' "$DK_XFCE" 'svc        lightdm -> default [on]'
+# lightdm.initd says `need localmount dbus`, so a greeter in a runlevel with no
+# dbus in one is a greeter that does not come up. setup-desktop adds dbus for
+# mate, lxqt and xfce-wayland and not for xfce — whose display manager is the
+# same lightdm as mate's — and mirroring that asymmetry cost a real machine its
+# greeter: the desktop installed, X worked, startx opened xfce, and the boot
+# ended at a text console saying nothing.
+has 'the bus the greeter declares it needs' "$DK_XFCE" 'svc        dbus -> default [on]'
+# And in world, not merely as somebody else's dependency: on a diskless box the
+# initramfs reinstalls world into the RAM root every boot, so a service package
+# that nothing names is one `apk del` from a runlevel link pointing at nothing.
+has 'and the package it comes from'         "$DK_XFCE" 'pkg        dbus'
 # setup-xorg-base and setup-wayland-base both end in `setup-devd udev`, because
 # Xorg's libinput driver and elogind's seats both want it. A diskless Alpine
 # boots with mdev.
@@ -3599,6 +3610,33 @@ has   'and it says so'                  "$DK_SW" 'sway has no display manager'
 DK_BAD=$(alpine "$SPORE" -s "$DK/s" -r "$DK/rx" plan 2>&1 || true)
 has 'an unknown environment is refused' "$DK_BAD" "not 'kde'"
 has 'and the message lists the real ones' "$DK_BAD" 'xfce xfce-wayland gnome plasma mate sway lxqt'
+
+# The guard that outlives the xfce fix. desktop_plan_dm pairs the bus with the
+# greeter so a new branch cannot forget it; this is what notices if someone
+# routes around the helper, and it walks DESKTOP_ENVS rather than a list of its
+# own, so adding an environment extends it automatically.
+DK_ENVS=$( . "$ROOT/modules/desktop.sh"; printf '%s' "$DESKTOP_ENVS" )
+DK_GAP=''
+for DK_E in $DK_ENVS; do
+    "$SPORE" -s "$DK/s" set desktop DESKTOP_ENV "$DK_E" >/dev/null 2>&1
+    DK_EP=$(alpine "$SPORE" -s "$DK/s" -r "$DK/rl$DK_E" plan 2>&1)
+    DK_DM=''
+    for DK_D in lightdm sddm gdm greetd; do
+        case $DK_EP in
+            *"svc        $DK_D -> default"*) DK_DM=$DK_D ;;
+        esac
+    done
+    [ -n "$DK_DM" ] || continue
+    case $DK_EP in
+        *'svc        dbus -> default [on]'*) : ;;
+        *) DK_GAP="$DK_GAP $DK_E($DK_DM)" ;;
+    esac
+done
+if [ -n "$DK_ENVS" ] && [ -z "$DK_GAP" ]; then
+    t_ok 'every environment with a display manager enables dbus'
+else
+    t_fail 'every environment with a display manager enables dbus' "missing for:$DK_GAP"
+fi
 rm -rf "$DK"
 
 section 'a package that is missing from a mirror that is down'

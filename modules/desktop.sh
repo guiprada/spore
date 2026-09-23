@@ -105,14 +105,14 @@ desktop_plan() {
                         polkit-elogind xfce4-screensaver xfce4-terminal font-dejavu; do
                 plan_pkg "$dt_p"
             done
-            plan_svc lightdm default enable
+            desktop_plan_dm lightdm
             desktop_plan_gtk_dark ;;
         xfce-wayland)
             for dt_p in xfce4 adwaita-icon-theme elogind greetd-gtkgreet gvfs \
                         labwc polkit-elogind xfce4-screensaver xfce4-terminal; do
                 plan_pkg "$dt_p"
             done
-            plan_svc greetd default enable
+            desktop_plan_dm greetd
             desktop_plan_gtk_dark
             desktop_plan_greetd ;;
         mate)
@@ -120,17 +120,15 @@ desktop_plan() {
                         polkit dbus dbus-x11 font-dejavu; do
                 plan_pkg "$dt_p"
             done
-            plan_svc dbus default on
-            plan_svc lightdm default enable ;;
+            desktop_plan_dm lightdm ;;
         lxqt)
             for dt_p in lxqt-desktop lximage-qt obconf-qt pavucontrol-qt arandr \
                         sddm font-dejavu dbus dbus-x11 openbox elogind \
                         polkit-elogind gvfs udisks2 adwaita-qt oxygen; do
                 plan_pkg "$dt_p"
             done
-            plan_svc dbus default on
             plan_svc elogind default on
-            plan_svc sddm default enable ;;
+            desktop_plan_dm sddm ;;
         gnome)
             # Upstream expands `apk info --depends gnome gnome-apps-core` so each
             # package lands in world explicitly. That needs the target's network
@@ -140,11 +138,11 @@ desktop_plan() {
             # upstream's expansion would keep it.
             plan_pkg gnome
             plan_pkg gnome-apps-core
-            plan_svc gdm default enable ;;
+            desktop_plan_dm gdm ;;
         plasma)
             plan_pkg plasma-desktop-meta
             plan_pkg kde-applications-base
-            plan_svc sddm default enable ;;
+            desktop_plan_dm sddm ;;
         sway)
             for dt_p in brightnessctl font-dejavu foot grim i3status sway swaybg \
                         swayidle swaylockd util-linux-login wl-clipboard wmenu xwayland; do
@@ -168,6 +166,36 @@ desktop_plan() {
 
     desktop_plan_groups
     desktop_plan_diskless "$dt_de"
+}
+
+# Every display manager Alpine packages declares dbus as a hard dependency, in
+# those words, in its own init script:
+#
+#     community/lightdm/lightdm.initd   need localmount dbus
+#     community/sddm/sddm.initd         need dbus localmount
+#     community/gdm/gdm.initd           need dbus
+#
+# so a display manager in a runlevel where dbus is in none is a display manager
+# that does not come up. setup-desktop adds dbus for mate, for lxqt and for
+# xfce-wayland — and not for xfce, whose display manager is the same lightdm as
+# mate's, with the same `need dbus`. That asymmetry is upstream's, this module
+# mirrored it faithfully, and it cost a machine its greeter: the desktop
+# installed, X worked, `startx` opened xfce, and the boot ended at a text
+# console with nothing anywhere saying why.
+#
+# Pairing the two in one place is the point. The next branch someone adds gets
+# dbus because it asked for a display manager, not because they remembered.
+# The package too, and not only because something else would probably drag it
+# in. On a diskless machine /etc/apk/world *is* the machine — the initramfs
+# apk-adds every line of it into the RAM root on every boot — so a service whose
+# package is only there as somebody else's dependency is a service that is one
+# `apk del` away from a runlevel link pointing at nothing. The init script
+# arrives with it: dbus-openrc is an install_if subpackage, so apk pulls it in
+# wherever dbus and openrc are both installed, which here is always.
+desktop_plan_dm() {
+    plan_pkg dbus
+    plan_svc dbus default on
+    plan_svc "$1" default enable
 }
 
 # setup-desktop writes this for the gtk desktops and nothing reads it back, so
