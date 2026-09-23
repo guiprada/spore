@@ -105,14 +105,14 @@ desktop_plan() {
                         polkit-elogind xfce4-screensaver xfce4-terminal font-dejavu; do
                 plan_pkg "$dt_p"
             done
-            plan_svc lightdm default on
+            plan_svc lightdm default enable
             desktop_plan_gtk_dark ;;
         xfce-wayland)
             for dt_p in xfce4 adwaita-icon-theme elogind greetd-gtkgreet gvfs \
                         labwc polkit-elogind xfce4-screensaver xfce4-terminal; do
                 plan_pkg "$dt_p"
             done
-            plan_svc greetd default on
+            plan_svc greetd default enable
             desktop_plan_gtk_dark
             desktop_plan_greetd ;;
         mate)
@@ -121,7 +121,7 @@ desktop_plan() {
                 plan_pkg "$dt_p"
             done
             plan_svc dbus default on
-            plan_svc lightdm default on ;;
+            plan_svc lightdm default enable ;;
         lxqt)
             for dt_p in lxqt-desktop lximage-qt obconf-qt pavucontrol-qt arandr \
                         sddm font-dejavu dbus dbus-x11 openbox elogind \
@@ -130,7 +130,7 @@ desktop_plan() {
             done
             plan_svc dbus default on
             plan_svc elogind default on
-            plan_svc sddm default on ;;
+            plan_svc sddm default enable ;;
         gnome)
             # Upstream expands `apk info --depends gnome gnome-apps-core` so each
             # package lands in world explicitly. That needs the target's network
@@ -140,11 +140,11 @@ desktop_plan() {
             # upstream's expansion would keep it.
             plan_pkg gnome
             plan_pkg gnome-apps-core
-            plan_svc gdm default on ;;
+            plan_svc gdm default enable ;;
         plasma)
             plan_pkg plasma-desktop-meta
             plan_pkg kde-applications-base
-            plan_svc sddm default on ;;
+            plan_svc sddm default enable ;;
         sway)
             for dt_p in brightnessctl font-dejavu foot grim i3status sway swaybg \
                         swayidle swaylockd util-linux-login wl-clipboard wmenu xwayland; do

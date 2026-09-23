@@ -74,6 +74,9 @@ _emit() {
 
 plan_pkg()     { _emit pkg "$1"; }
 plan_dir()     { _emit dir "$1" "${2:-0755}"; }
+# on = enabled and started; off = stopped and removed; enable = enabled and
+# left alone, for a service that would take the console away from the apply
+# that is installing it.
 plan_svc()     { _emit svc "$1" "${2:-default}" "${3:-on}"; }
 plan_persist() { _emit persist "$1"; }
 

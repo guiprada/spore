@@ -3463,7 +3463,13 @@ DK_XFCE=$(alpine "$SPORE" -s "$DK/s" -r "$DK/r" plan 2>&1)
 has 'xorg comes from setup-xorg-base'   "$DK_XFCE" 'pkg        xorg-server'
 has 'with the libinput driver'          "$DK_XFCE" 'pkg        xf86-input-libinput'
 has 'the environment itself'            "$DK_XFCE" 'pkg        xfce4'
-has 'and a greeter to reach it through' "$DK_XFCE" 'svc        lightdm -> default [on]'
+# Enabled, not started. A display manager started from inside the apply takes
+# the console on the boot that installed it — and on that boot udev has only
+# just been enabled into sysinit, which ran long before, so X comes up without
+# its devices, fails, and leaves the screen in graphics mode with no console to
+# go back to. The machine is fine and looks dead; that is what happened.
+has 'and a greeter to reach it through' "$DK_XFCE" 'svc        lightdm -> default [enable]'
+hasnt 'which is not started by the apply' "$DK_XFCE" 'svc        lightdm -> default [on]'
 # setup-xorg-base and setup-wayland-base both end in `setup-devd udev`, because
 # Xorg's libinput driver and elogind's seats both want it. A diskless Alpine
 # boots with mdev.
@@ -3526,7 +3532,7 @@ hasnt 'and not said at all on a host with a disk' "$DK_VM" 'into the RAM root at
 "$SPORE" -s "$DK/s" set desktop DESKTOP_ENV gnome >/dev/null 2>&1
 DK_GN=$(alpine "$SPORE" -s "$DK/s" -r "$DK/rg" plan 2>&1)
 has 'gnome plans its meta-packages'   "$DK_GN" 'pkg        gnome'
-has 'and its greeter'                 "$DK_GN" 'svc        gdm -> default [on]'
+has 'and its greeter, enabled only'   "$DK_GN" 'svc        gdm -> default [enable]'
 has 'and says it is the expensive one' "$DK_GN" 'much the largest'
 has 'with a simulate line that matches' "$DK_GN" 'apk add --simulate gnome'
 

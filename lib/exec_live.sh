@@ -153,7 +153,7 @@ el_svc() {
     es_name=$1 es_rl=$2 es_state=$3
     es_link=$(rootpath "/etc/runlevels/$es_rl/$es_name")
 
-    if [ "$es_state" = on ]; then
+    if [ "$es_state" = on ] || [ "$es_state" = enable ]; then
         if [ -e "$es_link" ] || [ -L "$es_link" ]; then
             unchanged "service $es_name ($es_rl)"
         elif ! mutate; then
@@ -165,6 +165,19 @@ el_svc() {
                 ln -sf "/etc/init.d/$es_name" "$es_link"
             fi
             changed "service $es_name ($es_rl)"
+        fi
+
+        # Enabled, deliberately not started. A display manager started from
+        # inside the apply takes the console on the boot that installed it —
+        # and on that boot udev has only just been enabled into sysinit, which
+        # ran long before, so X comes up without the devices it needs, fails,
+        # and leaves the screen in graphics mode with no console to go back to.
+        # The machine is fine and looks dead. Enabling is the durable half and
+        # is all that is wanted for anything that owns the display.
+        if [ "$es_state" = enable ]; then
+            say "$es_name is enabled and deliberately not started now — it takes
+         the console, and this boot is not the one it should take it on."
+            return 0
         fi
 
         if ! synthetic; then
