@@ -104,6 +104,27 @@ bootstrap_mountpoint() {
 # firstboot pass, and the ssh module counts that separately from the fact — so
 # this says "the machine boots without one", which is true, and not "it will
 # never have one", which would refuse a configuration that works.
+# Every setting a spore carries, as "<file>  KEY=value", sorted, with the
+# quoting normalised away so `STORAGE_AUTO="yes"` and `STORAGE_AUTO=yes` are the
+# same setting. Enough to diff two copies of a machine and say what differs,
+# which is the only question worth asking before replacing one with the other.
+bootstrap_settings() {
+    bs_dir=$1
+    for bs_f in "$bs_dir/spore.conf" "$bs_dir"/modules/*.conf; do
+        [ -f "$bs_f" ] || continue
+        awk -v f="${bs_f#"$bs_dir"/}" '
+            /^[[:space:]]*#/ { next }
+            /=/ {
+                sub(/^[[:space:]]+/, "")
+                k = $0; sub(/=.*/, "", k)
+                v = $0; sub(/^[^=]*=/, "", v)
+                gsub(/^[\042\047]|[\042\047]$/, "", v)
+                if (k ~ /^[A-Za-z_][A-Za-z0-9_]*$/) printf "%s  %s=%s\n", f, k, v
+            }
+        ' "$bs_f"
+    done | sort
+}
+
 bootstrap_check() {
     bc_spore=$1
     bc_out=$SPORE_WORK/check.out
@@ -330,6 +351,23 @@ install_machine() {
         [ -d "$im_target/spore" ] || die "$im_target/spore exists and is not a directory"
         [ -f "$im_target/spore/spore.conf" ] ||
             die "$im_target/spore exists but is not a spore — refusing to replace it"
+        # "Mount the data partition and edit the files there" is how this tool
+        # tells you to change a machine, because the spore on the medium is the
+        # machine. Then install replaces it with the workstation's copy and says
+        # only "replacing the spore already on ..." — true, and it tells you
+        # nothing. A setting fixed on the medium and not here silently goes back
+        # to what it was, and the machine spends a boot proving it.
+        bootstrap_settings "$im_target/spore" > "$SPORE_WORK/spore.old" 2>/dev/null || true
+        bootstrap_settings "$im_dir/spore"    > "$SPORE_WORK/spore.new" 2>/dev/null || true
+        if ! cmp -s "$SPORE_WORK/spore.old" "$SPORE_WORK/spore.new"; then
+            warn "the spore on $im_target is not the one being installed. What is
+         on the medium is replaced by $im_dir, so anything changed there and not
+         here goes with it:"
+            comm -23 "$SPORE_WORK/spore.old" "$SPORE_WORK/spore.new" 2>/dev/null |
+                sed 's/^/           - /' >&2
+            comm -13 "$SPORE_WORK/spore.old" "$SPORE_WORK/spore.new" 2>/dev/null |
+                sed 's/^/           + /' >&2
+        fi
         say "replacing the spore already on $im_target"
         run rm -rf "$im_target/spore"
     fi

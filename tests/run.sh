@@ -2198,6 +2198,34 @@ else
     check 'a second install replaces, not nests' \
         "$([ -e "$MP/spore/spore" ] && echo nested || echo clean)" clean
 
+    # "Mount the data partition and edit the files there" is how this tool says
+    # to change a machine, because the spore on the medium is the machine. Then
+    # install replaces it with the workstation's copy and said only "replacing
+    # the spore already on ..." — true, and it tells you nothing. A mirror fixed
+    # on the medium went back to the broken one, and the machine spent a boot
+    # proving it.
+    printf 'REPOS_MIRROR=https://fixed.example/alpine\n' >> "$MP/spore/modules/repos.conf"
+    IDIFF=$("$SPORE" install "$NB/m" "$MP" 2>&1)
+    has 'a medium that differs is not replaced in silence' "$IDIFF" \
+        'is not the one being installed'
+    has 'and the setting about to be lost is named'        "$IDIFF" \
+        '- modules/repos.conf  REPOS_MIRROR=https://fixed.example/alpine'
+    # Same on both sides says nothing: every install would cry wolf otherwise.
+    IQUIET=$("$SPORE" install "$NB/m" "$MP" 2>&1)
+    hasnt 'an unchanged medium says nothing about it' "$IQUIET" \
+        'is not the one being installed'
+    # Quoting is not a difference. STORAGE_AUTO="yes" and STORAGE_AUTO=yes are
+    # the same setting, and reporting them as a change would train people to
+    # ignore the warning.
+    ISET=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/bootstrap.sh"
+            printf 'A="yes"\nB=no\n# C=skipped\n' > "$NB/q.conf"
+            mkdir -p "$NB/qs/modules"; cp "$NB/q.conf" "$NB/qs/modules/m.conf"
+            printf 'FORMAT=1\n' > "$NB/qs/spore.conf"
+            bootstrap_settings "$NB/qs" )
+    has   'a quoted value reads as its value' "$ISET" 'modules/m.conf  A=yes'
+    hasnt 'with the quotes gone'              "$ISET" 'A="yes"'
+    hasnt 'and comments are not settings'     "$ISET" 'C=skipped'
+
     # A named boot partition gets the same seed. The initramfs has to mount a
     # filesystem before it can find an apkovl on it, and a FAT boot partition is
     # the one it can certainly read.
