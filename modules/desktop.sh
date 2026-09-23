@@ -22,10 +22,8 @@
 # for free. The lists come from alpine-conf's setup-desktop, setup-xorg-base and
 # setup-wayland-base; when they move upstream, they move here.
 #
-# One thing of upstream's is deliberately not mirrored: `rc-update del acpid`.
-# It sits outside setup-desktop's case, so it fires even for sway, where nothing
-# else picks up the power button. Disabling a service somebody turned on, to fix
-# a problem they may not have, is not this module's call.
+# One thing of upstream's is deliberately inverted rather than mirrored:
+# `rc-update del acpid`. See desktop_plan_acpid.
 
 DESKTOP_ENVS='xfce xfce-wayland gnome plasma mate sway lxqt'
 
@@ -164,8 +162,38 @@ desktop_plan() {
         plan_pkg "$dt_p"
     done
 
+    desktop_plan_acpid
     desktop_plan_groups
     desktop_plan_diskless "$dt_de"
+}
+
+# The power button.
+#
+# setup-desktop ends in `rc-update del acpid`, outside its case, so it fires for
+# every environment. The reasoning is sound where it applies: a desktop session
+# has its own power manager — xfce4-power-manager is in the xfce set above — and
+# two things acting on one button press is worse than one.
+#
+# But it only applies inside a running session. At the text console, at the
+# greeter before anyone has logged in, and on sway, which ships no power manager
+# at all, nothing is listening and the button does nothing. The way you then turn
+# the machine off is by holding it down, and on a diskless host that is how you
+# lose the overlay you have not committed yet. A machine whose power button does
+# nothing is not a machine with one fewer feature; it is one you can only
+# shut down uncleanly.
+#
+# So acpid goes in. Alpine's /etc/acpi/handler.sh already does the right thing
+# with it — `button/power:PWRF` powers off, or suspends if the machine has a lid,
+# so a laptop is not surprised. The init script is an ordinary default-runlevel
+# service (`need dev localmount`, `after hwdrivers modules`).
+desktop_plan_acpid() {
+    plan_pkg acpid
+    plan_svc acpid default on
+    plan_note "desktop: acpid is installed, so the power button shuts the
+         machine down from the console and from the greeter, where the desktop's
+         own power manager is not running yet. Inside a session both are
+         listening; if that double-acts on your hardware, drop this one with
+         \`rc-update del acpid default\` and let the desktop keep it."
 }
 
 # Every display manager Alpine packages declares dbus as a hard dependency, in

@@ -3525,6 +3525,13 @@ hasnt 'which is not started by the apply' "$DK_XFCE" 'svc        lightdm -> defa
 # greeter: the desktop installed, X worked, startx opened xfce, and the boot
 # ended at a text console saying nothing.
 has 'the bus the greeter declares it needs' "$DK_XFCE" 'svc        dbus -> default [on]'
+# setup-desktop ends in `rc-update del acpid`, outside its case. Sound inside a
+# session, where the desktop's own power manager has the button — but at the
+# console, at the greeter, and on sway there is no such thing, and the only way
+# left to turn the machine off is to hold the button down, which on a diskless
+# host is how you lose an uncommitted overlay.
+has 'the power button does something'       "$DK_XFCE" 'svc        acpid -> default [on]'
+has 'and says so, with the way back out'    "$DK_XFCE" 'rc-update del acpid default'
 # And in world, not merely as somebody else's dependency: on a diskless box the
 # initramfs reinstalls world into the RAM root every boot, so a service package
 # that nothing names is one `apk del` from a runlevel link pointing at nothing.
