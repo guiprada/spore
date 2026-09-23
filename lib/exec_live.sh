@@ -178,7 +178,14 @@ el_svc() {
         # that apk had something to fetch over, and starting the service now
         # would only bounce the interface the apply is running on. Enabling is
         # the durable half, and for both it is all that is wanted.
+        #
+        # Collected as well as said. This line lands hundreds of lines of apk
+        # output above the summary, on a console that has scrolled, and "it
+        # comes up on the next boot" is easy to read as a reassurance rather
+        # than as an instruction. report_deferred says it again at the end,
+        # where the counts are.
         if [ "$es_state" = enable ]; then
+            SPORE_DEFERRED="$SPORE_DEFERRED $es_name"
             say "$es_name is enabled and not started by this apply. It comes up
          on the next boot."
             return 0
@@ -352,6 +359,26 @@ el_script() {
 # MOD_PORTS is already collected for the firewall, so the declaration exists.
 # Asking the kernel what came of it costs one command and puts the answer in the
 # log that gets read after the fact, rather than in a netstat nobody ran.
+# Services that are in a runlevel and were deliberately not started, said once
+# more where the summary is.
+#
+# This exists because of a machine that spent an afternoon never showing its
+# desktop. Every boot ran an apply — first because the seed kept being found,
+# then because each fix meant another `install`, and an install writes a fresh
+# seed — and an apply enables the display manager without starting it, on
+# purpose. So the greeter was one plain reboot away the whole time, and nothing
+# at the end of the run said so. The information existed; it was just hundreds
+# of lines up, between two package installs.
+report_deferred() {
+    [ -n "${SPORE_DEFERRED# }" ] || return 0
+    [ "$SPORE_DRYRUN" = 1 ] && return 0
+    rd_list=$(printf '%s' "${SPORE_DEFERRED# }" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+    say "enabled, waiting for a reboot: ${rd_list% }"
+    say "These are in their runlevels and this run did not start them. A plain
+     reboot is what starts them — not another apply, which would enable them
+     again and stand back again."
+}
+
 report_ports() {
     synthetic && return 0
     [ "$SPORE_DRYRUN" = 1 ] && return 0

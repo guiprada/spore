@@ -536,6 +536,14 @@ hasnt 'and not started under the apply'  "$PLAN" 'svc        networking -> boot 
 has 'the apply names the service it left alone' "$OUT" \
     'networking is enabled and not started by this apply'
 hasnt 'and borrows no other service reason'     "$OUT" 'it takes the console'
+# And again at the end, with the counts. That line lands hundreds of lines of
+# apk output above the summary, on a console that has scrolled, and it reads as
+# reassurance rather than as an instruction — which is how a machine spent an
+# afternoon one plain reboot away from a desktop nobody knew to ask for.
+has 'the summary lists what is waiting on a reboot' "$OUT" \
+    'enabled, waiting for a reboot: networking'
+has 'and says another apply is not it'              "$OUT" \
+    'not another apply, which would'
 # ifup, not `rc-service networking`: asking OpenRC for the service drags in its
 # dependency graph, which wants fsck, which will not start that early — and the
 # whole thing dies as "cannot start networking as fsck would not start", three

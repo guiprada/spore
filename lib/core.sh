@@ -41,6 +41,10 @@ warn() { printf '%swarning:%s %s\n' "$_c_yellow" "$_c_reset" "$*" >&2; }
 
 SPORE_N_CHANGED=0
 SPORE_N_UNCHANGED=0
+# Services el_svc enabled and deliberately did not start; report_deferred reads
+# it at the end. exec_plan's loop is `while ... done < file`, a redirect and not
+# a pipe, so what the executors set here is still set when the summary prints.
+SPORE_DEFERRED=''
 changed()   { SPORE_N_CHANGED=$((SPORE_N_CHANGED + 1));   printf '  %s+ %s%s\n' "$_c_green" "$*" "$_c_reset" >&2; }
 unchanged() { SPORE_N_UNCHANGED=$((SPORE_N_UNCHANGED + 1)); printf '  %s. %s%s\n' "$_c_dim" "$*" "$_c_reset" >&2; }
 skipped()   { printf '  %s~ %s%s\n' "$_c_yellow" "$*" "$_c_reset" >&2; }
