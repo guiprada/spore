@@ -11,9 +11,34 @@
 # So: `spore new` makes the directory, `spore install` writes it to a disk. Both
 # refuse rather than guess.
 
+# A rewrite is written beside the file and moved over it, so it needs the
+# directory and not only the file. Checked first, because the failure otherwise
+# is the shell's own "can't create modules/repos.conf.new: Permission denied"
+# followed by "could not rewrite REPOS_MIRROR" — two messages, neither of which
+# says whose the directory is or that sudo is the answer.
+bootstrap_writable() {
+    bw_f=$1
+    bw_d=${bw_f%/*}
+    [ "$bw_d" != "$bw_f" ] || bw_d=.
+    if [ -w "$bw_d" ]; then
+        if [ ! -e "$bw_f" ] || [ -w "$bw_f" ]; then return 0; fi
+    fi
+    bw_who=$(id -un 2>/dev/null || echo 'this account')
+    bw_own=$(stat -c '%U' "$bw_d" 2>/dev/null || echo 'another account')
+    die "cannot write $bw_f — $bw_d belongs to $bw_own and this is running as
+         $bw_who. The new text is written beside the file and moved over it, so
+         it needs the directory, not only the file.
+
+         A machine directory made under sudo is one you cannot edit as yourself
+         afterwards, and editing it afterwards is what keeping it is for. Either
+         run the same command under sudo, or take the directory back:
+             sudo chown -R $bw_who $bw_d"
+}
+
 # bootstrap_set <file> <key> <value> — replace an assignment, or append one.
 bootstrap_set() {
     bs_f=$1 bs_k=$2 bs_v=$3
+    bootstrap_writable "$bs_f"
     # The value lands in sed's replacement text, where a backslash, an ampersand
     # and the delimiter are not literal. Every caller so far passed a hostname
     # or a keymap; `spore set` passes whatever was typed at it.
@@ -29,7 +54,11 @@ bootstrap_set() {
             die "could not rewrite $bs_k in $bs_f"
         fi
     else
-        printf '%s=%s\n' "$bs_k" "$bs_v" >> "$bs_f"
+        # Guarded too. Appending a key that was not there is the other half of
+        # this function and had no error path at all: a failed >> took the whole
+        # run down with the shell's message and none of spore's.
+        printf '%s=%s\n' "$bs_k" "$bs_v" >> "$bs_f" ||
+            die "could not add $bs_k to $bs_f"
     fi
 }
 

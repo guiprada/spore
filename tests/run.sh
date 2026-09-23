@@ -3697,6 +3697,36 @@ check 'sed metacharacters come back as themselves' \
 
 ST_NOMOD=$("$SPORE" -s "$ST/s" set nosuch KEY v 2>&1 || true)
 has 'a module that does not exist is refused' "$ST_NOMOD" "no module called 'nosuch'"
+
+# A rewrite is written beside the file and moved over it, so it needs the
+# directory and not only the file. Unguarded, the failure was the shell's own
+# "can't create modules/repos.conf.new: Permission denied" followed by spore's
+# "could not rewrite REPOS_MIRROR" — two messages, neither saying whose the
+# directory is or that sudo is the answer. A machine directory made under sudo
+# is exactly the case, and editing it afterwards is what keeping it is for.
+if [ "$(id -u)" = 0 ] && id nobody >/dev/null 2>&1; then
+    STW=$(mktemp -d /tmp/spore-setperm.XXXXXX)
+    cp -r "$EX" "$STW/s"
+    chmod -R a+rX "$STW"
+    chown -R root:root "$STW/s"
+    chmod go-w "$STW/s/modules"
+    STW_OUT=$(su -s /bin/sh nobody -c \
+        "cd $ROOT && ./bin/spore -s $STW/s set repos REPOS_MIRROR https://x/alpine" 2>&1 || true)
+    has 'an unwritable directory says so, not the shell' "$STW_OUT" \
+        'belongs to root and this is running as'
+    has 'and why the directory and not the file'         "$STW_OUT" \
+        'moved over it, so
+         it needs the directory'
+    has 'and names the machine-directory-under-sudo case' "$STW_OUT" \
+        'made under sudo is one you cannot edit as yourself'
+    has 'with both ways out'                              "$STW_OUT" 'sudo chown -R nobody'
+    check 'and the file is untouched' \
+        "$(conf_read "$STW/s/modules/repos.conf" REPOS_MIRROR)" \
+        "$(conf_read "$EX/modules/repos.conf" REPOS_MIRROR)"
+    rm -rf "$STW"
+else
+    t_skip 'unwritable machine directory (needs root and a nobody account)'
+fi
 ST_BADK=$("$SPORE" -s "$ST/s" set net 'not a key' v 2>&1 || true)
 has 'and so is a key that is not one'         "$ST_BADK" 'not a config key'
 ST_NL=$("$SPORE" -s "$ST/s" set net NET_DNS "$(printf 'a\nb')" 2>&1 || true)
