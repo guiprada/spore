@@ -528,6 +528,14 @@ has 'and the service is enabled for every later boot' "$PLAN" \
 # Enabled, not started: netup has the interface up by then, and starting the
 # service mid-apply would bounce it while packages are coming over it.
 hasnt 'and not started under the apply'  "$PLAN" 'svc        networking -> boot [on]'
+# And the apply says so, by name. Why it is not started belongs to the caller
+# and differs — a display manager would take the console, networking is already
+# up — so the shared message states the fact and stops there. It used to carry
+# the display manager's reason for every caller, which on a real box printed
+# "networking ... it takes the console", which is nonsense.
+has 'the apply names the service it left alone' "$OUT" \
+    'networking is enabled and not started by this apply'
+hasnt 'and borrows no other service reason'     "$OUT" 'it takes the console'
 # ifup, not `rc-service networking`: asking OpenRC for the service drags in its
 # dependency graph, which wants fsck, which will not start that early — and the
 # whole thing dies as "cannot start networking as fsck would not start", three

@@ -167,16 +167,20 @@ el_svc() {
             changed "service $es_name ($es_rl)"
         fi
 
-        # Enabled, deliberately not started. A display manager started from
-        # inside the apply takes the console on the boot that installed it —
-        # and on that boot udev has only just been enabled into sysinit, which
-        # ran long before, so X comes up without the devices it needs, fails,
-        # and leaves the screen in graphics mode with no console to go back to.
-        # The machine is fine and looks dead. Enabling is the durable half and
-        # is all that is wanted for anything that owns the display.
+        # Enabled, deliberately not started. Why is the caller's business and
+        # differs by service, so the message does not guess at one. A display
+        # manager started from inside the apply takes the console on the boot
+        # that installed it — and on that boot udev has only just been enabled
+        # into sysinit, which ran long before, so X comes up without the devices
+        # it needs, fails, and leaves the screen in graphics mode with no
+        # console to go back to; the machine is fine and looks dead. networking
+        # is the opposite case: it is already up, brought up by hand in netup so
+        # that apk had something to fetch over, and starting the service now
+        # would only bounce the interface the apply is running on. Enabling is
+        # the durable half, and for both it is all that is wanted.
         if [ "$es_state" = enable ]; then
-            say "$es_name is enabled and deliberately not started now — it takes
-         the console, and this boot is not the one it should take it on."
+            say "$es_name is enabled and not started by this apply. It comes up
+         on the next boot."
             return 0
         fi
 
