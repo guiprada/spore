@@ -2018,6 +2018,22 @@ hasnt 'and not reported as missing'     "$INC" 'none on this medium'
 has   'the count is not the verdict'    "$INC" 'Whether it is *enough* is'
 rm -rf "$IN/m/apkcache"
 
+# The log is copied over on every boot, and the boot that overwrites it is very
+# often the one you did to see whether the last one worked: a converged boot
+# writes two lines on top of the apply that built the machine. One generation is
+# kept, and inspect says so — evidence you have and do not know about is
+# evidence you do not have.
+SEEDSRC=$(cat "$ROOT/lib/seed.sh")
+has 'the previous boot log is rolled, not lost' "$SEEDSRC" 'spore-seed.log.1'
+has 'before the new one is written'             "$SEEDSRC" 'roll_log "$seed_data"'
+has 'on the fallback path too'                  "$SEEDSRC" 'roll_log /mnt/spore-log'
+printf 'old apply log\nline two\n' > "$IN/m/spore-seed.log.1"
+printf '=== spore seed: now ===\nalready converged; nothing to do\n' > "$IN/m/spore-seed.log"
+INR=$("$SPORE" inspect "$IN/m" 2>&1)
+has 'inspect points at the kept log' "$INR" 'the boot before this one is kept'
+has 'and says what is in it'         "$INR" 'that is the one with the apply'
+rm -f "$IN/m/spore-seed.log.1" "$IN/m/spore-seed.log"
+
 # A seed built from a different tool is the difference between a fix that failed
 # and a fix that was never installed — which four rounds of this could not tell
 # apart.

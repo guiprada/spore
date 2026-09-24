@@ -47,6 +47,16 @@ printf '\n=== spore seed: %s ===\n' "$(date 2>/dev/null)"
 # beside the spore on the way out, on every path, so the evidence outlives the
 # boot that produced it.
 seed_data=''
+# One generation back, first. The boot that overwrites this log is very often
+# the boot you did to find out whether the last one worked — and a converged
+# boot's log is two lines, "already converged; nothing to do", copied straight
+# over the apply that built the machine. That threw away the whole record of how
+# it got built, including the line saying whether the next boot can install
+# world offline, at exactly the moment somebody went looking for it.
+roll_log() {
+    [ -f "$1/spore-seed.log" ] || return 0
+    mv -f "$1/spore-seed.log" "$1/spore-seed.log.1" 2>/dev/null || true
+}
 save_log() {
     [ -f /var/log/spore-seed.log ] || return 0
     # The initramfs mounts the medium read-only, so every copy here failed
@@ -54,6 +64,7 @@ save_log() {
     # that produced one. Remount long enough to write, then put it back.
     if [ -n "$seed_data" ]; then
         mount -o remount,rw "$seed_data" 2>/dev/null || true
+        roll_log "$seed_data"
         if cp /var/log/spore-seed.log "$seed_data/spore-seed.log" 2>/dev/null; then
             sync 2>/dev/null || true
             mount -o remount,ro "$seed_data" 2>/dev/null || true
@@ -82,6 +93,7 @@ save_log() {
            [ -f /mnt/spore-log/spore-seed.superseded.tar.gz ] ||
            [ -f /mnt/spore-log/spore/spore.conf ]; then
             mount -o remount,rw /mnt/spore-log 2>/dev/null || true
+            roll_log /mnt/spore-log
             cp /var/log/spore-seed.log /mnt/spore-log/spore-seed.log 2>/dev/null
             sync 2>/dev/null || true
             umount /mnt/spore-log 2>/dev/null

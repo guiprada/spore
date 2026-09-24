@@ -331,6 +331,18 @@ inspect_data() {
             printf '  Otherwise boot the machine again before reading what follows.\n\n' >&2
         fi
         sed 's/^/  /' "$id_dir/spore-seed.log" >&2
+        # A converged boot's log is two lines, and it lands on top of the apply
+        # that built the machine — usually because you rebooted to find out
+        # whether that apply worked. The previous one is kept for exactly that
+        # case, and saying so is the difference between having the evidence and
+        # knowing you have it.
+        if [ -f "$id_dir/spore-seed.log.1" ]; then
+            printf '\n  the boot before this one is kept: spore-seed.log.1 (%s lines)\n' \
+                "$(wc -l < "$id_dir/spore-seed.log.1" 2>/dev/null | tr -d ' ')" >&2
+            printf '  If this log is a converged no-op, that is the one with the apply\n' >&2
+            printf '  in it — and with the line saying whether the next boot can install\n' >&2
+            printf '  all of /etc/apk/world offline.\n' >&2
+        fi
     else
         printf '  no spore-seed.log.\n' >&2
         printf '  The seed never reached the point of writing one, which means its\n' >&2
