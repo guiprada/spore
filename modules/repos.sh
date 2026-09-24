@@ -92,7 +92,10 @@ fi'
     fi
 
     # On a diskless box /etc/apk/world persists the *intent* to have a package,
-    # but without a cache on real media the files are re-downloaded every boot.
+    # and the cache is what turns that intent back into software. The initramfs
+    # reinstalls all of world into the RAM root on every boot and runs apk with
+    # --no-network unless the machine net-booted, so an uncached package is not
+    # slow to come back, it does not come back. See persist_warnings.
     repos_cache=$(mconf REPOS_APK_CACHE '')
     if [ -n "$repos_cache" ]; then
         plan_bootstrap repos-apkcache "set -e
@@ -102,7 +105,25 @@ if command -v setup-apkcache >/dev/null 2>&1; then
 else
     mkdir -p /etc/apk
     ln -sf '$repos_cache' /etc/apk/cache
-fi"
+fi
+# And left writable for the rest of this run. The boot medium is mounted
+# read-only, and setup-apkcache remounts it rw only long enough to make the
+# directory and the symlink before putting it back — so apk, which runs after
+# this, cannot write a single file into the cache it was just given. The
+# setting would look applied, the cache would stay empty, and the next boot
+# would be missing exactly the packages this exists to keep. The commit at the
+# end of the apply remounts it read-only again.
+cache_mp=\$(df -P /etc/apk/cache 2>/dev/null | awk 'NR==2 { print \$6 }')
+if ! touch /etc/apk/cache/.spore-w 2>/dev/null; then
+    if [ -n \"\$cache_mp\" ] && mount -o remount,rw \"\$cache_mp\" 2>/dev/null; then
+        echo \"spore: remounted \$cache_mp read-write so apk can fill the cache\"
+    else
+        echo \"spore: the apk cache at '$repos_cache' is not writable and could not\" >&2
+        echo \"spore: be remounted. apk will install from the network and cache\" >&2
+        echo \"spore: nothing, so the next boot is still missing its packages.\" >&2
+    fi
+fi
+rm -f /etc/apk/cache/.spore-w 2>/dev/null || true"
         plan_persist /etc/apk/cache
     fi
 }

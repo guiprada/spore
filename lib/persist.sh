@@ -473,12 +473,39 @@ persist_verify_kept() {
          reboot. The apkovl is otherwise fine — what is in it is correct."
 }
 
-# The classic diskless trap.
+# The classic diskless trap, and this said the wrong thing about it for a long
+# time. It called the missing cache a download cost — "re-downloaded on every
+# boot" — which reads as a slow boot you can live with. It is not that. The
+# initramfs runs apk with no network at all:
+#
+#     apkflags="--initramfs-diskless-boot --progress"
+#     if [ -z "$MAC_ADDRESS" ]; then
+#             apkflags="$apkflags --no-network"
+#
+# (mkinitfs initramfs-init). MAC_ADDRESS is set only by configure_ip, which runs
+# only when the machine net-booted — so for a USB boot it is empty and apk is
+# told --no-network. Nothing is downloaded, because nothing can be.
+#
+# setup-apkcache's own help says the same thing from the other side: "Packages
+# installed from network can be cached locally to be available during boot,
+# before the network is started."
+#
+# So the cache is not an optimisation on a diskless host. It is the difference
+# between the overlay coming back as the machine you built and coming back as
+# a list of intentions. The cost of getting this wrong is a machine whose
+# runlevels are full of services with no binaries behind them — which looks
+# like a broken spore, and takes a day to stop looking like one.
 persist_warnings() {
     [ "$(persist_backend)" = lbu ] || return 0
     if [ ! -d /var/cache/apk ] || [ ! -L /etc/apk/cache ]; then
-        warn "diskless host with no apk cache on persistent media: /etc/apk/world will
-         persist the intent to have a package, but the package files will be
-         re-downloaded on every boot. See setup-apkcache."
+        warn "diskless host with no apk cache on persistent media. This is not a
+         slow boot, it is a different machine: Alpine's initramfs reinstalls
+         every line of /etc/apk/world into the RAM root on each boot, and it
+         runs apk with --no-network unless the machine net-booted. The only
+         packages it can install are the ones cached on the medium plus the
+         ones the medium's own /apks repository carries — the base ISO's set,
+         not yours. Everything else is simply absent on the next boot, with
+         /etc/apk/world and the runlevel symlinks still naming it.
+         Set REPOS_APK_CACHE in repos.conf to a path on the boot medium."
     fi
 }

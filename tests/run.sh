@@ -544,6 +544,37 @@ has 'the summary lists what is waiting on a reboot' "$OUT" \
     'enabled, waiting for a reboot: networking'
 has 'and says another apply is not it'              "$OUT" \
     'not another apply, which would'
+
+section 'the apk cache is not an optimisation on a diskless host'
+# This warning used to call a missing cache a download cost — "the package
+# files will be re-downloaded on every boot" — which reads as a slow boot you
+# can live with, and cost a real machine a day of looking in the wrong place.
+# mkinitfs initramfs-init:
+#     apkflags="--initramfs-diskless-boot --progress"
+#     if [ -z "$MAC_ADDRESS" ]; then
+#             apkflags="$apkflags --no-network"
+# and MAC_ADDRESS is set only by configure_ip, which runs only on a net-boot.
+# So nothing is downloaded, because nothing can be: the overlay comes back with
+# world and the runlevel symlinks naming software that is not installed.
+has   'the warning is about what comes back' "$OUT" '--no-network'
+has   'and says so in the first line'        "$OUT" 'it is a different machine'
+hasnt 'not about how long a boot takes'      "$OUT" 're-downloaded on every boot'
+has   'and names the setting that fixes it'  "$OUT" 'Set REPOS_APK_CACHE'
+# setup-apkcache remounts the medium rw only long enough to make the directory
+# and the symlink, then puts it back. apk runs after that and cannot write a
+# file into the cache it was just given, so the setting would look applied and
+# change nothing.
+AC=$(mktemp -d /tmp/spore-apkcache.XXXXXX)
+cp -r "$EX" "$AC/s"
+"$SPORE" -s "$AC/s" set repos REPOS_APK_CACHE /media/usb/cache >/dev/null 2>&1
+SPORE_WORK=$AC/w alpine "$SPORE" --spore "$AC/s" plan >/dev/null 2>&1
+ACS=$(cat "$AC"/w/content/* 2>/dev/null | grep -A14 'setup-apkcache')
+has 'the cache is set up before any package' \
+    "$(alpine "$SPORE" -s "$AC/s" plan 2>&1)" 'bootstrap  repos-apkcache'
+has 'and the medium is left writable for apk' "$ACS" 'remount,rw'
+has 'only when it is not already writable'    "$ACS" '.spore-w'
+has 'and says so when it cannot'              "$ACS" 'still missing its packages'
+rm -rf "$AC"
 # ifup, not `rc-service networking`: asking OpenRC for the service drags in its
 # dependency graph, which wants fsck, which will not start that early — and the
 # whole thing dies as "cannot start networking as fsck would not start", three

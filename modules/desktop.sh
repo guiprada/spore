@@ -363,9 +363,11 @@ desktop_plan_diskless() {
     plan_note "desktop: this is a diskless host, so Alpine's initramfs installs
          everything in /etc/apk/world into the RAM root at every boot — the
          whole desktop, every time, not just the once. That costs twice, and
-         each half has its own fix. Boot time: without a package cache on the
-         boot medium these are downloaded again on every boot, so set
-         REPOS_APK_CACHE in repos.conf to a path on the medium. Memory: the
+         each half has its own fix. Coming back at all: the initramfs runs apk
+         with --no-network, so without a package cache on the boot medium these
+         are not re-downloaded, they are missing — the overlay boots with the
+         world file and the runlevels naming a desktop that is not installed.
+         Set REPOS_APK_CACHE in repos.conf to a path on the medium. Memory: the
          installed tree sits in tmpfs for as long as the machine is up, so the
          desktop costs its own installed size in RAM before anything runs. To
          see what that is before committing to it, on any Alpine box:
