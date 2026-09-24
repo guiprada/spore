@@ -574,7 +574,31 @@ has 'the cache is set up before any package' \
 has 'and the medium is left writable for apk' "$ACS" 'remount,rw'
 has 'only when it is not already writable'    "$ACS" '.spore-w'
 has 'and says so when it cannot'              "$ACS" 'still missing its packages'
+# apk caches what it downloads, so a run that found half of world installed
+# caches half of world — and the other half is missing from the boot that has
+# no network to fetch it. `apk cache download` makes the cache hold the whole
+# machine however this particular run went. firstboot, so it lands after the
+# package phase it is catching up with.
+has 'the cache is filled deliberately' \
+    "$(alpine "$SPORE" -s "$AC/s" plan 2>&1)" 'firstboot  repos-apkcache-fill'
+has 'with the command that resolves world' \
+    "$(cat "$AC"/w/content/* 2>/dev/null)" 'apk cache download'
 rm -rf "$AC"
+
+# The check that would have answered all of this in one line. A diskless boot
+# reinstalls world with --no-network, so whether the machine comes back is
+# decided before the reboot and can be rehearsed: apk into an empty root, with
+# --simulate so nothing is written and --no-network so apk is held to exactly
+# what that boot will have.
+ROBSRC=$(cat "$ROOT/lib/exec_live.sh")
+has   'the next boot is rehearsed, not discovered' "$ROBSRC" 'report_offline_boot()'
+has   'against an empty root'                      "$ROBSRC" '--initdb --simulate'
+has   'with the network the next boot has'         "$ROBSRC" '--no-network --cache-dir'
+has   'and it writes nothing'                      "$ROBSRC" '--simulate'
+# world is hundreds of lines on a desktop, and a command line is not where you
+# want to meet ARG_MAX.
+has   'world is fed in, not interpolated'          "$ROBSRC" 'xargs -a "$rob_world"'
+has   'and the apply runs it'  "$(cat "$ROOT/bin/spore")" 'report_offline_boot'
 # ifup, not `rc-service networking`: asking OpenRC for the service drags in its
 # dependency graph, which wants fsck, which will not start that early — and the
 # whole thing dies as "cannot start networking as fsck would not start", three

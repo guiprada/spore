@@ -379,6 +379,53 @@ report_deferred() {
      again and stand back again."
 }
 
+# Whether the next boot will come back as this machine — asked here, where it
+# can still be answered cheaply, instead of discovered by rebooting.
+#
+# A diskless boot reinstalls every line of /etc/apk/world into the RAM root with
+# `apk add --initramfs-diskless-boot --no-network` (mkinitfs initramfs-init),
+# so it can only use the cache and the medium's own /apks repository. Anything
+# else in world is simply absent, and what you get is an overlay whose runlevels
+# name services with no binaries behind them: a display manager with no
+# /etc/init.d/lightdm, a file server whose init script spore wrote itself and
+# whose binary is gone. It looks like a broken spore and it is a missing cache.
+#
+# So rehearse it. `apk add` into an empty root, with --simulate so nothing is
+# written and --no-network so apk is held to exactly what the next boot will
+# have. If it resolves, the next boot installs. If it does not, apk names what
+# is missing, now, while there is still a network to fix it with.
+report_offline_boot() {
+    synthetic && return 0
+    [ "$SPORE_DRYRUN" = 1 ] && return 0
+    [ "$(persist_backend)" = lbu ] || return 0
+    command -v apk >/dev/null 2>&1 || return 0
+    rob_world=$(rootpath /etc/apk/world)
+    [ -s "$rob_world" ] || return 0
+
+    rob_root=$SPORE_WORK/offline-root
+    rob_out=$SPORE_WORK/offline.out
+    rm -rf "$rob_root"
+    mkdir -p "$rob_root" || return 0
+    # xargs rather than $(cat): world is hundreds of lines on a desktop, and a
+    # command line is not the place to find out about ARG_MAX.
+    if xargs -a "$rob_world" apk add --root "$rob_root" --initdb --simulate \
+            --no-network --cache-dir /etc/apk/cache \
+            --repositories-file "$(rootpath /etc/apk/repositories)" \
+            > "$rob_out" 2>&1; then
+        say "the next boot can install all of /etc/apk/world offline."
+    else
+        warn "the next boot will NOT come back as this machine. Alpine's
+         initramfs reinstalls /etc/apk/world with no network, and rehearsing
+         that here did not resolve. What it could not find:
+$(grep -i 'unable to select\|no such package\|ERROR' "$rob_out" 2>/dev/null |
+  head -20 | sed 's/^/           /')
+         Those packages are in world and in the runlevels and will not be on
+         the machine. Set REPOS_APK_CACHE in repos.conf to a path on the boot
+         medium, apply again, and this line should change."
+    fi
+    rm -rf "$rob_root"
+}
+
 report_ports() {
     synthetic && return 0
     [ "$SPORE_DRYRUN" = 1 ] && return 0

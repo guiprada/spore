@@ -125,5 +125,27 @@ if ! touch /etc/apk/cache/.spore-w 2>/dev/null; then
 fi
 rm -f /etc/apk/cache/.spore-w 2>/dev/null || true"
         plan_persist /etc/apk/cache
+
+        # Filling it on purpose rather than by accident. apk caches what it
+        # downloads, so a run that found half of world already installed caches
+        # half of world — and the half it skipped is missing from the next boot,
+        # which is the boot that has no network to go and get it. `apk cache
+        # download` resolves world and fetches whatever is not there yet, so the
+        # cache holds the whole machine however this particular run went.
+        #
+        # firstboot, because it has to run after the package phase: the point is
+        # to catch up with whatever apk did there.
+        # shellcheck disable=SC2016  # the target's shell expands these, not ours
+        plan_firstboot repos-apkcache-fill 'if ! [ -d /etc/apk/cache ] && ! [ -L /etc/apk/cache ]; then
+    exit 0
+fi
+echo "spore: filling the apk cache so the next boot can install world offline"
+if apk cache download 2>&1; then
+    echo "spore: apk cache holds $(find /etc/apk/cache/ -name "*.apk" 2>/dev/null | wc -l) package file(s)"
+else
+    echo "spore: apk cache download did not complete. Whatever is missing from" >&2
+    echo "spore: the cache is missing from the next boot too — the initramfs" >&2
+    echo "spore: installs world with no network." >&2
+fi'
     fi
 }
