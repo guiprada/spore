@@ -148,6 +148,59 @@ inspect_ovl_contents() {
     done
 }
 
+# The cache, which on a diskless medium is not a detail of the medium — it is
+# most of whether the machine comes back. Alpine's initramfs reinstalls every
+# line of /etc/apk/world into the RAM root with `apk add --no-network`, so the
+# only package files it can reach are these and the ones in the medium's own
+# /apks. Anything else in world is absent from the booted machine while world
+# and the runlevel symlinks go on naming it.
+#
+# Reported by looking, not by trusting the setting: REPOS_APK_CACHE is a path on
+# the machine (/media/sdc2/apkcache) and this is the same filesystem mounted
+# somewhere else, so the configured value gives the name to look for and the
+# directory on disk gives the answer.
+inspect_cache() {
+    ic_dir=$1
+    ic_set=''
+    [ -f "$ic_dir/spore/modules/repos.conf" ] &&
+        ic_set=$(conf_get "$ic_dir/spore/modules/repos.conf" REPOS_APK_CACHE '')
+
+    ic_found=''
+    if [ -n "$ic_set" ] && [ -d "$ic_dir/${ic_set##*/}" ]; then
+        ic_found=$ic_dir/${ic_set##*/}
+    else
+        # Whatever it was called, a directory with .apk files in it is the one.
+        for ic_c in "$ic_dir"/*/; do
+            [ -d "$ic_c" ] || continue
+            if [ -n "$(find "$ic_c" -maxdepth 1 -name '*.apk' 2>/dev/null | head -1)" ]; then
+                ic_found=${ic_c%/}
+                break
+            fi
+        done
+    fi
+
+    printf '\nthe apk cache\n\n' >&2
+    if [ -z "$ic_found" ]; then
+        printf '  none on this medium%s\n' \
+            "$([ -n "$ic_set" ] && printf ' — REPOS_APK_CACHE=%s names one, and it is not here' "$ic_set")" >&2
+        printf '  A diskless boot reinstalls /etc/apk/world with --no-network, so a\n' >&2
+        printf '  package that is not cached here and not in the medium own /apks is\n' >&2
+        printf '  not on the machine after a reboot — with world and the runlevels\n' >&2
+        printf '  still naming it. That is a desktop with no display manager rather\n' >&2
+        printf '  than a slow boot.\n' >&2
+        [ -n "$ic_set" ] ||
+            printf '      spore -s <spore> set repos REPOS_APK_CACHE <path on this medium>\n' >&2
+        return 0
+    fi
+    ic_n=$(find "$ic_found" -name '*.apk' 2>/dev/null | wc -l | tr -d ' ')
+    ic_sz=$(du -sh "$ic_found" 2>/dev/null | cut -f1)
+    printf '  %s%s/%s — %s package file(s), %s\n' "$_c_green" "${ic_found##*/}" \
+        "$_c_reset" "${ic_n:-0}" "${ic_sz:-?}" >&2
+    printf '  This is what the next boot installs from. Whether it is *enough* is\n' >&2
+    printf '  not a count: the apply rehearses it and says so in the log above —\n' >&2
+    printf '  "the next boot can install all of /etc/apk/world offline".\n' >&2
+}
+
 inspect_data() {
     id_dir=$1
     id_dev=${2-}
@@ -169,6 +222,8 @@ inspect_data() {
     else
         warn "no spore/ here. The machine had nothing to apply."
     fi
+
+    inspect_cache "$id_dir"
 
     if [ -f "$id_dir/spore-seed.apkovl.tar.gz" ]; then
         printf '\nthe seed\n\n' >&2

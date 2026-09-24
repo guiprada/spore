@@ -98,32 +98,58 @@ fi'
     # slow to come back, it does not come back. See persist_warnings.
     repos_cache=$(mconf REPOS_APK_CACHE '')
     if [ -n "$repos_cache" ]; then
-        plan_bootstrap repos-apkcache "set -e
-mkdir -p '$repos_cache'
-if command -v setup-apkcache >/dev/null 2>&1; then
-    setup-apkcache '$repos_cache'
-else
-    mkdir -p /etc/apk
-    ln -sf '$repos_cache' /etc/apk/cache
-fi
-# And left writable for the rest of this run. The boot medium is mounted
-# read-only, and setup-apkcache remounts it rw only long enough to make the
-# directory and the symlink before putting it back — so apk, which runs after
-# this, cannot write a single file into the cache it was just given. The
-# setting would look applied, the cache would stay empty, and the next boot
-# would be missing exactly the packages this exists to keep. The commit at the
-# end of the apply remounts it read-only again.
-cache_mp=\$(df -P /etc/apk/cache 2>/dev/null | awk 'NR==2 { print \$6 }')
-if ! touch /etc/apk/cache/.spore-w 2>/dev/null; then
-    if [ -n \"\$cache_mp\" ] && mount -o remount,rw \"\$cache_mp\" 2>/dev/null; then
-        echo \"spore: remounted \$cache_mp read-write so apk can fill the cache\"
+        # The boot medium is mounted read-only, so the remount comes first and
+        # everything else follows it. Written the other way round — mkdir, then
+        # setup-apkcache, then the remount — this died on its own first line,
+        #
+        #     mkdir: can't create directory '/media/sdc2/apkcache':
+        #            Read-only file system
+        #
+        # three phases before any package, so the machine got the repositories
+        # and nothing else. And it must stay writable afterwards: setup-apkcache
+        # remounts rw only long enough to make the directory and the symlink
+        # before putting it back, and apk runs after that. Left read-only, the
+        # setting looks applied, the cache stays empty, and the next boot is
+        # missing exactly the packages this exists to keep. The commit at the end
+        # of the apply remounts it read-only again.
+        #
+        # Never fatal. A cache that cannot be made is a machine that will not
+        # come back whole, which the rehearsal at the end of the apply says in
+        # those words — but the user account, the password and the keymap are
+        # exactly what you still want on a box you are about to lose the network
+        # to, so this explains itself and lets the rest of the run happen.
+        plan_bootstrap repos-apkcache "cache_dir='$repos_cache'
+cache_mp=\$(df -P \"\${cache_dir%/*}\" 2>/dev/null | awk 'NR==2 { print \$6 }')
+cache_rw() {
+    [ -n \"\$cache_mp\" ] && mount -o remount,rw \"\$cache_mp\" 2>/dev/null
+}
+if ! mkdir -p \"\$cache_dir\" 2>/dev/null; then
+    if cache_rw && mkdir -p \"\$cache_dir\" 2>/dev/null; then
+        echo \"spore: remounted \$cache_mp read-write to make the apk cache\"
     else
-        echo \"spore: the apk cache at '$repos_cache' is not writable and could not\" >&2
-        echo \"spore: be remounted. apk will install from the network and cache\" >&2
-        echo \"spore: nothing, so the next boot is still missing its packages.\" >&2
+        echo \"spore: cannot create an apk cache at \$cache_dir — \${cache_mp:-its filesystem}\" >&2
+        echo \"spore: is read-only and would not remount. The rest of the spore still\" >&2
+        echo \"spore: applies, but the next boot reinstalls world with no network and\" >&2
+        echo \"spore: will be missing whatever is not already on this medium.\" >&2
+        exit 0
     fi
 fi
-rm -f /etc/apk/cache/.spore-w 2>/dev/null || true"
+if command -v setup-apkcache >/dev/null 2>&1; then
+    setup-apkcache \"\$cache_dir\" || true
+else
+    mkdir -p /etc/apk
+    ln -sf \"\$cache_dir\" /etc/apk/cache
+fi
+if ! touch \"\$cache_dir/.spore-w\" 2>/dev/null; then
+    if cache_rw; then
+        echo \"spore: remounted \$cache_mp read-write so apk can fill the cache\"
+    else
+        echo \"spore: the apk cache at \$cache_dir is not writable and would not\" >&2
+        echo \"spore: remount, so apk will install from the network and cache\" >&2
+        echo \"spore: nothing. The next boot is still missing its packages.\" >&2
+    fi
+fi
+rm -f \"\$cache_dir/.spore-w\" 2>/dev/null || true"
         plan_persist /etc/apk/cache
 
         # Filling it on purpose rather than by accident. apk caches what it

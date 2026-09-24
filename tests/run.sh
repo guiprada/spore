@@ -568,12 +568,25 @@ AC=$(mktemp -d /tmp/spore-apkcache.XXXXXX)
 cp -r "$EX" "$AC/s"
 "$SPORE" -s "$AC/s" set repos REPOS_APK_CACHE /media/usb/cache >/dev/null 2>&1
 SPORE_WORK=$AC/w alpine "$SPORE" --spore "$AC/s" plan >/dev/null 2>&1
-ACS=$(cat "$AC"/w/content/* 2>/dev/null | grep -A14 'setup-apkcache')
+ACS=$(grep -l 'cache_dir=' "$AC"/w/content/* 2>/dev/null | head -1 | xargs cat 2>/dev/null)
 has 'the cache is set up before any package' \
     "$(alpine "$SPORE" -s "$AC/s" plan 2>&1)" 'bootstrap  repos-apkcache'
 has 'and the medium is left writable for apk' "$ACS" 'remount,rw'
 has 'only when it is not already writable'    "$ACS" '.spore-w'
 has 'and says so when it cannot'              "$ACS" 'still missing its packages'
+# Order, which is the whole of it. Written mkdir-first this died on its own
+# first line — "mkdir: can't create directory: Read-only file system" — three
+# phases before any package, so the machine got its repositories and nothing
+# else at all.
+ACM=$(printf '%s\n' "$ACS" | grep -n 'mkdir -p "\$cache_dir"\|cache_rw()' | head -2)
+has 'the remount is defined before the mkdir runs' "$ACM" 'cache_rw()'
+has 'and the mkdir is guarded, not bare'           "$ACS" 'if ! mkdir -p "$cache_dir" 2>/dev/null'
+hasnt 'no unguarded mkdir on a read-only medium'   "$ACS" "mkdir -p '/media/usb/cache'"
+# And never fatal: a machine that cannot cache still wants its user account and
+# its keymap, and the rehearsal at the end of the apply is what reports the
+# consequence.
+has 'a cache it cannot make is not fatal'          "$ACS" 'The rest of the spore still'
+has 'it stands down rather than dying'             "$ACS" 'exit 0'
 # apk caches what it downloads, so a run that found half of world installed
 # caches half of world — and the other half is missing from the boot that has
 # no network to fetch it. `apk cache download` makes the cache hold the whole
@@ -1967,6 +1980,25 @@ has 'and whether the identity is there' "$INO" 'identity  present'
 has 'and whether the seed matches this tool' "$INO" 'matches this tool'
 has 'it says nothing was ever committed'     "$INO" 'never finished an apply'
 has 'and that there is no log to read'       "$INO" 'no spore-seed.log'
+# On a diskless medium the cache is not a detail, it is most of whether the
+# machine comes back: the initramfs reinstalls world with --no-network and can
+# reach only this and the medium's own /apks.
+has 'a medium with no cache says what that costs' "$INO" 'none on this medium'
+has 'in the terms that matter'                    "$INO" 'no display manager rather'
+has 'and how to give it one'                      "$INO" 'set repos REPOS_APK_CACHE'
+# And when there is one, it is measured by looking rather than by trusting the
+# setting: REPOS_APK_CACHE is a path on the machine, and this is that filesystem
+# mounted somewhere else.
+mkdir -p "$IN/m/apkcache"
+: > "$IN/m/apkcache/xfce4-4.20-r0.apk"
+: > "$IN/m/apkcache/lightdm-1.33.0-r0.apk"
+INC=$("$SPORE" inspect "$IN/m" 2>&1)
+has   'a cache is counted'              "$INC" '2 package file(s)'
+hasnt 'and not reported as missing'     "$INC" 'none on this medium'
+# A count is not the answer, though, and saying so is the point: the apply
+# rehearses the boot and that line is the one that decides it.
+has   'the count is not the verdict'    "$INC" 'Whether it is *enough* is'
+rm -rf "$IN/m/apkcache"
 
 # A seed built from a different tool is the difference between a fix that failed
 # and a fix that was never installed — which four rounds of this could not tell
