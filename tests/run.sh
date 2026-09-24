@@ -587,6 +587,24 @@ hasnt 'no unguarded mkdir on a read-only medium'   "$ACS" "mkdir -p '/media/usb/
 # consequence.
 has 'a cache it cannot make is not fatal'          "$ACS" 'The rest of the spore still'
 has 'it stands down rather than dying'             "$ACS" 'exit 0'
+
+# The same stick is /media/sdc2 in a machine with two internal disks and
+# /media/sda2 under qemu where it is the only one, so an absolute cache path is
+# right in exactly one of the two places it gets booted — and wrong silently,
+# because a cache on a device that is not there is a cache that never fills.
+# A relative value resolves against the medium the spore was read from, which
+# the target works out for itself because the plan is built there.
+ACR=$(mktemp -d /tmp/spore-cacherel.XXXXXX)
+cp -r "$EX" "$ACR/s"
+"$SPORE" -s "$ACR/s" set repos REPOS_APK_CACHE apkcache >/dev/null 2>&1
+ACRP=$(alpine "$SPORE" -s "$ACR/s" plan 2>&1)
+has 'a relative cache resolves beside the spore' "$ACRP" "$ACR/apkcache"
+has 'and says which path that turned out to be'  "$ACRP" 'REPOS_APK_CACHE is relative'
+has 'naming why an absolute one is a trap'       "$ACRP" 'not the same device in a machine and in a VM'
+"$SPORE" -s "$ACR/s" set repos REPOS_APK_CACHE /media/usb/cache >/dev/null 2>&1
+ACRA=$(alpine "$SPORE" -s "$ACR/s" plan 2>&1)
+hasnt 'an absolute one is left exactly as given' "$ACRA" 'REPOS_APK_CACHE is relative'
+rm -rf "$ACR"
 # apk caches what it downloads, so a run that found half of world installed
 # caches half of world — and the other half is missing from the boot that has
 # no network to fetch it. `apk cache download` makes the cache hold the whole

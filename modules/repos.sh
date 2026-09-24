@@ -97,6 +97,23 @@ fi'
     # --no-network unless the machine net-booted, so an uncached package is not
     # slow to come back, it does not come back. See persist_warnings.
     repos_cache=$(mconf REPOS_APK_CACHE '')
+    # A relative value is resolved against the medium this spore was read from,
+    # and that is the form to prefer. The same stick is /media/sdc2 on a machine
+    # with two internal disks and /media/sda2 under qemu where it is the only
+    # one, so an absolute path is correct in exactly one of the two places you
+    # are going to boot it — and wrong silently, because a cache directory on a
+    # device that does not exist is just a cache that never fills.
+    #
+    # The plan is built on the target, by the seed, against the spore on the
+    # medium, so SPORE_DIR here is already that machine's own answer.
+    case $repos_cache in
+        ''|/*) : ;;
+        *) repos_cache="${SPORE_DIR%/*}/$repos_cache"
+           plan_note "repos: REPOS_APK_CACHE is relative, so the cache is
+         $repos_cache on this machine — beside the spore, on whatever the
+         medium is called here. An absolute path would name a device, and the
+         same stick is not the same device in a machine and in a VM." ;;
+    esac
     if [ -n "$repos_cache" ]; then
         # The boot medium is mounted read-only, so the remount comes first and
         # everything else follows it. Written the other way round — mkdir, then
