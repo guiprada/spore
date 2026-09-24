@@ -146,6 +146,20 @@ inspect_ovl_contents() {
             printf '    %sNO %s  %s\n'  "$_c_red" "$_c_reset" "$ioc_p" >&2
         fi
     done
+    # And the one that decides whether the packages come back. apk opens its
+    # cache relative to --root, so what the initramfs follows is this symlink
+    # inside the overlay, not the directory sitting on the medium. A cache full
+    # of .apk files with no symlink pointing at it is 363M of nothing: the boot
+    # installs from the medium's own /apks and gets the base ISO's set.
+    if grep -qE '^\.?/?etc/apk/cache$' "$ioc_list"; then
+        printf '    %syes%s  etc/apk/cache — the boot can find the cache\n' \
+            "$_c_green" "$_c_reset" >&2
+    else
+        printf '    %sNO %s  etc/apk/cache — nothing in the overlay points at a cache,\n' \
+            "$_c_red" "$_c_reset" >&2
+        printf '          so the next boot installs from the medium /apks alone\n' >&2
+        printf '          however many package files are sitting beside the spore.\n' >&2
+    fi
 }
 
 # The cache, which on a diskless medium is not a detail of the medium — it is

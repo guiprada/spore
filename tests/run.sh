@@ -2141,6 +2141,12 @@ has 'and says so when there is no seed service in it' "$OVLT_B" 'no spore-seed s
 has 'and shows what the overlay does hold' "$OVLT_B" 'of the files spore itself writes'
 has 'naming the spore files it has'        "$OVLT_B" 'etc/hostname'
 has 'and the ones it has not'              "$OVLT_B" 'etc/init.d/spore-seed'
+# The one that decides whether the packages come back. apk opens its cache
+# relative to --root, so what the initramfs follows is the symlink inside the
+# overlay, not the directory on the medium — and a cache with no symlink
+# pointing at it is a few hundred megabytes of nothing.
+has 'the overlay is checked for the cache link' "$OVLT_B" 'etc/apk/cache'
+has 'and says what its absence costs'           "$OVLT_B" 'installs from the medium /apks alone'
 rm -rf "$OVLT"
 
 # Every file the seed carries, not a sample. This compared lib/seed.sh,
