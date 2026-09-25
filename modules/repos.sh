@@ -166,7 +166,21 @@ if ! touch \"\$cache_dir/.spore-w\" 2>/dev/null; then
         echo \"spore: nothing. The next boot is still missing its packages.\" >&2
     fi
 fi
-rm -f \"\$cache_dir/.spore-w\" 2>/dev/null || true"
+rm -f \"\$cache_dir/.spore-w\" 2>/dev/null || true
+# And an index in it, which is the half that is easy to miss. apk resolves
+# against an APKINDEX and cannot fetch one with --no-network, so a cache holding
+# every .apk and no index is a shelf the boot will not look at. The index is
+# written into the cache by apk update — and both of the apk updates above ran
+# in repos-mirror and repos-community, before this cache existed, so they wrote
+# it nowhere. Doing it again now costs one round trip and is the difference
+# between a machine that comes back and one that does not.
+if apk update >/dev/null 2>&1; then
+    echo \"spore: apk index cached, so the next boot can resolve packages offline\"
+else
+    echo \"spore: could not refresh the apk index into the cache. The cached\" >&2
+    echo \"spore: packages are there but the next boot has no index to resolve\" >&2
+    echo \"spore: them against, and installs from the medium /apks alone.\" >&2
+fi"
         plan_persist /etc/apk/cache
 
         # Filling it on purpose rather than by accident. apk caches what it

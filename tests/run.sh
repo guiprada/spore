@@ -614,6 +614,11 @@ has 'the cache is filled deliberately' \
     "$(alpine "$SPORE" -s "$AC/s" plan 2>&1)" 'firstboot  repos-apkcache-fill'
 has 'with the command that resolves world' \
     "$(cat "$AC"/w/content/* 2>/dev/null)" 'apk cache download'
+# And the index, refreshed after the cache exists. Both apk updates run in
+# repos-mirror and repos-community, before it does, so they write the index
+# nowhere — and a cache with every package and no index is unreadable offline.
+has 'the index is written into the cache too' "$ACS" 'apk index cached'
+has 'and its absence is reported, not assumed' "$ACS" 'no index to resolve'
 rm -rf "$AC"
 
 # The check that would have answered all of this in one line. A diskless boot
@@ -2013,6 +2018,16 @@ mkdir -p "$IN/m/apkcache"
 INC=$("$SPORE" inspect "$IN/m" 2>&1)
 has   'a cache is counted'              "$INC" '2 package file(s)'
 hasnt 'and not reported as missing'     "$INC" 'none on this medium'
+# Packages are half of it. apk resolves against an index and cannot fetch one
+# with --no-network, so a cache of .apk files with no APKINDEX is a shelf the
+# boot will not look at — and the apk update that writes the index into the
+# cache runs in repos-mirror, before the cache exists.
+has   'a cache with no index is called out' "$INC" 'but no APKINDEX in it'
+has   'and says why that is not enough'     "$INC" 'a shelf it will not look at'
+: > "$IN/m/apkcache/APKINDEX.abc123.tar.gz"
+INCI=$("$SPORE" inspect "$IN/m" 2>&1)
+has   'and one with an index is told so' "$INCI" 'index file(s), which is what makes those readable'
+hasnt 'without the warning'              "$INCI" 'but no APKINDEX in it'
 # A count is not the answer, though, and saying so is the point: the apply
 # rehearses the boot and that line is the one that decides it.
 has   'the count is not the verdict'    "$INC" 'Whether it is *enough* is'

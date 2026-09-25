@@ -228,6 +228,23 @@ inspect_cache() {
     ic_sz=$(du -sh "$ic_found" 2>/dev/null | cut -f1)
     printf '  %s%s/%s — %s package file(s), %s\n' "$_c_green" "${ic_found##*/}" \
         "$_c_reset" "${ic_n:-0}" "${ic_sz:-?}" >&2
+    # Packages are half of it. apk resolves against an index, and with
+    # --no-network it cannot fetch one — so a cache with .apk files and no
+    # APKINDEX is a shelf of packages apk will not look at. The index is written
+    # into the cache by `apk update`, which means an `apk update` that ran before
+    # the cache existed put it nowhere.
+    ic_idx=$(find "$ic_found" -name 'APKINDEX*' 2>/dev/null | wc -l | tr -d ' ')
+    if [ "${ic_idx:-0}" -gt 0 ]; then
+        printf '  and %s index file(s), which is what makes those readable offline\n' \
+            "$ic_idx" >&2
+    else
+        printf '  %sbut no APKINDEX in it%s — apk resolves against an index and cannot\n' \
+            "$_c_red" "$_c_reset" >&2
+        printf '  fetch one with --no-network, so on the next boot these %s files are\n' \
+            "${ic_n:-0}" >&2
+        printf '  a shelf it will not look at. apk update writes the index into the\n' >&2
+        printf '  cache; one that ran before the cache existed wrote it nowhere.\n' >&2
+    fi
     printf '  This is what the next boot installs from. Whether it is *enough* is\n' >&2
     printf '  not a count: the apply rehearses it and says so in the log above —\n' >&2
     printf '  "the next boot can install all of /etc/apk/world offline".\n' >&2
