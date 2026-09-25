@@ -2146,8 +2146,31 @@ has 'and the ones it has not'              "$OVLT_B" 'etc/init.d/spore-seed'
 # overlay, not the directory on the medium — and a cache with no symlink
 # pointing at it is a few hundred megabytes of nothing.
 has 'the overlay is checked for the cache link' "$OVLT_B" 'etc/apk/cache'
-has 'and says what its absence costs'           "$OVLT_B" 'installs from the medium /apks alone'
+has 'and says what its absence costs'           "$OVLT_B" 'installs world from the medium own /apks alone'
 rm -rf "$OVLT"
+
+# And on the healthy path, which is the one that matters. This check lived
+# inside inspect_ovl_contents, which runs only where the overlay has no seed
+# service — so on a medium that looked fine it printed nothing, and the one line
+# that would have explained a desktop with no display manager never appeared.
+CLT=$(mktemp -d /tmp/spore-cachelink.XXXXXX)
+mkdir -p "$CLT/m/etc/init.d" "$CLT/m/etc/spore" "$CLT/m/usr/local/lib/spore" "$CLT/m/etc/apk"
+printf 'x\n' > "$CLT/m/etc/init.d/spore-seed"
+printf 'x\n' > "$CLT/m/etc/spore/.seeded"
+printf 'x\n' > "$CLT/m/usr/local/lib/spore/seed-run"
+(cd "$CLT/m" && tar -czf "$CLT/host.apkovl.tar.gz" .)
+mkdir -p "$CLT/d/spore" && mv "$CLT/host.apkovl.tar.gz" "$CLT/d/"
+printf 'FORMAT=1\nHOST=k\nMODULES="net"\n' > "$CLT/d/spore/spore.conf"
+CLT_NO=$("$SPORE" inspect "$CLT/d" 2>&1)
+has 'a healthy overlay with no cache link says so' "$CLT_NO" 'but no etc/apk/cache in the overlay'
+has 'in the terms that bit'                        "$CLT_NO" 'naming software it does'
+# And the other way: a committed overlay that carries the link is told it can.
+ln -s /media/sdc2/apkcache "$CLT/m/etc/apk/cache"
+(cd "$CLT/m" && tar -czf "$CLT/d/host.apkovl.tar.gz" .)
+CLT_YES=$("$SPORE" inspect "$CLT/d" 2>&1)
+has   'and one that carries it is told so'   "$CLT_YES" 'so the boot can reach the package cache'
+hasnt 'without the warning'                  "$CLT_YES" 'but no etc/apk/cache in the overlay'
+rm -rf "$CLT"
 
 # Every file the seed carries, not a sample. This compared lib/seed.sh,
 # lib/plan.sh, modules/net.sh and bin/spore, and said "matches this tool" about

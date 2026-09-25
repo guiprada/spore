@@ -146,19 +146,37 @@ inspect_ovl_contents() {
             printf '    %sNO %s  %s\n'  "$_c_red" "$_c_reset" "$ioc_p" >&2
         fi
     done
-    # And the one that decides whether the packages come back. apk opens its
-    # cache relative to --root, so what the initramfs follows is this symlink
-    # inside the overlay, not the directory sitting on the medium. A cache full
-    # of .apk files with no symlink pointing at it is 363M of nothing: the boot
-    # installs from the medium's own /apks and gets the base ISO's set.
-    if grep -qE '^\.?/?etc/apk/cache$' "$ioc_list"; then
-        printf '    %syes%s  etc/apk/cache — the boot can find the cache\n' \
+    inspect_ovl_cachelink "$ioc_list"
+}
+
+# The entry that decides whether the packages come back, reported for every
+# committed overlay and not only for a broken one.
+#
+# apk opens its cache relative to --root — database.c:
+#
+#     db->cache_fd = openat(db->root_fd, db->cache_dir, ...)
+#
+# and setup_cache_repository then registers it as a package source. So what the
+# initramfs follows is /etc/apk/cache *inside the overlay*, not the directory
+# sitting on the medium. Those are different questions, and the medium-side
+# section above can only answer the second one: it will happily report 363M of
+# package files that the boot has no way to reach.
+#
+# This lived inside inspect_ovl_contents, which runs only on the branch where
+# the overlay has no seed service — so on a healthy medium, the one check that
+# would have explained a desktop with no display manager printed nothing at all.
+inspect_ovl_cachelink() {
+    ioc_cl=$1
+    if grep -qE '^\.?/?etc/apk/cache$' "$ioc_cl"; then
+        printf '  %sand etc/apk/cache, so the boot can reach the package cache%s\n' \
             "$_c_green" "$_c_reset" >&2
     else
-        printf '    %sNO %s  etc/apk/cache — nothing in the overlay points at a cache,\n' \
+        printf '  %sbut no etc/apk/cache in the overlay%s — nothing in it points at a\n' \
             "$_c_red" "$_c_reset" >&2
-        printf '          so the next boot installs from the medium /apks alone\n' >&2
-        printf '          however many package files are sitting beside the spore.\n' >&2
+        printf '  cache, so the boot installs world from the medium own /apks alone,\n' >&2
+        printf '  however many package files are sitting beside the spore. That is a\n' >&2
+        printf '  machine that comes back with its runlevels naming software it does\n' >&2
+        printf '  not have.\n' >&2
     fi
 }
 
@@ -306,6 +324,7 @@ inspect_data() {
                     printf '  but no etc/spore/.seeded, so a boot from it applies the whole\n' >&2
                     printf '  spore again — correct, but as slow as booting the seed.\n' >&2
                 fi
+                inspect_ovl_cachelink "$SPORE_WORK/ovl.files"
             else
                 warn "but it carries the spore-seed service without the tool that
          service runs, so a machine booted from it fails spore-seed every time
