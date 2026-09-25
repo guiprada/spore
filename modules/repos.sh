@@ -205,4 +205,120 @@ else
     echo "spore: installs world with no network." >&2
 fi'
     fi
+
+    repos_plan_bootrepo
+}
+
+# A boot repository on the medium, which is the only package source on a
+# diskless boot that does not depend on what the disk happens to be called.
+#
+# The cache does depend on it, and that is what defeated a day of this. apk
+# opens its cache through /etc/apk/cache, a symlink the apply writes with the
+# medium's absolute path baked in — /media/sdc2/apkcache, because on that
+# machine the stick was the third disk. Move the same stick to a machine where
+# it is the first, or boot it under qemu where it is the only one, and it is
+# /media/sda2: the symlink points at nothing, apk says
+#
+#     WARNING: opening from cache .../APKINDEX.tar.gz: No such file or directory
+#
+# and installs none of world. An overlay that only germinates where the device
+# letters match is not a spore.
+#
+# initramfs-init finds its package sources by *searching* instead:
+#
+#     find "$ROOT"/media/* -maxdepth 3 -name .boot_repository -type f
+#
+# so a directory marked that way is found under whatever name the medium got.
+# That is the mechanism behind /media/sdc1/apks, the one source that has worked
+# on every boot of this machine under both names.
+#
+# And it needs no signing key, which the obvious version of this does. apk
+# verifies index signatures and the initramfs passes no --allow-untrusted, so
+# an index spore built itself would be rejected — but an index does not have to
+# be built. Each upstream repository already publishes one, signed by Alpine,
+# whose key is already trusted. Mirror those verbatim, one directory per
+# upstream repository, and hardlink the package pool into each: the index is
+# authentic, the packages are the ones apk already chose, and the disk cost is
+# one copy however many repositories share it.
+repos_plan_bootrepo() {
+    repos_br=$(mconf REPOS_BOOT_REPO '')
+    [ -n "$repos_br" ] || return 0
+    case $repos_br in
+        /*) : ;;
+        *)  repos_br="${SPORE_DIR%/*}/$repos_br"
+            plan_note "repos: REPOS_BOOT_REPO is relative, so the boot repository is
+         $repos_br on this machine. Relative is the form to prefer: the
+         initramfs finds it by searching /media for a .boot_repository marker,
+         so nothing here is tied to the medium being sdc rather than sda." ;;
+    esac
+    plan_note "repos: the medium carries its own package repository, so a boot
+         with no network installs all of /etc/apk/world from it. This is what
+         the apk cache cannot do portably — the cache is reached through an
+         absolute symlink naming a device, and the device is not called the
+         same thing on the next machine."
+    # firstboot: after the package phase, so the pool is whatever apk settled on.
+    plan_firstboot repos-bootrepo "set -u
+br_root='$repos_br'
+br_arch=\$(apk --print-arch 2>/dev/null || echo x86_64)
+br_mp=\$(df -P \"\${br_root%/*}\" 2>/dev/null | awk 'NR==2 { print \$6 }')
+if ! mkdir -p \"\$br_root\" 2>/dev/null; then
+    if ! { [ -n \"\$br_mp\" ] && mount -o remount,rw \"\$br_mp\" 2>/dev/null &&
+           mkdir -p \"\$br_root\" 2>/dev/null; }; then
+        echo \"spore: cannot write a boot repository at \$br_root. The next boot\" >&2
+        echo \"spore: installs world with no network and will be missing packages.\" >&2
+        exit 0
+    fi
+fi
+
+# The pool. Hardlinked from the cache where there is one, because the files are
+# already on this filesystem and a second copy of a desktop is not free.
+br_pool=\$br_root/.pool
+mkdir -p \"\$br_pool\"
+for br_f in /etc/apk/cache/*.apk; do
+    [ -e \"\$br_f\" ] || continue
+    ln -f \"\$br_f\" \"\$br_pool/\${br_f##*/}\" 2>/dev/null ||
+        cp -f \"\$br_f\" \"\$br_pool/\" 2>/dev/null || true
+done
+# And whatever the cache did not have. --recursive is the point: world names
+# the packages you asked for, and the boot has to install their dependencies
+# too, with no network to resolve them over.
+# shellcheck disable=SC2046
+apk fetch --recursive --output \"\$br_pool\" \$(tr '\\n' ' ' < /etc/apk/world) \\
+    >/dev/null 2>&1 || true
+
+br_n=0
+br_made=0
+while IFS= read -r br_url; do
+    case \$br_url in http://*|https://*) ;; *) continue ;; esac
+    br_n=\$((br_n + 1))
+    br_d=\$br_root/r\$br_n
+    mkdir -p \"\$br_d/\$br_arch\" || continue
+    # Alpine's own index, signed with Alpine's own key, copied rather than
+    # rebuilt. A rebuilt one would need a key of ours and the initramfs would
+    # refuse it.
+    if ! { wget -q -O \"\$br_d/\$br_arch/APKINDEX.new\" \"\$br_url/\$br_arch/APKINDEX.tar.gz\" 2>/dev/null ||
+           curl -fsSL -o \"\$br_d/\$br_arch/APKINDEX.new\" \"\$br_url/\$br_arch/APKINDEX.tar.gz\" 2>/dev/null; }; then
+        rm -f \"\$br_d/\$br_arch/APKINDEX.new\"
+        echo \"spore: could not mirror the index for \$br_url\" >&2
+        continue
+    fi
+    mv -f \"\$br_d/\$br_arch/APKINDEX.new\" \"\$br_d/\$br_arch/APKINDEX.tar.gz\"
+    for br_f in \"\$br_pool\"/*.apk; do
+        [ -e \"\$br_f\" ] || continue
+        ln -f \"\$br_f\" \"\$br_d/\$br_arch/\${br_f##*/}\" 2>/dev/null || true
+    done
+    # Last, so a half-built repository is never marked as one.
+    : > \"\$br_d/.boot_repository\"
+    br_made=\$((br_made + 1))
+done < /etc/apk/repositories
+
+if [ \"\$br_made\" -gt 0 ]; then
+    echo \"spore: boot repository at \$br_root — \$br_made repo(s), \$(find \"\$br_pool\" -name '*.apk' 2>/dev/null | wc -l) package file(s)\"
+    echo \"spore: the initramfs finds it by searching for .boot_repository, so it\"
+    echo \"spore: works whatever this medium is called on the next machine.\"
+else
+    echo \"spore: no boot repository could be built, so the next boot installs\" >&2
+    echo \"spore: world with no network and will be missing packages.\" >&2
+fi
+sync 2>/dev/null || true"
 }

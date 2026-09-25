@@ -211,6 +211,27 @@ inspect_cache() {
         done
     fi
 
+    # The portable one, reported first because it is the one that decides a boot
+    # on a machine other than the one the spore was applied on. The initramfs
+    # finds these by searching, so the name of the medium never enters into it.
+    ic_br=$(find "$ic_dir" -maxdepth 3 -name .boot_repository -type f 2>/dev/null | wc -l | tr -d ' ')
+    printf '\nthe boot repository\n\n' >&2
+    if [ "${ic_br:-0}" -gt 0 ]; then
+        ic_brn=$(find "$ic_dir" -maxdepth 4 -name '*.apk' -path '*/r[0-9]*' 2>/dev/null | wc -l | tr -d ' ')
+        printf '  %s%s marked repositor(ies)%s on this medium, %s package file(s)\n' \
+            "$_c_green" "$ic_br" "$_c_reset" "${ic_brn:-0}" >&2
+        printf '  The initramfs finds these by searching /media for a .boot_repository\n' >&2
+        printf '  marker, so they work whatever this medium is called on the next\n' >&2
+        printf '  machine. This is the source a portable spore relies on.\n' >&2
+    else
+        printf '  none. A diskless boot installs /etc/apk/world with no network, and\n' >&2
+        printf '  the only source that survives being moved to another machine is a\n' >&2
+        printf '  repository on the medium — the apk cache below is reached through an\n' >&2
+        printf '  absolute symlink naming a device, so it works on the machine it was\n' >&2
+        printf '  written on and nowhere else.\n' >&2
+        printf '      spore -s <spore> set repos REPOS_BOOT_REPO repo\n' >&2
+    fi
+
     printf '\nthe apk cache\n\n' >&2
     if [ -z "$ic_found" ]; then
         printf '  none on this medium%s\n' \

@@ -506,6 +506,11 @@ persist_warnings() {
          ones the medium's own /apks repository carries — the base ISO's set,
          not yours. Everything else is simply absent on the next boot, with
          /etc/apk/world and the runlevel symlinks still naming it.
-         Set REPOS_APK_CACHE in repos.conf to a path on the boot medium."
+         Set REPOS_BOOT_REPO in repos.conf to a relative path on the boot
+         medium — a boot repository, which the initramfs finds by searching
+         for a .boot_repository marker and which therefore works whatever the
+         medium is called on the next machine. REPOS_APK_CACHE is reached
+         through an absolute symlink naming a device, so it fixes the machine
+         it was written on and no other."
     fi
 }

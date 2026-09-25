@@ -559,7 +559,12 @@ section 'the apk cache is not an optimisation on a diskless host'
 has   'the warning is about what comes back' "$OUT" '--no-network'
 has   'and says so in the first line'        "$OUT" 'it is a different machine'
 hasnt 'not about how long a boot takes'      "$OUT" 're-downloaded on every boot'
-has   'and names the setting that fixes it'  "$OUT" 'Set REPOS_APK_CACHE'
+has   'and names the setting that fixes it'  "$OUT" 'Set REPOS_BOOT_REPO'
+# Naming the cache here was the mistake underneath a day of this: it is reached
+# through an absolute symlink holding a device name, so it fixes the machine it
+# was written on and silently fixes nothing on the next one.
+has   'the portable one, not the cache'      "$OUT" 'fixes the machine
+         it was written on and no other'
 # setup-apkcache remounts the medium rw only long enough to make the directory
 # and the symlink, then puts it back. apk runs after that and cannot write a
 # file into the cache it was just given, so the setting would look applied and
@@ -594,6 +599,40 @@ has 'it stands down rather than dying'             "$ACS" 'exit 0'
 # because a cache on a device that is not there is a cache that never fills.
 # A relative value resolves against the medium the spore was read from, which
 # the target works out for itself because the plan is built there.
+# The cache is reached through an absolute symlink naming a device, and the
+# device is not called the same thing on the next machine: /media/sdc2/apkcache
+# written on a box where the stick is the third disk points at nothing under
+# qemu where it is the only one. The boot then says
+#   WARNING: opening from cache .../APKINDEX.tar.gz: No such file or directory
+# and installs none of world. initramfs-init finds package sources by searching
+# for a .boot_repository marker instead, so a repository on the medium is found
+# under whatever name it got.
+BR=$(mktemp -d /tmp/spore-bootrepo.XXXXXX)
+cp -r "$EX" "$BR/s"
+"$SPORE" -s "$BR/s" set repos REPOS_BOOT_REPO repo >/dev/null 2>&1
+SPORE_WORK=$BR/w alpine "$SPORE" --spore "$BR/s" plan >/dev/null 2>&1
+BRP=$(alpine "$SPORE" -s "$BR/s" plan 2>&1)
+BRS=$(grep -l 'br_root=' "$BR"/w/content/* 2>/dev/null | head -1 | xargs cat 2>/dev/null)
+has 'the medium carries its own repository' "$BRP" 'firstboot  repos-bootrepo'
+has 'and says why, in the terms that bit'   "$BRP" 'the device is not called the'
+has 'the marker the initramfs searches for' "$BRS" '.boot_repository'
+# Written last, so a half-built repository is never found as a whole one.
+has 'written after the packages, not before' "$BRS" 'Last, so a half-built'
+# Alpine's own index, signed with Alpine's own key. A rebuilt one would need a
+# key of ours, and the initramfs passes no --allow-untrusted.
+has 'the upstream index is mirrored'        "$BRS" 'APKINDEX.tar.gz'
+hasnt 'and no index is built here'          "$BRS" 'apk index'
+# Dependencies too: world names what you asked for, and the boot has no network
+# to resolve the rest over.
+has 'the whole closure is fetched'          "$BRS" 'apk fetch --recursive'
+# Hardlinks, because a second copy of a desktop is not free and the files are
+# already on this filesystem.
+has 'shared between repositories by link'   "$BRS" 'ln -f "$br_f"'
+# Never fatal, like the cache: a machine that cannot build one still wants its
+# account and its keymap.
+has 'and it stands down rather than dying'  "$BRS" 'exit 0'
+rm -rf "$BR"
+
 ACR=$(mktemp -d /tmp/spore-cacherel.XXXXXX)
 cp -r "$EX" "$ACR/s"
 "$SPORE" -s "$ACR/s" set repos REPOS_APK_CACHE apkcache >/dev/null 2>&1
@@ -2006,6 +2045,8 @@ has 'and that there is no log to read'       "$INO" 'no spore-seed.log'
 # On a diskless medium the cache is not a detail, it is most of whether the
 # machine comes back: the initramfs reinstalls world with --no-network and can
 # reach only this and the medium's own /apks.
+has 'a medium with no boot repository says so' "$INO" 'the boot repository'
+has 'and why that is the portable one'        "$INO" 'survives being moved to another machine'
 has 'a medium with no cache says what that costs' "$INO" 'none on this medium'
 has 'in the terms that matter'                    "$INO" 'no display manager rather'
 has 'and how to give it one'                      "$INO" 'set repos REPOS_APK_CACHE'
@@ -2031,7 +2072,16 @@ hasnt 'without the warning'              "$INCI" 'but no APKINDEX in it'
 # A count is not the answer, though, and saying so is the point: the apply
 # rehearses the boot and that line is the one that decides it.
 has   'the count is not the verdict'    "$INC" 'Whether it is *enough* is'
-rm -rf "$IN/m/apkcache"
+# And the portable source, found the way the initramfs finds it: by the marker,
+# not by a path anyone wrote down.
+mkdir -p "$IN/m/repo/r1/x86_64"
+: > "$IN/m/repo/r1/.boot_repository"
+: > "$IN/m/repo/r1/x86_64/lightdm-1.33.0-r0.apk"
+INBR=$("$SPORE" inspect "$IN/m" 2>&1)
+has   'a marked repository is found'     "$INBR" '1 marked repositor(ies)'
+has   'and its packages counted'         "$INBR" '1 package file(s)'
+hasnt 'and not reported as absent'       "$INBR" 'survives being moved to another machine'
+rm -rf "$IN/m/repo" "$IN/m/apkcache"
 
 # The log is copied over on every boot, and the boot that overwrites it is very
 # often the one you did to see whether the last one worked: a converged boot
