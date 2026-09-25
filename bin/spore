@@ -175,6 +175,7 @@ cmd_apply() {
     printf '\n  %s changed, %s already correct\n' "$SPORE_N_CHANGED" "$SPORE_N_UNCHANGED" >&2
     report_deferred
     report_offline_boot
+    report_ram_root
     report_ports
 
     if [ "$SPORE_DO_PERSIST" = 1 ]; then

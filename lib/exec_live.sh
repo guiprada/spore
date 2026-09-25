@@ -426,6 +426,43 @@ $(grep -i 'unable to select\|no such package\|ERROR' "$rob_out" 2>/dev/null |
     rm -rf "$rob_root"
 }
 
+# How much room is left in the RAM root, said in the one unit that matters.
+#
+# On a diskless host / is tmpfs, so free space on / is free memory and the two
+# numbers are the same number. That makes the failure mode unlike an ordinary
+# out-of-memory: tmpfs pages cannot be reclaimed, because there is no backing
+# store to write them to and nothing to kill that would release them. The OOM
+# killer has no move. The machine does not shed a process and carry on, it
+# stops — and from the outside that looks like a desktop that froze.
+#
+# The desktop module already says a diskless desktop costs its installed size in
+# RAM, and then leaves the arithmetic to whoever reads it. This does it, at the
+# one moment the answer is exact: after everything is installed, before anyone
+# logs in.
+report_ram_root() {
+    synthetic && return 0
+    [ "$SPORE_DRYRUN" = 1 ] && return 0
+    [ "$(persist_backend)" = lbu ] || return 0
+    rrr_line=$(df -Pk / 2>/dev/null | awk 'NR==2 { print $2, $3, $4 }')
+    [ -n "$rrr_line" ] || return 0
+    # shellcheck disable=SC2086  # three fields, deliberately split
+    set -- $rrr_line
+    [ $# -eq 3 ] || return 0
+    rrr_free_mb=$(( $3 / 1024 ))
+    say "RAM root: $(( $2 / 1024 ))M used of $(( $1 / 1024 ))M, ${rrr_free_mb}M free"
+    # A greeter is small; a session with a browser in it is not. Below this a
+    # desktop is not a slow desktop, it is the freeze described above.
+    if [ "$rrr_free_mb" -lt 512 ]; then
+        warn "that free figure is free memory, not free disk: / is tmpfs here, so
+         the two are the same number. ${rrr_free_mb}M is not enough to log into a
+         graphical session, and running out is not survivable — tmpfs pages
+         cannot be reclaimed and the OOM killer has nothing it can free, so the
+         machine stops rather than kills something. Give the box more RAM, or
+         take the largest packages out of the spore (a browser is usually the
+         biggest single one), or put this machine on a disk."
+    fi
+}
+
 report_ports() {
     synthetic && return 0
     [ "$SPORE_DRYRUN" = 1 ] && return 0

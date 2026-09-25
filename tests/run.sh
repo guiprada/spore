@@ -674,6 +674,17 @@ has   'and it writes nothing'                      "$ROBSRC" '--simulate'
 # want to meet ARG_MAX.
 has   'world is fed in, not interpolated'          "$ROBSRC" 'xargs -a "$rob_world"'
 has   'and the apply runs it'  "$(cat "$ROOT/bin/spore")" 'report_offline_boot'
+
+# The other number a diskless desktop turns on, measured rather than left as
+# arithmetic for the reader. / is tmpfs, so free space on / IS free memory —
+# and running out is not an ordinary OOM: tmpfs pages cannot be reclaimed, the
+# OOM killer has nothing to free, and the machine stops instead of shedding a
+# process. From the outside that is a desktop that froze.
+has 'the RAM root is measured after the install' "$ROBSRC" 'report_ram_root()'
+has 'and only where / is actually tmpfs'         "$ROBSRC" '[ "$(persist_backend)" = lbu ] || return 0'
+has 'it says free disk here is free memory'      "$ROBSRC" 'free memory, not free disk'
+has 'and why that failure is not survivable'     "$ROBSRC" 'cannot be reclaimed and the OOM killer'
+has 'the apply runs that too' "$(cat "$ROOT/bin/spore")" 'report_ram_root'
 # ifup, not `rc-service networking`: asking OpenRC for the service drags in its
 # dependency graph, which wants fsck, which will not start that early — and the
 # whole thing dies as "cannot start networking as fsck would not start", three
