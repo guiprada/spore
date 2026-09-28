@@ -345,39 +345,37 @@ done"
 # reinstalls the whole desktop, and the installed tree lives in RAM for as long
 # as the machine is up.
 #
-# Both halves are worth saying because each has a different fix, and neither is
-# obvious from a boot that eventually works.
+# Said once, and only while it is still true. This used to print both halves on
+# every apply and end by recommending a disk — to somebody who had read it a
+# dozen times, had weighed it, and had chosen diskless on purpose. A note that
+# re-argues a settled decision is not information, it is nagging, and it makes
+# the notes that *are* news harder to see.
+#
+# So: the packages half disappears once REPOS_BOOT_REPO is set, because then it
+# is handled and there is nothing to say. The memory half is no longer an
+# instruction to go and measure something — report_ram_root measures it at the
+# end of the apply, exactly, on this machine. And the recommendation is gone.
+# Diskless is a supported way to run a desktop here; what the tool owes you is
+# the number, not an opinion you have already heard.
 desktop_plan_diskless() {
     [ "$(fact_persist)" = lbu ] || return 0
     dpd_de=$1
-    # The headline package, so the command below is one somebody can paste. The
-    # environment names are setup-desktop's, not apk's: `apk add xfce` is not a
-    # thing.
-    case $dpd_de in
-        xfce|xfce-wayland) dpd_pkg=xfce4 ;;
-        mate)              dpd_pkg=mate-desktop-environment ;;
-        lxqt)              dpd_pkg=lxqt-desktop ;;
-        plasma)            dpd_pkg=plasma-desktop-meta ;;
-        *)                 dpd_pkg=$dpd_de ;;
-    esac
-    plan_note "desktop: this is a diskless host, so Alpine's initramfs installs
-         everything in /etc/apk/world into the RAM root at every boot — the
-         whole desktop, every time, not just the once. That costs twice, and
-         each half has its own fix. Coming back at all: the initramfs runs apk
-         with --no-network, so without a package cache on the boot medium these
-         are not re-downloaded, they are missing — the overlay boots with the
-         world file and the runlevels naming a desktop that is not installed.
-         Set REPOS_APK_CACHE in repos.conf to a path on the medium. Memory: the
-         installed tree sits in tmpfs for as long as the machine is up, so the
-         desktop costs its own installed size in RAM before anything runs. To
-         see what that is before committing to it, on any Alpine box:
-         apk add --simulate $dpd_pkg
-         A desktop on a disk pays neither, and if this machine has one, that is
-         the better place for it."
+    dpd_repo=$(conf_get "$SPORE_DIR/modules/repos.conf" REPOS_BOOT_REPO '')
+    if [ -z "$dpd_repo" ]; then
+        plan_note "desktop: this is a diskless host, so Alpine's initramfs
+         reinstalls everything in /etc/apk/world into the RAM root at every
+         boot, with apk run --no-network. Nothing here has a boot repository
+         to install from, so the next boot comes up with the world file and
+         the runlevels naming a desktop that is not on the machine.
+         Set REPOS_BOOT_REPO in repos.conf to a relative path on the medium."
+    fi
+    plan_note "desktop: the installed desktop sits in tmpfs for as long as this
+         machine is up, so it costs its own size in RAM before anything runs.
+         The apply measures what is left and says so at the end — free space on
+         / is free memory here, and they are the same number."
     [ "$dpd_de" = gnome ] || [ "$dpd_de" = plasma ] || return 0
-    plan_note "desktop: $dpd_de is much the largest of these, and a diskless
-         boot pays for it in full every time. xfce or sway is the same idea for
-         a fraction of the boot."
+    plan_note "desktop: $dpd_de is much the largest of these, so that figure
+         will be the tightest with it."
 }
 
 # Whether anything graphical is actually running is not something the plan can

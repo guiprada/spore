@@ -3815,16 +3815,29 @@ sed -i 's/^MODULES=.*/MODULES="users desktop"/' "$DK/s/spore.conf"
 # initramfs re-reads world out of the apkovl and apk-adds every line of it into
 # the tmpfs root on every boot — a handful of packages for a file server, the
 # entire desktop for this.
-has 'the diskless cost is stated at plan time' "$DK_XFCE" 'into the RAM root at every boot'
-has 'both halves of it, with both fixes'       "$DK_XFCE" 'REPOS_APK_CACHE'
+has 'the diskless cost is stated at plan time' "$DK_XFCE" 'reinstalls everything in /etc/apk/world'
+has 'with the setting that handles it'         "$DK_XFCE" 'Set REPOS_BOOT_REPO'
 has 'and the memory half'                      "$DK_XFCE" 'sits in tmpfs for as long as'
-# An environment name is not a package name, and a command nobody can paste is
-# worse than no command.
-has 'with a package name that exists'          "$DK_XFCE" 'apk add --simulate xfce4'
+# And no recommendation. This note used to end "a desktop on a disk pays
+# neither, and if this machine has one, that is the better place for it" — on
+# every single apply, to somebody who had read it a dozen times and chosen
+# diskless on purpose. Re-arguing a settled decision is not information, and it
+# buries the notes that are actually news.
+hasnt 'and no advice about putting it on a disk' "$DK_XFCE" 'better place for it'
+hasnt 'nor an instruction to go and measure'     "$DK_XFCE" 'apk add --simulate'
+has   'because the apply measures it'            "$DK_XFCE" 'measures what is left'
+# The packages half goes away once it is handled: a warning about a problem you
+# have already solved is the same nagging in a different coat.
+"$SPORE" -s "$DK/s" set repos REPOS_BOOT_REPO repo >/dev/null 2>&1
+DK_BR=$(alpine "$SPORE" -s "$DK/s" -r "$DK/rbr" plan 2>&1)
+hasnt 'the packages warning stops once handled' "$DK_BR" 'Set REPOS_BOOT_REPO'
+has   'while the memory fact remains'           "$DK_BR" 'sits in tmpfs for as long as'
+"$SPORE" -s "$DK/s" unset repos REPOS_BOOT_REPO >/dev/null 2>&1 ||
+    sed -i '/^REPOS_BOOT_REPO=/d' "$DK/s/modules/repos.conf"
 DK_VM=$(env SPORE_FACT_INIT=openrc SPORE_FACT_NETADMIN=yes SPORE_FACT_PERSIST=rootfs \
             SPORE_FACT_ARCH=x86_64 SPORE_FACT_ROOT=yes SPORE_FACT_ALPINE=3.20.0 \
             "$SPORE" -s "$DK/s" -r "$DK/rv" plan 2>&1)
-hasnt 'and not said at all on a host with a disk' "$DK_VM" 'into the RAM root at every boot'
+hasnt 'and not said at all on a host with a disk' "$DK_VM" 'sits in tmpfs for as long as'
 
 # gnome and plasma are much the largest, and upstream builds their package list
 # on the target with `apk info --depends`, which a plan made on a workstation
@@ -3834,7 +3847,7 @@ DK_GN=$(alpine "$SPORE" -s "$DK/s" -r "$DK/rg" plan 2>&1)
 has 'gnome plans its meta-packages'   "$DK_GN" 'pkg        gnome'
 has 'and its greeter, enabled only'   "$DK_GN" 'svc        gdm -> default [enable]'
 has 'and says it is the expensive one' "$DK_GN" 'much the largest'
-has 'with a simulate line that matches' "$DK_GN" 'apk add --simulate gnome'
+has 'in terms of the measured figure'  "$DK_GN" 'will be the tightest with it'
 
 # sway has no display manager upstream and none here, which is worth saying:
 # a machine that boots to a text console is otherwise indistinguishable from a
