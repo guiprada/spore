@@ -2091,6 +2091,19 @@ mkdir -p "$IN/m/repo/r1/x86_64"
 INBR=$("$SPORE" inspect "$IN/m" 2>&1)
 has   'a marked repository is found'     "$INBR" '1 marked repositor(ies)'
 has   'and its packages counted'         "$INBR" '1 package file(s)'
+# Distinct packages, not directory entries: each repository's copy is a
+# hardlink to the same pool file, so counting entries reported nearly double on
+# a real medium — 1660 for 830 packages. An inflated number in a diagnostic is
+# how you spend an afternoon reassured by something that was never measuring
+# what you thought.
+mkdir -p "$IN/m/repo/r2/x86_64"
+: > "$IN/m/repo/r2/.boot_repository"
+ln "$IN/m/repo/r1/x86_64/lightdm-1.33.0-r0.apk" "$IN/m/repo/r2/x86_64/lightdm-1.33.0-r0.apk"
+rm -rf "$IN/m/apkcache"   # so the cache's own count cannot be what matches
+INBR2=$("$SPORE" inspect "$IN/m" 2>&1)
+has   'two repositories sharing one package' "$INBR2" '2 marked repositor(ies)'
+has   'count the package once'               "$INBR2" '1 package file(s)'
+hasnt 'not once per hardlink'                "$INBR2" '2 package file(s)'
 hasnt 'and not reported as absent'       "$INBR" 'survives being moved to another machine'
 rm -rf "$IN/m/repo" "$IN/m/apkcache"
 

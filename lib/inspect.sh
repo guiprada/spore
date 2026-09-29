@@ -217,7 +217,12 @@ inspect_cache() {
     ic_br=$(find "$ic_dir" -maxdepth 3 -name .boot_repository -type f 2>/dev/null | wc -l | tr -d ' ')
     printf '\nthe boot repository\n\n' >&2
     if [ "${ic_br:-0}" -gt 0 ]; then
-        ic_brn=$(find "$ic_dir" -maxdepth 4 -name '*.apk' -path '*/r[0-9]*' 2>/dev/null | wc -l | tr -d ' ')
+        # Distinct packages, not directory entries. Each repository's copy is a
+        # hardlink to the same pool file, so counting entries reported nearly
+        # double — and an inflated count in a diagnostic is how you spend an
+        # afternoon reassured by a number that was never measuring the thing.
+        ic_brn=$(find "$ic_dir" -maxdepth 4 -name '*.apk' -path '*/r[0-9]*' 2>/dev/null |
+                 sed 's|.*/||' | sort -u | wc -l | tr -d ' ')
         printf '  %s%s marked repositor(ies)%s on this medium, %s package file(s)\n' \
             "$_c_green" "$ic_br" "$_c_reset" "${ic_brn:-0}" >&2
         printf '  The initramfs finds these by searching /media for a .boot_repository\n' >&2
