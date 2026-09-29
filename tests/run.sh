@@ -3772,6 +3772,18 @@ hasnt 'which is not started by the apply' "$DK_XFCE" 'svc        lightdm -> defa
 # greeter: the desktop installed, X worked, startx opened xfce, and the boot
 # ended at a text console saying nothing.
 has 'the bus the greeter declares it needs' "$DK_XFCE" 'svc        dbus -> default [on]'
+# And the greeter goes behind sshd. coisas froze at the greeter twice with the
+# same symptom and sshd answered only the first time — which was never the
+# network (networking is in the boot runlevel, so the address is up before
+# default is entered) but the order of two unrelated services inside default.
+# rc_parallel is commented out in rc.conf, so they start one at a time;
+# ls_dir() readdir()s the runlevel directory and never sorts it; and
+# visit_service() keeps that order for anything with no dependency between it.
+# So which of sshd and the greeter went first was the order the kernel handed
+# back for a tmpfs directory — and on a machine whose greeter wedges the
+# console, that decided whether there was a diagnosis or a power cycle.
+has 'the greeter is ordered behind the way back in' "$DK_XFCE" \
+    '/etc/rc.conf.d/spore-display-manager.conf (0644'
 # setup-desktop ends in `rc-update del acpid`, outside its case. Sound inside a
 # session, where the desktop's own power manager has the button — but at the
 # console, at the greeter, and on sway there is no such thing, and the only way
@@ -3884,6 +3896,7 @@ has 'and the message lists the real ones' "$DK_BAD" 'xfce xfce-wayland gnome pla
 # own, so adding an environment extends it automatically.
 DK_ENVS=$( . "$ROOT/modules/desktop.sh"; printf '%s' "$DESKTOP_ENVS" )
 DK_GAP=''
+DK_OGAP=''
 for DK_E in $DK_ENVS; do
     "$SPORE" -s "$DK/s" set desktop DESKTOP_ENV "$DK_E" >/dev/null 2>&1
     DK_EP=$(alpine "$SPORE" -s "$DK/s" -r "$DK/rl$DK_E" plan 2>&1)
@@ -3898,12 +3911,43 @@ for DK_E in $DK_ENVS; do
         *'svc        dbus -> default [on]'*) : ;;
         *) DK_GAP="$DK_GAP $DK_E($DK_DM)" ;;
     esac
+    # The same guard for the ordering. Every display manager takes the console,
+    # so every one of them belongs behind the way back in, not just the one
+    # that was on the machine the day this was found.
+    case $DK_EP in
+        *'/etc/rc.conf.d/spore-display-manager.conf'*) : ;;
+        *) DK_OGAP="$DK_OGAP $DK_E($DK_DM)" ;;
+    esac
 done
 if [ -n "$DK_ENVS" ] && [ -z "$DK_GAP" ]; then
     t_ok 'every environment with a display manager enables dbus'
 else
     t_fail 'every environment with a display manager enables dbus' "missing for:$DK_GAP"
 fi
+if [ -n "$DK_ENVS" ] && [ -z "$DK_OGAP" ]; then
+    t_ok 'and orders it behind sshd'
+else
+    t_fail 'and orders it behind sshd' "missing for:$DK_OGAP"
+fi
+
+# The plan only carries the path, and the path is the same for every branch —
+# so the name inside it is checked by writing it. A file that said lightdm on
+# an lxqt machine would order nothing at all, silently, which is the failure
+# this whole section exists because of.
+DK_RCD=/etc/rc.conf.d/spore-display-manager.conf
+"$SPORE" -s "$DK/s" set desktop DESKTOP_ENV xfce >/dev/null 2>&1
+alpine "$SPORE" -s "$DK/s" -r "$DK/rw" apply >/dev/null 2>&1
+DK_W=$(cat "$DK/rw$DK_RCD" 2>/dev/null || echo MISSING)
+has 'the ordering names the greeter that is actually planned' "$DK_W" \
+    'rc_lightdm_after="sshd"'
+# Scoped, not global. `rc_after` with no service in it is sourced for every
+# service on the machine and would put the whole default runlevel behind sshd.
+hasnt 'and only that one, not every service on the box' "$DK_W" 'rc_after='
+"$SPORE" -s "$DK/s" set desktop DESKTOP_ENV lxqt >/dev/null 2>&1
+alpine "$SPORE" -s "$DK/s" -r "$DK/rw2" apply >/dev/null 2>&1
+DK_W2=$(cat "$DK/rw2$DK_RCD" 2>/dev/null || echo MISSING)
+has 'and follows the branch when the desktop changes' "$DK_W2" 'rc_sddm_after="sshd"'
+hasnt 'without leaving the old one behind'             "$DK_W2" 'rc_lightdm_after'
 rm -rf "$DK"
 
 section 'a package that is missing from a mirror that is down'

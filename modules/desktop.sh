@@ -220,10 +220,59 @@ desktop_plan_acpid() {
 # `apk del` away from a runlevel link pointing at nothing. The init script
 # arrives with it: dbus-openrc is an install_if subpackage, so apk pulls it in
 # wherever dbus and openrc are both installed, which here is always.
+#
+# The second thing a display manager needs is to be last.
+#
+# coisas froze at the greeter twice with the same symptom, and the first time
+# sshd answered and the second time nothing did. That difference was never the
+# network: `networking` is in the *boot* runlevel (modules/net.sh), so the
+# address exists before the default runlevel is entered at all. sshd is not.
+# sshd and the display manager are both plain members of `default`, and neither
+# init script mentions the other — lightdm.initd is `need localmount dbus`,
+# sshd.initd is `use logger dns`, `after entropy`, `need net`.
+#
+# Two services in one runlevel with no ordering between them are not started at
+# the same time, and are not started in a defined order either:
+#
+#     etc/rc.conf     #rc_parallel="NO"   — commented out, so: one at a time
+#     librc.c         ls_dir() readdir()s the runlevel directory and never
+#                     sorts what it collects
+#     librc-depend.c  rc_deptree_depends() -> visit_service() is a DFS that
+#                     keeps the input order for anything unrelated
+#
+# So which of the two goes first is the order the kernel hands back for
+# /etc/runlevels/default — a tmpfs directory rebuilt from the overlay tarball
+# on every boot. The machine's only way back in was decided by directory order,
+# and on a machine whose greeter wedges the console that is the difference
+# between a diagnosis and a power cycle. It is also why this read as a
+# regression: nothing about the network changed, the coin landed the other way.
+#
+# `after sshd`, then — soft, so a machine with ssh disabled or broken still
+# gets its desktop, and it costs nothing when sshd is in no runlevel.
+#
+# In /etc/rc.conf.d and not /etc/conf.d/<dm>, because greetd and sddm each ship
+# an /etc/conf.d file of their own (their APKBUILDs install $pkgname.confd) and
+# this would overwrite it. gendepends.sh sources /etc/rc.conf.d/*.conf for every
+# service after that service's own conf.d, and _depend reads rc_<service>_after
+# before the unscoped rc_after — so a service-scoped variable, in a file spore
+# owns outright, orders exactly one service and collides with nothing.
 desktop_plan_dm() {
     plan_pkg dbus
     plan_svc dbus default on
     plan_svc "$1" default enable
+    plan_dir /etc/rc.conf.d 0755
+    plan_file /etc/rc.conf.d/spore-display-manager.conf 0644 \
+"# Written by spore. OpenRC sources this for every service; the variable is
+# scoped to one, so that is all it orders.
+#
+# A greeter that wedges takes the console with it. sshd is the way back in, and
+# it has to be listening before anything can take the screen away. Both are
+# plain members of the default runlevel and OpenRC starts those one at a time
+# in readdir order, so without this line which comes first is not decided here.
+rc_${1}_after=\"sshd\""
+    plan_note "desktop: $1 is ordered after sshd, so the way back in is up
+         before anything touches the screen. A greeter that hangs then costs
+         you the console and not the machine."
 }
 
 # setup-desktop writes this for the gtk desktops and nothing reads it back, so
