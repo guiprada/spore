@@ -3784,6 +3784,20 @@ has 'the bus the greeter declares it needs' "$DK_XFCE" 'svc        dbus -> defau
 # console, that decided whether there was a diagnosis or a power cycle.
 has 'the greeter is ordered behind the way back in' "$DK_XFCE" \
     '/etc/rc.conf.d/spore-display-manager.conf (0644'
+# And elogind runs, because polkit-elogind is on the machine and its only
+# backend for "who is logged in, at which seat" is org.freedesktop.login1.
+# A greeter asks that as it paints — its shutdown and restart buttons are
+# polkit checks — so elogind installed and not started is a greeter talking to
+# a name with nobody behind it. setup-desktop does `rc-update add elogind` for
+# lxqt and not for xfce, which installs the same two packages: the dbus
+# asymmetry again, one branch down, mirrored faithfully a second time. On
+# coisas that was `startx` opening xfce in a second against a greeter that drew
+# and then took the machine with it.
+has 'the seat manager the greeter queries is running' "$DK_XFCE" \
+    'svc        elogind -> default [on]'
+# `need dbus cgroups`, and a diskless Alpine has cgroups in no runlevel.
+has 'and the control groups it needs are mounted'    "$DK_XFCE" \
+    'svc        cgroups -> default [on]'
 # setup-desktop ends in `rc-update del acpid`, outside its case. Sound inside a
 # session, where the desktop's own power manager has the button — but at the
 # console, at the greeter, and on sway there is no such thing, and the only way
@@ -3919,6 +3933,30 @@ for DK_E in $DK_ENVS; do
         *) DK_OGAP="$DK_OGAP $DK_E($DK_DM)" ;;
     esac
 done
+# And the third one: elogind installed and not started. This walks the same
+# list and keys off the package rather than the environment, because the rule
+# is about the package — polkit-elogind's login1 backend is elogind, so any
+# machine carrying them and not running it has a polkit that cannot answer.
+DK_EGAP=''
+for DK_E in $DK_ENVS; do
+    "$SPORE" -s "$DK/s" set desktop DESKTOP_ENV "$DK_E" >/dev/null 2>&1
+    DK_EP=$(alpine "$SPORE" -s "$DK/s" -r "$DK/re$DK_E" plan 2>&1)
+    case $DK_EP in *'pkg        elogind'*) : ;; *) continue ;; esac
+    case $DK_EP in
+        *'svc        elogind -> default [on]'*) : ;;
+        *) DK_EGAP="$DK_EGAP $DK_E(elogind)" ;;
+    esac
+    # elogind.initd: `need dbus cgroups`, and cgroups is in no diskless runlevel.
+    case $DK_EP in
+        *'svc        cgroups -> default [on]'*) : ;;
+        *) DK_EGAP="$DK_EGAP $DK_E(cgroups)" ;;
+    esac
+done
+if [ -n "$DK_ENVS" ] && [ -z "$DK_EGAP" ]; then
+    t_ok 'every environment that installs elogind also starts it'
+else
+    t_fail 'every environment that installs elogind also starts it' "missing for:$DK_EGAP"
+fi
 if [ -n "$DK_ENVS" ] && [ -z "$DK_GAP" ]; then
     t_ok 'every environment with a display manager enables dbus'
 else

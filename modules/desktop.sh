@@ -90,10 +90,7 @@ desktop_plan() {
     else
         # setup-wayland-base. cgroups is not in the runlevel set a diskless
         # Alpine boots with, and elogind wants it.
-        plan_pkg elogind
-        plan_pkg polkit-elogind
-        plan_svc cgroups default on
-        plan_svc dbus default on
+        desktop_plan_elogind
     fi
     desktop_plan_udev
 
@@ -103,6 +100,7 @@ desktop_plan() {
                         polkit-elogind xfce4-screensaver xfce4-terminal font-dejavu; do
                 plan_pkg "$dt_p"
             done
+            desktop_plan_elogind
             desktop_plan_dm lightdm
             desktop_plan_gtk_dark ;;
         xfce-wayland)
@@ -125,7 +123,7 @@ desktop_plan() {
                         polkit-elogind gvfs udisks2 adwaita-qt oxygen; do
                 plan_pkg "$dt_p"
             done
-            plan_svc elogind default on
+            desktop_plan_elogind
             desktop_plan_dm sddm ;;
         gnome)
             # Upstream expands `apk info --depends gnome gnome-apps-core` so each
@@ -273,6 +271,53 @@ rc_${1}_after=\"sshd\""
     plan_note "desktop: $1 is ordered after sshd, so the way back in is up
          before anything touches the screen. A greeter that hangs then costs
          you the console and not the machine."
+}
+
+# elogind installed and not running is worse than elogind absent.
+#
+# `polkit-elogind` is polkit built against elogind: its backend for "who is
+# logged in, at which seat, are they active" is org.freedesktop.login1, which
+# is elogind and nothing else. A greeter asks that question the moment it draws
+# — the shutdown and restart buttons on it are polkit checks — so a machine
+# with the elogind packages on it and no elogind running has a greeter talking
+# to a bus with nobody on the other end of that name, on every paint.
+#
+# The init script says what it needs and where it goes, in four lines:
+#
+#     community/elogind/elogind.initd
+#         depend() {
+#                 need dbus cgroups
+#                 # Make sure we start before any other display manager
+#                 before display-manager
+#         }
+#
+# `before display-manager`, and every display manager here declares
+# `provide display-manager` — so the ordering is upstream's and free. What is
+# not free is being in a runlevel at all, and setup-desktop only does that for
+# one branch of its own case statement:
+#
+#     lxqt   apk add … elogind polkit-elogind …   rc-update add elogind
+#     xfce   apk add … elogind polkit-elogind …   (nothing)
+#
+# which is the dbus asymmetry again, one branch further down, and this module
+# mirrored it faithfully a second time. On coisas that was the difference
+# between `startx` opening xfce in a second — which it does, the GPU is fine —
+# and a greeter that draws, blinks its password cursor, and takes the machine
+# down with it over the next minute.
+#
+# cgroups because `need cgroups` and a diskless Alpine has it in no runlevel;
+# OpenRC would pull it in as a dependency anyway, and it is named here so that
+# `rc-status` shows a machine that is telling the truth about itself.
+#
+# dbus for the same reason it is in desktop_plan_dm — `need dbus` — and the
+# duplicate costs nothing, because identical plan lines are emitted once.
+desktop_plan_elogind() {
+    plan_pkg elogind
+    plan_pkg polkit-elogind
+    plan_pkg dbus
+    plan_svc dbus default on
+    plan_svc cgroups default on
+    plan_svc elogind default on
 }
 
 # setup-desktop writes this for the gtk desktops and nothing reads it back, so
