@@ -3986,6 +3986,67 @@ alpine "$SPORE" -s "$DK/s" -r "$DK/rw2" apply >/dev/null 2>&1
 DK_W2=$(cat "$DK/rw2$DK_RCD" 2>/dev/null || echo MISSING)
 has 'and follows the branch when the desktop changes' "$DK_W2" 'rc_sddm_after="sshd"'
 hasnt 'without leaving the old one behind'             "$DK_W2" 'rc_lightdm_after'
+
+# The black box. /var/log is tmpfs on a diskless box, so an X log describing a
+# hang exists until the power goes and no longer; coisas froze at its greeter
+# three times and x-0.log was never once read. The recorder typed at a prompt
+# to catch the third wrote nothing at all, because lightdm needs localmount,
+# localmount remounts per fstab, and the medium went back to read-only under
+# it while its writes went to /dev/null.
+"$SPORE" -s "$DK/s" set desktop DESKTOP_ENV xfce >/dev/null 2>&1
+DK_BB=$(alpine "$SPORE" -s "$DK/s" -r "$DK/rbb" plan 2>&1)
+has 'a machine with a greeter keeps a black box' "$DK_BB" \
+    '/usr/local/sbin/spore-blackbox (0755'
+has 'with a service to start it'                 "$DK_BB" \
+    '/etc/init.d/spore-blackbox (0755'
+has 'in the runlevel, started now'               "$DK_BB" \
+    'svc        spore-blackbox -> default [on]'
+# Bounded and switchable: it is a diagnostic, not a logging system.
+"$SPORE" -s "$DK/s" set desktop DESKTOP_BLACKBOX no >/dev/null 2>&1
+DK_NBB=$(alpine "$SPORE" -s "$DK/s" -r "$DK/rnbb" plan 2>&1)
+hasnt 'and it can be turned off once the desktop is boring' "$DK_NBB" \
+    'spore-blackbox'
+"$SPORE" -s "$DK/s" set desktop DESKTOP_BLACKBOX yes >/dev/null 2>&1
+
+# The script itself, against a real directory rather than only against a
+# machine that is already broken.
+DK_BBS=$( . "$ROOT/lib/core.sh"; . "$ROOT/lib/conf.sh"; . "$ROOT/lib/plan.sh"
+          . "$ROOT/lib/module.sh"; . "$ROOT/modules/desktop.sh"
+          desktop_blackbox_script 1 )
+# Found, not named. /media/sdc2 on one boot and /media/usb on the next was the
+# bug that cost two round trips in `spore retire`; a directory holding a
+# committed overlay is the same medium under either name.
+has   'the medium is found by what is on it'  "$DK_BBS" '*.apkovl.tar.gz'
+hasnt 'and no device name is baked in'        "$DK_BBS" '/media/sd'
+hasnt 'nor the mount point it happened to have' "$DK_BBS" '/media/usb'
+# The check the one typed at a prompt did not have.
+has   'a recorder that cannot record says so' "$DK_BBS" \
+    'cannot write to $out, so nothing is being'
+
+DK_BBR=$(mktemp -d /tmp/spore-bbrun.XXXXXX)   # not "blackbox": the path itself
+                                             # is what the check below reads
+mkdir -p "$DK_BBR/media/nothing" "$DK_BBR/media/thestick"
+: > "$DK_BBR/media/thestick/coisas.apkovl.tar.gz"
+printf '#!/bin/sh\nset -u\n%s\n' "$DK_BBS" > "$DK_BBR/bb"
+chmod +x "$DK_BBR/bb"
+SPORE_BLACKBOX_MEDIA="$DK_BBR/media" "$DK_BBR/bb" >/dev/null 2>&1
+DK_BBV=$(cat "$DK_BBR/media/thestick/spore-blackbox/vitals" 2>/dev/null || echo MISSING)
+has 'it records to the medium that carries the overlay' "$DK_BBV" 'memavail='
+has 'with the root filesystem it is living in'          "$DK_BBV" 'root='
+# A respawning X server leaves x-0.log, x-1.log, x-2.log … and the count of
+# them is the cheapest way to see a loop from a file read after the fact.
+has 'and how many X logs there are'                     "$DK_BBV" 'xlogs='
+hasnt 'and it did not pick the directory with no overlay in it' \
+    "$(find "$DK_BBR/media/nothing" 2>/dev/null)" 'spore-blackbox'
+# One previous boot is kept. The boot before the freeze is the one that says
+# what normal looked like.
+SPORE_BLACKBOX_MEDIA="$DK_BBR/media" "$DK_BBR/bb" >/dev/null 2>&1
+if [ -f "$DK_BBR/media/thestick/spore-blackbox.1/vitals" ]; then
+    t_ok 'and the boot before this one is kept beside it'
+else
+    t_fail 'and the boot before this one is kept beside it' 'no spore-blackbox.1'
+fi
+rm -rf "$DK_BBR"
 rm -rf "$DK"
 
 section 'a package that is missing from a mirror that is down'

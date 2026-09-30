@@ -258,6 +258,7 @@ desktop_plan_dm() {
     plan_pkg dbus
     plan_svc dbus default on
     plan_svc "$1" default enable
+    if mconf_bool DESKTOP_BLACKBOX yes; then desktop_plan_blackbox; fi
     plan_dir /etc/rc.conf.d 0755
     plan_file /etc/rc.conf.d/spore-display-manager.conf 0644 \
 "# Written by spore. OpenRC sources this for every service; the variable is
@@ -271,6 +272,161 @@ rc_${1}_after=\"sshd\""
     plan_note "desktop: $1 is ordered after sshd, so the way back in is up
          before anything touches the screen. A greeter that hangs then costs
          you the console and not the machine."
+}
+
+# A machine that dies with its console takes its evidence with it.
+#
+# /var/log is tmpfs on a diskless box, so an X log describing a hang exists
+# only until the power goes. coisas froze at its greeter three times and
+# /var/log/lightdm/x-0.log has still never been read: ssh answered on the first
+# freeze and not the second, and the recorder typed at a prompt to catch the
+# third wrote nothing at all. That last one is the instructive failure —
+# lightdm declares `need localmount`, localmount remounts per fstab, and the
+# medium went back to read-only underneath the recorder while every one of its
+# writes went to /dev/null. An empty directory, discovered an hour later.
+#
+# So it is written down here instead of typed, with those three failures
+# designed out:
+#
+#   The medium is found, not named. /media/sdc2 on one boot, /media/usb on the
+#   next; a directory under /media holding a committed overlay is neither.
+#
+#   Read-write is re-taken at every tick rather than once at the start,
+#   because something else in this runlevel will take it away again.
+#
+#   A recorder that cannot record says so to syslog rather than returning 0.
+#
+# It does not `need localmount`, deliberately: that is the chain the display
+# manager drags in, and already running when it fires is the entire point.
+# `before display-manager` is how elogind orders itself ahead of the same
+# thing, and every display manager here declares `provide display-manager`.
+#
+# Bounded, because this is a diagnostic and not a logging system: it records
+# for DESKTOP_BLACKBOX_SECONDS and stops, which on the default is ninety lines
+# of a few bytes each, and it keeps exactly one previous boot beside it.
+desktop_blackbox_script() {
+    printf "secs='%s'\n" "$1"
+    cat <<'SBB'
+tick=2
+
+# Overridable so the decisions below can be exercised against a real directory
+# rather than only against a machine that is already broken. Nothing sets it on
+# a machine; /media is the whole point there.
+: "${SPORE_BLACKBOX_MEDIA:=/media}"
+
+med=''
+for d in "$SPORE_BLACKBOX_MEDIA"/*; do
+    [ -d "$d" ] || continue
+    for o in "$d"/*.apkovl.tar.gz; do
+        [ -f "$o" ] || continue
+        med=$d
+        break
+    done
+    [ -n "$med" ] && break
+done
+if [ -z "$med" ]; then
+    logger -t spore-blackbox "no directory under $SPORE_BLACKBOX_MEDIA holds an
+overlay, so there is nowhere on this machine that survives a power cut.
+Nothing recorded."
+    exit 0
+fi
+
+out=$med/spore-blackbox
+
+# At every tick, not once. localmount remounts per fstab when the display
+# manager pulls it in, which is after this started.
+hold_rw() { mount -o remount,rw "$med" 2>/dev/null || true; }
+
+hold_rw
+rm -rf "$out.1" 2>/dev/null
+[ -d "$out" ] && mv "$out" "$out.1" 2>/dev/null
+mkdir -p "$out/lightdm" 2>/dev/null
+
+# The check the hand-rolled one did not have.
+if ! touch "$out/vitals" 2>/dev/null; then
+    logger -t spore-blackbox "cannot write to $out, so nothing is being
+recorded. The medium is read-only and remounting it did not take."
+    exit 0
+fi
+
+now() { cut -d. -f1 /proc/uptime; }
+
+snap() {
+    hold_rw
+    dmesg > "$out/dmesg" 2>/dev/null
+    ps > "$out/ps" 2>/dev/null
+    cp -a /var/log/lightdm/. "$out/lightdm/" 2>/dev/null
+    cp /var/log/messages "$out/messages" 2>/dev/null
+    sync
+}
+
+end=$(( $(now) + secs ))
+n=0
+while [ "$(now)" -lt "$end" ]; do
+    hold_rw
+    {
+        printf 'up=%s ' "$(now)"
+        awk '/^MemAvailable:/ { printf "memavail=%sk ", $2 }
+             /^MemFree:/      { printf "memfree=%sk ", $2 }' /proc/meminfo
+        printf 'load=%s runq=%s ' "$(cut -d' ' -f1 /proc/loadavg)" \
+                                  "$(cut -d' ' -f4 /proc/loadavg)"
+        df -Pk / | awk 'NR == 2 { printf "root=%s/%sk ", $3, $2 }'
+        printf 'xlogs=%s\n' "$(find /var/log/lightdm -type f 2>/dev/null | wc -l)"
+    } >> "$out/vitals" 2>/dev/null
+    sync
+    n=$((n + 1))
+    [ $((n % 15)) = 0 ] && snap
+    sleep "$tick"
+done
+snap
+logger -t spore-blackbox "recorded $n tick(s) to $out"
+SBB
+}
+
+desktop_plan_blackbox() {
+    db_secs=$(mconf DESKTOP_BLACKBOX_SECONDS 180)
+    case $db_secs in
+        ''|*[!0-9]*) plan_note "desktop: DESKTOP_BLACKBOX_SECONDS is a number of
+         seconds, not '$db_secs'. Using 180."
+                     db_secs=180 ;;
+    esac
+
+    plan_file /usr/local/sbin/spore-blackbox 0755 "#!/bin/sh
+# Managed by spore. Records to the boot medium, which is the only thing on a
+# diskless machine that survives the power going off.
+set -u
+$(desktop_blackbox_script "$db_secs")"
+
+    plan_file /etc/init.d/spore-blackbox 0755 "#!/sbin/openrc-run
+# Managed by spore.
+description=\"Record vitals to the boot medium while the desktop comes up\"
+
+depend() {
+    # No \`need localmount\` on purpose: that is the chain the display manager
+    # drags in, and this has to be recording before it fires.
+    before display-manager
+}
+
+start() {
+    ebegin \"spore: black box recording to the boot medium\"
+    start-stop-daemon --start --background --make-pidfile \\
+        --pidfile /run/spore-blackbox.pid --exec /usr/local/sbin/spore-blackbox
+    eend \$?
+}
+
+stop() {
+    start-stop-daemon --stop --quiet --pidfile /run/spore-blackbox.pid 2>/dev/null
+    return 0
+}"
+    plan_svc spore-blackbox default on
+
+    plan_note "desktop: a black box records to the boot medium for ${db_secs}s from
+         each boot — memory, load, root usage and the number of X logs, every
+         two seconds, plus dmesg and /var/log/lightdm — and keeps the previous
+         boot beside it. It is there because a greeter that wedges takes
+         /var/log with it when the power goes. Read it with the medium in
+         another machine: <medium>/spore-blackbox/vitals. Turn it off with
+         DESKTOP_BLACKBOX=no once the desktop is boring."
 }
 
 # elogind installed and not running is worse than elogind absent.
